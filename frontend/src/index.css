@@ -1,0 +1,7 @@
+@import "tailwindcss";
+
+@layer utilities {
+    .cursor-precision {
+        cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='none' stroke='white' stroke-width='2'/><circle cx='16' cy='16' r='2' fill='red'/><line x1='16' y1='0' x2='16' y2='32' stroke='red' stroke-width='2'/><line x1='0' y1='16' x2='32' y2='16' stroke='red' stroke-width='2'/></svg>") 16 16, crosshair;
+    }
+}

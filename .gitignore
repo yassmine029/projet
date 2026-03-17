@@ -1,0 +1,53 @@
+# Environnements virtuels Python
+venv/
+env/
+ENV/
+.venv
+
+# Fichiers Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Base de données
+*.sqlite3
+db.sqlite3
+
+# Fichiers uploadés (IMPORTANT!)
+uploads/
+media/
+staticfiles/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Variables d'environnement
+.env
+.env.local
+
+# Logs
+*.log
+
+# Node modules
+node_modules/
+
+# Dossiers de build
+build/
+dist/
+
+*.md
+
+# MAIS garder le README.md
+!README.md

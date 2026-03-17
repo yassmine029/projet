@@ -1,0 +1,15 @@
+{
+    "0": "Fond (Arrière-plan)",
+    "1": "Cortex Somatosensoriel Primaire (BA 1, 2, 3)",
+    "4": "Cortex Moteur Primaire (BA 4)",
+    "5": "Cortex Somatosensoriel Associatif (BA 5)",
+    "6": "Cortex Prémoteur (BA 6)",
+    "7": "Cortex Somatosensoriel Associatif (BA 7)",
+    "17": "Cortex Visuel Primaire (BA 17)",
+    "18": "Cortex Visuel Secondaire (BA 18)",
+    "22": "Aire de Wernicke (BA 22)",
+    "44": "Aire de Broca (Pars Opercularis, BA 44)",
+    "45": "Aire de Broca (Pars Triangularis, BA 45)",
+    "46": "Cortex Préfrontal Dorsolatéral (BA 46)",
+    "47": "Pars Orbitalis (BA 47)"
+}

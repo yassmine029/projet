@@ -1,0 +1,12 @@
+Django>=4.2
+djangorestframework
+psycopg2-binary
+python-dotenv
+django-cors-headers
+numpy
+opencv-python
+Pillow
+torch
+torchvision
+scikit-image
+scipy

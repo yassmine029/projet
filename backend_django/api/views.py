@@ -7,6 +7,7 @@ import shutil
 import json
 import uuid
 import base64
+import threading
 from datetime import datetime
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
@@ -17,7 +18,7 @@ from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.decorators import login_required
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from .models import Series
 from django.shortcuts import get_object_or_404
 
@@ -46,6 +47,35 @@ JOBS = {}
 UPLOAD_DIR = settings.MEDIA_ROOT
 MEDIA_ROOT = settings.MEDIA_ROOT
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+def send_email_async(subject, message, from_email, recipient_list, html_message=None):
+    """Send email in a background thread to avoid blocking HTTP response"""
+    def _send():
+        try:
+            print(f"Nadine Yassmine - [ASYNC EMAIL] Starting send to {recipient_list}", flush=True)
+            sys.stdout.flush()
+            send_mail(
+                subject=subject,
+                message=message,
+                from_email=from_email,
+                recipient_list=recipient_list,
+                html_message=html_message,
+                fail_silently=False
+            )
+            print(f"Nadine Yassmine - [ASYNC EMAIL] Success to {recipient_list}", flush=True)
+            sys.stdout.flush()
+        except Exception as e:
+            print(f"Nadine Yassmine - [ASYNC EMAIL] Failed to {recipient_list}: {str(e)}", flush=True)
+            import traceback
+            print(f"Nadine Yassmine - [ASYNC EMAIL] traceback: {traceback.format_exc()}", flush=True)
+            sys.stdout.flush()
+    
+    thread = threading.Thread(target=_send, daemon=True)
+    thread.start()
+    print(f"Nadine Yassmine - [ASYNC EMAIL] Thread started for {recipient_list}", flush=True)
+    sys.stdout.flush()
+
 
 
 def make_preview(path, size=(512, 512)):
@@ -329,23 +359,23 @@ def register(request):
         data = json.loads(request.body)
     except json.JSONDecodeError:
         return JsonResponse({'ok': False, 'error': 'invalid JSON'}, status=400)
-    print(f"Yassmine now the register endpoint works - username: {data.get('username')}")
+    print(f"Nadine Yassmine - register endpoint works - username: {data.get('username')}")
     username = (data.get('username') or '').strip()
     password = data.get('password') or ''
     if not username or not password:
-        print("Yassmine now the register validation FAILED - missing username or password")
+        print("Nadine Yassmine - register validation FAILED - missing username or password")
         return JsonResponse({'ok': False, 'error': 'username and password required'}, status=400)
 
     try:
         with transaction.atomic():
             if User.objects.filter(username=username).exists():
-                print(f"Yassmine now the register FAILED - username exists: {username}")
+                print(f"Nadine Yassmine - register FAILED - username exists: {username}")
                 return JsonResponse({'ok': False, 'error': 'username exists'}, status=400)
             User.objects.create_user(username=username, password=password)
-            print(f"Yassmine now the register SUCCESS for user: {username}")
+            print(f"Nadine Yassmine - register SUCCESS for user: {username}")
             return JsonResponse({'ok': True, 'message': 'Compte créé avec succès'})
     except IntegrityError as e:
-        print(f"Yassmine now the register FAILED - IntegrityError for username: {username}, error: {str(e)}")
+        print(f"Nadine Yassmine - register FAILED - IntegrityError for username: {username}, error: {str(e)}")
         return JsonResponse({'ok': False, 'error': 'username already exists'}, status=400)
 
 
@@ -353,54 +383,60 @@ def register(request):
 @require_http_methods(["POST"])
 def login_view(request):
     try:
+        print(f"Nadine Yassmine - login endpoint reached - body: {request.body}")
         data = json.loads(request.body)
         username = (data.get('username') or '').strip()
         password = data.get('password') or ''
+        print(f"Nadine Yassmine - login attempt - username: {username}")
 
         user = authenticate(request, username=username, password=password)
         if user is None:
+            print(f"Nadine Yassmine - login failed - user not found: {username}")
             return JsonResponse({'ok': False, 'error': 'invalid credentials'}, status=401)
 
         login(request, user)
         request.session['username'] = username
+        print(f"Nadine Yassmine - login success - user: {username}")
         return JsonResponse({'ok': True, 'message': 'Connexion réussie', 'user': username})
     except Exception as e:
-        print(f"Error in login: {e}")
+        import traceback
+        print(f"Nadine Yassmine - Error in login: {e}")
+        print(f"Nadine Yassmine - traceback: {traceback.format_exc()}")
         return JsonResponse({'ok': False, 'error': 'Internal Server Error'}, status=500)
 
 
 @csrf_exempt
 @require_http_methods(["POST"])
 def logout_view(request):
-    print(f"Yassmine now the logout endpoint works")
+    print(f"Nadine Yassmine - logout endpoint works")
     logout(request)
     request.session.flush()
-    print(f"Yassmine now the logout SUCCESS")
+    print(f"Nadine Yassmine - logout SUCCESS")
     return JsonResponse({'message': 'Déconnecté avec succès'})
 
 
 @api_view(['GET'])
 def check_session(request):
     if request.user and request.user.is_authenticated:
-        print(f"Yassmine now the check_session works - user: {request.user.username}")
+        print(f"Nadine Yassmine - check_session works - user: {request.user.username}")
         return JsonResponse({'logged_in': True, 'user': request.user.username})
-    print(f"Yassmine now the check_session works - no authenticated user")
+    print(f"Nadine Yassmine - check_session works - no authenticated user")
     return JsonResponse({'logged_in': False})
 
 
 @csrf_exempt
 @require_http_methods(["POST"])
 def upload(request):
-    print(f"Yassmine now the upload endpoint REACHED - authenticated: {request.user.is_authenticated}, user: {request.user.username if request.user.is_authenticated else 'anonymous'}")
+    print(f"Nadine Yassmine - upload endpoint REACHED - authenticated: {request.user.is_authenticated}, user: {request.user.username if request.user.is_authenticated else 'anonymous'}")
     if not request.user or not request.user.is_authenticated:
-        print(f"Yassmine now the upload endpoint FAILED - not authenticated")
+        print(f"Nadine Yassmine - upload endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
     ref = request.FILES.get('ref_image')
     pat = request.FILES.get('patient_image')
     patient_id = (request.POST.get('patient_id') or '').strip() or 'Unknown'
-    print(f"Yassmine now the upload endpoint works - patient_id: {patient_id}, user: {request.user.username}, has_ref: {ref is not None}, has_pat: {pat is not None}")
+    print(f"Nadine Yassmine - upload endpoint works - patient_id: {patient_id}, user: {request.user.username}, has_ref: {ref is not None}, has_pat: {pat is not None}")
     if not ref or not pat:
-        print(f"Yassmine now the upload FAILED - missing files for patient_id: {patient_id}")
+        print(f"Nadine Yassmine - upload FAILED - missing files for patient_id: {patient_id}")
         return JsonResponse({'error': 'ref_image and patient_image required'}, status=400)
     job_id = str(uuid.uuid4())
     job_dir = os.path.join(UPLOAD_DIR, job_id)
@@ -417,7 +453,7 @@ def upload(request):
     pat_rel = os.path.relpath(pat_path, UPLOAD_DIR).replace('\\', '/')
     JOBS[job_id] = {'patient_id': patient_id, 'ref': ref_path, 'patient': pat_path, 'user': request.user.username}
     Series.objects.create(job_id=job_id, patient_id=patient_id, user=request.user, files=[ref_rel, pat_rel])
-    print(f"Yassmine now the upload SUCCESS - job_id: {job_id}")
+    print(f"Nadine Yassmine - upload SUCCESS - job_id: {job_id}")
     return JsonResponse({'jobId': job_id, 'refPreview': make_preview(ref_path), 'patPreview': make_preview(pat_path)})
 
 
@@ -425,32 +461,32 @@ def upload(request):
 @require_http_methods(["POST"])
 def align(request):
     if not request.user or not request.user.is_authenticated:
-        print(f"Yassmine now the align endpoint FAILED - not authenticated")
+        print(f"Nadine Yassmine - align endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
-        print(f"Yassmine now the align FAILED - invalid JSON")
+        print(f"Nadine Yassmine - align FAILED - invalid JSON")
         return JsonResponse({'error': 'invalid JSON'}, status=400)
     job_id = data.get('jobId')
     X = data.get('ct_points')
     Y = data.get('pat_points')
     use_warped = data.get('use_warped', False)  # ✅ mode hybride: utiliser image MINE recalée
-    print(f"Yassmine now the align endpoint works - job_id: {job_id}, use_warped: {use_warped}, user: {request.user.username}")
+    print(f"Nadine Yassmine - align endpoint works - job_id: {job_id}, use_warped: {use_warped}, user: {request.user.username}")
     if not job_id or X is None or Y is None:
-        print(f"Yassmine now the align FAILED - missing data for job_id: {job_id}")
+        print(f"Nadine Yassmine - align FAILED - missing data for job_id: {job_id}")
         return JsonResponse({'error': 'missing data'}, status=400)
 
     try:
         series = Series.objects.get(job_id=job_id, user=request.user)
         if not series.files or len(series.files) < 2:
-            print(f"Yassmine now the align FAILED - job files not found in DB: {job_id}")
+            print(f"Nadine Yassmine - align FAILED - job files not found in DB: {job_id}")
             return JsonResponse({'error': 'job files not found'}, status=404)
         ref_path = os.path.join(UPLOAD_DIR, series.files[0])
         pat_path = os.path.join(UPLOAD_DIR, series.files[1])
-        print(f"Yassmine now the align LOADED job from DB - job_id: {job_id}")
+        print(f"Nadine Yassmine - align LOADED job from DB - job_id: {job_id}")
     except Series.DoesNotExist:
-        print(f"Yassmine now the align FAILED - job not found: {job_id}")
+        print(f"Nadine Yassmine - align FAILED - job not found: {job_id}")
         return JsonResponse({'error': 'job not found'}, status=404)
 
     # ✅ Mode hybride: utiliser l'image déjà recalée par MINE comme point de départ
@@ -468,13 +504,13 @@ def align(request):
     X = np.array(X, dtype=np.float64)
     Y = np.array(Y, dtype=np.float64)
     if X.shape != Y.shape or X.shape[0] < 3:
-        print(f"Yassmine now the align FAILED - invalid points shape for job_id: {job_id}")
+        print(f"Nadine Yassmine - align FAILED - invalid points shape for job_id: {job_id}")
         return JsonResponse({'error': 'invalid points'}, status=400)
 
     ref = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
     pat = cv2.imread(pat_path, cv2.IMREAD_GRAYSCALE)
     if ref is None or pat is None:
-        print(f"Yassmine now the align FAILED - cannot read images for job_id: {job_id}")
+        print(f"Nadine Yassmine - align FAILED - cannot read images for job_id: {job_id}")
         return JsonResponse({'error': 'cannot read images'}, status=500)
     ref = cv2.resize(ref, (512, 512))
     pat = cv2.resize(pat, (512, 512))
@@ -504,9 +540,9 @@ def align(request):
     try:
         series.tform = tform
         series.save()
-        print(f"Yassmine now the align SAVED tform to DB for job_id: {job_id}")
+        print(f"Nadine Yassmine - align SAVED tform to DB for job_id: {job_id}")
     except Exception as e:
-        print(f"Yassmine now the align WARNING - failed to save tform: {str(e)}")
+        print(f"Nadine Yassmine - align WARNING - failed to save tform: {str(e)}")
 
     fixed_float = ref.astype(np.float32)
     warped_float = warped.astype(np.float32)
@@ -560,7 +596,7 @@ def align(request):
     img_b64 = base64.b64encode(buf).decode('utf-8')
     img_data = f"data:image/png;base64,{img_b64}"
 
-    print(f"Yassmine now the align SUCCESS - job_id: {job_id}, RMSE: {metrics['rmse']}")
+    print(f"Nadine Yassmine - align SUCCESS - job_id: {job_id}, RMSE: {metrics['rmse']}")
 
     return JsonResponse({
         'success': True,
@@ -576,37 +612,37 @@ def auto_align(request):
     """Automatic image alignment using ANTs SyN algorithm or MINE"""
     try:
         if not request.user or not request.user.is_authenticated:
-            print(f"Yassmine now the auto_align endpoint FAILED - not authenticated")
+            print(f"Nadine Yassmine - auto_align endpoint FAILED - not authenticated")
             return JsonResponse({'error': 'login required'}, status=401)
 
         try:
             data = json.loads(request.body)
         except json.JSONDecodeError:
-            print(f"Yassmine now the auto_align FAILED - invalid JSON")
+            print(f"Nadine Yassmine - auto_align FAILED - invalid JSON")
             return JsonResponse({'error': 'invalid JSON'}, status=400)
 
         job_id = data.get('jobId')
         transform_type = data.get('transform', 'SyN')
-        print(f"Yassmine now the auto_align endpoint works - job_id: {job_id}, transform: {transform_type}, user: {request.user.username}")
+        print(f"Nadine Yassmine - auto_align endpoint works - job_id: {job_id}, transform: {transform_type}, user: {request.user.username}")
 
         if not job_id:
-            print(f"Yassmine now the auto_align FAILED - missing jobId")
+            print(f"Nadine Yassmine - auto_align FAILED - missing jobId")
             return JsonResponse({'error': 'missing jobId'}, status=400)
 
         try:
             series = Series.objects.get(job_id=job_id, user=request.user)
             if not series.files or len(series.files) < 2:
-                print(f"Yassmine now the auto_align FAILED - job files not found in DB: {job_id}")
+                print(f"Nadine Yassmine - auto_align FAILED - job files not found in DB: {job_id}")
                 return JsonResponse({'error': 'job files not found'}, status=404)
             ref_path = os.path.join(UPLOAD_DIR, series.files[0])
             pat_path = os.path.join(UPLOAD_DIR, series.files[1])
-            print(f"Yassmine now the auto_align LOADED job from DB - job_id: {job_id}")
+            print(f"Nadine Yassmine - auto_align LOADED job from DB - job_id: {job_id}")
         except Series.DoesNotExist:
-            print(f"Yassmine now the auto_align FAILED - job not found: {job_id}")
+            print(f"Nadine Yassmine - auto_align FAILED - job not found: {job_id}")
             return JsonResponse({'error': 'job not found'}, status=404)
 
         if not os.path.exists(ref_path) or not os.path.exists(pat_path):
-            print(f"Yassmine now the auto_align FAILED - image files not found on disk")
+            print(f"Nadine Yassmine - auto_align FAILED - image files not found on disk")
             return JsonResponse({'error': 'image files not found'}, status=404)
 
         job_dir = os.path.join(UPLOAD_DIR, job_id)
@@ -626,7 +662,7 @@ def auto_align(request):
         )
 
         if not result.get('success', False):
-            print(f"Yassmine now the auto_align FAILED - MINE failed")
+            print(f"Nadine Yassmine - auto_align FAILED - MINE failed")
             return JsonResponse({
                 'error': 'alignment failed',
                 'message': 'Le recalage MINE a échoué',
@@ -680,7 +716,7 @@ def auto_align(request):
         # (ANTs supprimé)
 
         if not metrics.get('success', False):
-            print(f"Yassmine now the auto_align FAILED - alignment failed: {metrics.get('error')}")
+            print(f"Nadine Yassmine - auto_align FAILED - alignment failed: {metrics.get('error')}")
             return JsonResponse({
                 'error': metrics.get('error', 'alignment failed'),
                 'message': metrics.get('message', 'Le recalage automatique a échoué'),
@@ -698,9 +734,9 @@ def auto_align(request):
         try:
             series.tform = auto_tform
             series.save()
-            print(f"Yassmine now the auto_align SAVED tform to DB for job_id: {job_id}")
+            print(f"Nadine Yassmine - auto_align SAVED tform to DB for job_id: {job_id}")
         except Exception as e:
-            print(f"Yassmine now the auto_align WARNING - failed to save tform: {str(e)}")
+            print(f"Nadine Yassmine - auto_align WARNING - failed to save tform: {str(e)}")
 
         JOBS[job_id] = {
             'patient_id': series.patient_id,
@@ -726,7 +762,7 @@ def auto_align(request):
             img_data = f"data:image/png;base64,{img_b64}"
 
         except Exception as e:
-            print(f"Yassmine now the auto_align WARNING - failed to read warped image: {str(e)}")
+            print(f"Nadine Yassmine - auto_align WARNING - failed to read warped image: {str(e)}")
             return JsonResponse({
                 'success': True,
                 'message': 'Recalage automatique réussi',
@@ -734,7 +770,7 @@ def auto_align(request):
                 'warped_path': os.path.relpath(warped_path, UPLOAD_DIR)
             })
 
-        print(f"Yassmine now the auto_align SUCCESS - job_id: {job_id}, RMSE: {metrics.get('rmse')}")
+        print(f"Nadine Yassmine - auto_align SUCCESS - job_id: {job_id}, RMSE: {metrics.get('rmse')}")
 
         return JsonResponse({
             'success': True,
@@ -744,7 +780,7 @@ def auto_align(request):
         })
 
     except Exception as e:
-        print(f"Yassmine now the auto_align CRITICAL ERROR: {str(e)}")
+        print(f"Nadine Yassmine - auto_align CRITICAL ERROR: {str(e)}")
         import traceback
         traceback.print_exc()
         return JsonResponse({
@@ -759,28 +795,28 @@ def auto_align(request):
 def upload_series(request):
     """Upload a series of images and apply transformation"""
     if not request.user or not request.user.is_authenticated:
-        print(f"Yassmine now the upload_series FAILED - not authenticated")
+        print(f"Nadine Yassmine - upload_series FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
 
     job_id = request.POST.get('jobId')
     patient_id = (request.POST.get('patient_id') or '').strip() or None
     files = request.FILES.getlist('files')
 
-    print(f"Yassmine now the upload_series endpoint works - job_id: {job_id}, patient_id: {patient_id}, files: {len(files)}")
+    print(f"Nadine Yassmine - upload_series endpoint works - job_id: {job_id}, patient_id: {patient_id}, files: {len(files)}")
 
     if not job_id or not files:
-        print(f"Yassmine now the upload_series FAILED - missing jobId or files")
+        print(f"Nadine Yassmine - upload_series FAILED - missing jobId or files")
         return JsonResponse({'error': 'missing jobId or files'}, status=400)
 
     try:
         series = Series.objects.get(job_id=job_id, user=request.user)
     except Series.DoesNotExist:
-        print(f"Yassmine now the upload_series FAILED - job not found: {job_id}")
+        print(f"Nadine Yassmine - upload_series FAILED - job not found: {job_id}")
         return JsonResponse({'error': 'job not found'}, status=404)
 
     tform = series.tform
     if not tform:
-        print(f"Yassmine now the upload_series FAILED - no tform for job_id: {job_id}")
+        print(f"Nadine Yassmine - upload_series FAILED - no tform for job_id: {job_id}")
         return JsonResponse({
             'error': 'transformation not found',
             'message': "Tu dois faire l'alignement d'abord. Clique sur 'Aligner' pour calculer la transformation."
@@ -790,11 +826,11 @@ def upload_series(request):
 
     upload_dir = os.path.join(UPLOAD_DIR, job_id, 'series')
     if os.path.exists(upload_dir):
-        print(f"Yassmine now the upload_series DELETING old series directory: {upload_dir}")
+        print(f"Nadine Yassmine - upload_series DELETING old series directory: {upload_dir}")
         shutil.rmtree(upload_dir)
     os.makedirs(upload_dir, exist_ok=True)
 
-    print(f"Yassmine now the upload_series saving to directory: {upload_dir}")
+    print(f"Nadine Yassmine - upload_series saving to directory: {upload_dir}")
 
     saved_files = []
     skipped_files = 0
@@ -804,24 +840,24 @@ def upload_series(request):
             with open(file_path, 'wb') as f:
                 for chunk in file.chunks():
                     f.write(chunk)
-            print(f"Yassmine now the upload_series SAVED file: {file.name}")
+            print(f"Nadine Yassmine - upload_series SAVED file: {file.name}")
 
             transformed_ok = False
             try:
                 img = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)
                 if img is None:
-                    print(f"Yassmine now the upload_series WARNING - not an image or unreadable: {file.name}")
+                    print(f"Nadine Yassmine - upload_series WARNING - not an image or unreadable: {file.name}")
                 else:
                     img = cv2.resize(img, (512, 512))
                     warped = cv2.warpAffine(img, M, (512, 512))
                     ok = cv2.imwrite(file_path, warped)
                     if ok:
-                        print(f"Yassmine now the upload_series TRANSFORMED file: {file.name}")
+                        print(f"Nadine Yassmine - upload_series TRANSFORMED file: {file.name}")
                         transformed_ok = True
                     else:
-                        print(f"Yassmine now the upload_series WARNING - failed to write transformed file: {file.name}")
+                        print(f"Nadine Yassmine - upload_series WARNING - failed to write transformed file: {file.name}")
             except Exception as cv_err:
-                print(f"Yassmine now the upload_series WARNING - transformation failed for {file.name}: {str(cv_err)}")
+                print(f"Nadine Yassmine - upload_series WARNING - transformation failed for {file.name}: {str(cv_err)}")
 
             if transformed_ok and os.path.exists(file_path):
                 rel_path = os.path.relpath(file_path, UPLOAD_DIR).replace('\\', '/')
@@ -832,9 +868,9 @@ def upload_series(request):
                     if os.path.exists(file_path):
                         os.remove(file_path)
                 except Exception as rm_err:
-                    print(f"Yassmine now the upload_series WARNING - cleanup failed for {file.name}: {str(rm_err)}")
+                    print(f"Nadine Yassmine - upload_series WARNING - cleanup failed for {file.name}: {str(rm_err)}")
         except Exception as e:
-            print(f"Yassmine now the upload_series FAILED processing file {file.name}: {str(e)}")
+            print(f"Nadine Yassmine - upload_series FAILED processing file {file.name}: {str(e)}")
             skipped_files += 1
 
     series.files = saved_files
@@ -842,7 +878,7 @@ def upload_series(request):
         series.patient_id = patient_id
     series.save()
 
-    print(f"Yassmine now the upload_series SUCCESS - processed {len(saved_files)} files for job_id: {job_id}")
+    print(f"Nadine Yassmine - upload_series SUCCESS - processed {len(saved_files)} files for job_id: {job_id}")
     return JsonResponse({
         'jobId': job_id,
         'series_id': series.id,
@@ -858,34 +894,34 @@ def upload_series(request):
 @api_view(['GET'])
 def get_job_tform(request, job_id):
     if not request.user or not request.user.is_authenticated:
-        print(f"Yassmine now the get_job_tform FAILED - not authenticated")
+        print(f"Nadine Yassmine - get_job_tform FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
-    print(f"Yassmine now the get_job_tform endpoint works - job_id: {job_id}")
+    print(f"Nadine Yassmine - get_job_tform endpoint works - job_id: {job_id}")
 
     try:
         series = Series.objects.get(job_id=job_id, user=request.user)
     except Series.DoesNotExist:
-        print(f"Yassmine now the get_job_tform FAILED - job not found: {job_id}")
+        print(f"Nadine Yassmine - get_job_tform FAILED - job not found: {job_id}")
         return JsonResponse({'error': 'job not found'}, status=404)
 
     tform = series.tform
     if not tform:
-        print(f"Yassmine now the get_job_tform FAILED - no tform for job_id: {job_id}")
+        print(f"Nadine Yassmine - get_job_tform FAILED - no tform for job_id: {job_id}")
         return JsonResponse({
             'error': 'transformation not found',
             'message': "Tu dois faire l'alignement d'abord. Clique sur 'Aligner' pour calculer la transformation."
         }, status=404)
 
-    print(f"Yassmine now the get_job_tform SUCCESS - job_id: {job_id}")
+    print(f"Nadine Yassmine - get_job_tform SUCCESS - job_id: {job_id}")
     return JsonResponse({'tform': tform})
 
 
 @api_view(['GET'])
 def history(request):
     if not request.user or not request.user.is_authenticated:
-        print(f"Yassmine now the history endpoint FAILED - not authenticated")
+        print(f"Nadine Yassmine - history endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
-    print(f"Yassmine now the history endpoint works - user: {request.user.username}")
+    print(f"Nadine Yassmine - history endpoint works - user: {request.user.username}")
     out = []
     qs = Series.objects.filter(user=request.user).order_by('-created_at')
     for s in qs:
@@ -901,38 +937,122 @@ def history(request):
             'patient': pat_name,
             'user': s.user.username if s.user else 'unknown'
         })
-    print(f"Yassmine now the history SUCCESS - returned {len(out)} jobs")
+    print(f"Nadine Yassmine - history SUCCESS - returned {len(out)} jobs")
     return JsonResponse(out, safe=False)
 
 
-@api_view(['GET'])
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
 def list_patients(request):
     if not request.user or not request.user.is_authenticated:
-        print(f"Yassmine now the list_patients endpoint FAILED - not authenticated")
+        print(f"Nadine Yassmine - list_patients endpoint FAILED - not authenticated", flush=True)
+        sys.stdout.flush()
         return JsonResponse({'error': 'login required'}, status=401)
-    print(f"Yassmine now the list_patients endpoint works - user: {request.user.username}")
-    qs = Series.objects.filter(user=request.user).values_list('patient_id', flat=True).distinct()
-    if qs.exists():
+    
+    # Handle GET - list patients
+    if request.method == 'GET':
+        print(f"Nadine Yassmine - list_patients GET endpoint works - user: {request.user.username}", flush=True)
+        sys.stdout.flush()
+        
         patients = {}
-        for pid in qs:
-            patients[pid] = {'_id': pid, 'patient_id': pid, 'meta': {'series_count': 0}}
-        for s in Series.objects.filter(user=request.user):
+        
+        # 1. Get patients from Patient table (newly created patients)
+        patient_objs = Patient.objects.filter(doctor=request.user)
+        for p in patient_objs:
+            patients[p.num_dossier] = {
+                '_id': p.id,
+                'patient_id': p.num_dossier,
+                'nom': p.nom,
+                'prenom': p.prenom,
+                'date_naissance': str(p.date_naissance),
+                'sexe': p.sexe,
+                'autres_maladies': p.autres_maladies or '',
+                'meta': {'series_count': 0}
+            }
+        
+        # 2. Get patients from Series and count their series
+        series_qs = Series.objects.filter(user=request.user)
+        for s in series_qs:
             pid = s.patient_id
-            if pid in patients:
-                patients[pid]['meta']['series_count'] += 1
-        print(f"Yassmine now the list_patients SUCCESS - found {len(patients)} patients from DB")
-        return JsonResponse(list(patients.values()), safe=False)
-
-    print(f"Yassmine now the list_patients SUCCESS - found 0 patients")
-    return JsonResponse([], safe=False)
+            if pid not in patients:
+                patients[pid] = {'_id': pid, 'patient_id': pid, 'meta': {'series_count': 0}}
+            if 'meta' not in patients[pid]:
+                patients[pid]['meta'] = {'series_count': 0}
+            patients[pid]['meta']['series_count'] = patients[pid]['meta'].get('series_count', 0) + 1
+        
+        if len(patients) > 0:
+            print(f"Nadine Yassmine - list_patients GET SUCCESS - found {len(patients)} patients (from Patient table + Series)", flush=True)
+            sys.stdout.flush()
+            return JsonResponse({'ok': True, 'patients': list(patients.values())}, safe=False)
+        
+        print(f"Nadine Yassmine - list_patients GET SUCCESS - found 0 patients", flush=True)
+        sys.stdout.flush()
+        return JsonResponse({'ok': True, 'patients': []}, safe=False)
+    
+    # Handle POST - create new patient
+    elif request.method == 'POST':
+        print(f"Nadine Yassmine - list_patients POST endpoint works - user: {request.user.username}", flush=True)
+        sys.stdout.flush()
+        
+        try:
+            # Get JSON data from request body
+            data = json.loads(request.body) if request.body else {}
+            print(f"Nadine Yassmine - POST /patients/ received data: {data}", flush=True)
+            sys.stdout.flush()
+            
+            # Validate required fields
+            required_fields = ['num_dossier', 'nom', 'prenom', 'date_naissance', 'sexe']
+            for field in required_fields:
+                if field not in data or not data[field]:
+                    print(f"Nadine Yassmine - POST /patients/ FAILED - missing field: {field}", flush=True)
+                    sys.stdout.flush()
+                    return JsonResponse({'error': f'Missing required field: {field}'}, status=400)
+            
+            # Check if patient with this num_dossier already exists
+            if Patient.objects.filter(num_dossier=data['num_dossier']).exists():
+                print(f"Nadine Yassmine - POST /patients/ FAILED - num_dossier already exists: {data['num_dossier']}", flush=True)
+                sys.stdout.flush()
+                return JsonResponse({'error': 'Un patient avec ce numéro de dossier existe déjà'}, status=400)
+            
+            # Create new patient
+            patient = Patient.objects.create(
+                num_dossier=data['num_dossier'],
+                nom=data['nom'],
+                prenom=data['prenom'],
+                date_naissance=data['date_naissance'],
+                sexe=data['sexe'],
+                autres_maladies=data.get('autres_maladies', ''),
+                doctor=request.user
+            )
+            
+            print(f"Nadine Yassmine - POST /patients/ SUCCESS - created patient: {patient.id} ({patient.num_dossier})", flush=True)
+            sys.stdout.flush()
+            
+            return JsonResponse({
+                'ok': True,
+                'id': patient.id,
+                'patient_id': patient.num_dossier,
+                'message': 'Patient créé avec succès'
+            }, status=201)
+            
+        except IntegrityError as e:
+            print(f"Nadine Yassmine - POST /patients/ IntegrityError: {str(e)}", flush=True)
+            sys.stdout.flush()
+            return JsonResponse({'error': 'Erreur d\'intégrité: ce numéro de dossier existe peut-être déjà'}, status=400)
+        except Exception as e:
+            print(f"Nadine Yassmine - POST /patients/ FAILED - Exception: {str(e)}", flush=True)
+            import traceback
+            print(f"Nadine Yassmine - POST /patients/ traceback: {traceback.format_exc()}", flush=True)
+            sys.stdout.flush()
+            return JsonResponse({'error': f'Erreur serveur: {str(e)}'}, status=500)
 
 
 @api_view(['GET'])
 def get_patient_series(request, patient_id):
     if not request.user or not request.user.is_authenticated:
-        print(f"Yassmine now the get_patient_series endpoint FAILED - not authenticated")
+        print(f"Nadine Yassmine - get_patient_series endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
-    print(f"Yassmine now the get_patient_series endpoint works - patient_id: {patient_id}, user: {request.user.username}")
+    print(f"Nadine Yassmine - get_patient_series endpoint works - patient_id: {patient_id}, user: {request.user.username}")
     out = []
     qs = Series.objects.filter(patient_id=patient_id, user=request.user).order_by('-created_at')
     skip_names = {'ref.png', 'patient.png', 'preview_ref.png', 'preview_patient.png'}
@@ -950,20 +1070,20 @@ def get_patient_series(request, patient_id):
                 'created_at': s.created_at.isoformat(),
                 'user': s.user.username if s.user else None
             })
-    print(f"Yassmine now the get_patient_series SUCCESS - patient_id: {patient_id}, returned {len(out)} series")
+    print(f"Nadine Yassmine - get_patient_series SUCCESS - patient_id: {patient_id}, returned {len(out)} series")
     return JsonResponse(out, safe=False)
 
 
 @require_http_methods(["GET", "HEAD"])
 def patient_file(request):
     if not request.user or not request.user.is_authenticated:
-        print(f"Yassmine now the patient_file endpoint FAILED - not authenticated")
+        print(f"Nadine Yassmine - patient_file endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
     job_id = request.GET.get('jobId')
     relpath = request.GET.get('relpath', '')
-    print(f"Yassmine now the patient_file endpoint works - job_id: {job_id}, relpath: {relpath}, user: {request.user.username}")
+    print(f"Nadine Yassmine - patient_file endpoint works - job_id: {job_id}, relpath: {relpath}, user: {request.user.username}")
     if not job_id:
-        print(f"Yassmine now the patient_file FAILED - missing jobId")
+        print(f"Nadine Yassmine - patient_file FAILED - missing jobId")
         return JsonResponse({'error': 'missing jobId'}, status=400)
 
     series = Series.objects.filter(job_id=job_id, user=request.user).first()
@@ -971,14 +1091,14 @@ def patient_file(request):
 
     job_dir = os.path.join(UPLOAD_DIR, job_id)
     if not os.path.isdir(job_dir):
-        print(f"Yassmine now the patient_file FAILED - job not found: {job_id}")
+        print(f"Nadine Yassmine - patient_file FAILED - job not found: {job_id}")
         return JsonResponse({'error': 'job not found'}, status=404)
 
     if not relpath or relpath in ('.', ''):
         for name in ('ref.png', 'patient.png', 'preview_ref.png', 'preview_patient.png'):
             candidate = os.path.join(job_dir, name)
             if os.path.exists(candidate):
-                print(f"Yassmine now the patient_file SUCCESS - job_id: {job_id}, file: {name}")
+                print(f"Nadine Yassmine - patient_file SUCCESS - job_id: {job_id}, file: {name}")
                 img = read_gray_image(candidate)
                 # ✅ FIX 3: Ne pas normaliser les images recalées MINE
                 # normalize_brain_image croppe différemment fixe et mobile → faux décalage visuel
@@ -989,18 +1109,18 @@ def patient_file(request):
                         if ok:
                             return HttpResponse(buf.tobytes(), content_type='image/png')
                 return FileResponse(open(candidate, 'rb'), content_type='image/png')
-        print(f"Yassmine now the patient_file FAILED - file not found for job_id: {job_id}")
+        print(f"Nadine Yassmine - patient_file FAILED - file not found for job_id: {job_id}")
         return JsonResponse({'error': 'file not found'}, status=404)
 
     safe_rel = os.path.normpath(relpath).replace('\\', '/')
     if safe_rel.startswith('..'):
-        print(f"Yassmine now the patient_file FAILED - invalid relpath: {relpath}")
+        print(f"Nadine Yassmine - patient_file FAILED - invalid relpath: {relpath}")
         return JsonResponse({'error': 'invalid relpath'}, status=400)
 
     candidate = os.path.join(UPLOAD_DIR, safe_rel)
 
     if not os.path.exists(candidate):
-        print(f"Yassmine now the patient_file FAILED - file not found: job_id: {job_id}, relpath: {relpath}, path: {candidate}")
+        print(f"Nadine Yassmine - patient_file FAILED - file not found: job_id: {job_id}, relpath: {relpath}, path: {candidate}")
         return JsonResponse({'error': 'file not found'}, status=404)
 
     img = read_gray_image(candidate)
@@ -1011,10 +1131,10 @@ def patient_file(request):
         if norm is not None:
             ok, buf = cv2.imencode('.png', norm)
             if ok:
-                print(f"Yassmine now the patient_file SUCCESS (normalized) - job_id: {job_id}, relpath: {relpath}")
+                print(f"Nadine Yassmine - patient_file SUCCESS (normalized) - job_id: {job_id}, relpath: {relpath}")
                 return HttpResponse(buf.tobytes(), content_type='image/png')
 
-    print(f"Yassmine now the patient_file SUCCESS - job_id: {job_id}, relpath: {relpath}")
+    print(f"Nadine Yassmine - patient_file SUCCESS - job_id: {job_id}, relpath: {relpath}")
     return FileResponse(open(candidate, 'rb'), content_type='application/octet-stream')
 
 
@@ -1172,43 +1292,43 @@ def project_brodmann(request):
 @require_http_methods(["POST"])
 def delete_series(request):
     if not request.user or not request.user.is_authenticated:
-        print(f"Yassmine now the delete_series endpoint FAILED - not authenticated")
+        print(f"Nadine Yassmine - delete_series endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
 
     try:
         data = json.loads(request.body.decode('utf-8'))
         series_id = data.get('series_id')
     except:
-        print(f"Yassmine now the delete_series endpoint FAILED - invalid JSON")
+        print(f"Nadine Yassmine - delete_series endpoint FAILED - invalid JSON")
         return JsonResponse({'error': 'invalid request'}, status=400)
 
     if not series_id:
-        print(f"Yassmine now the delete_series endpoint FAILED - missing series_id")
+        print(f"Nadine Yassmine - delete_series endpoint FAILED - missing series_id")
         return JsonResponse({'error': 'missing series_id'}, status=400)
 
     try:
         series = Series.objects.get(id=series_id)
     except Series.DoesNotExist:
-        print(f"Yassmine now the delete_series endpoint FAILED - series not found: {series_id}")
+        print(f"Nadine Yassmine - delete_series endpoint FAILED - series not found: {series_id}")
         return JsonResponse({'error': 'series not found'}, status=404)
 
     if series.user != request.user:
-        print(f"Yassmine now the delete_series endpoint FAILED - user {request.user.username} does not own series {series_id}")
+        print(f"Nadine Yassmine - delete_series endpoint FAILED - user {request.user.username} does not own series {series_id}")
         return JsonResponse({'error': 'permission denied'}, status=403)
 
     job_id = series.job_id
-    print(f"Yassmine now the delete_series endpoint works - deleting series_id: {series_id}, job_id: {job_id}, user: {request.user.username}")
+    print(f"Nadine Yassmine - delete_series endpoint works - deleting series_id: {series_id}, job_id: {job_id}, user: {request.user.username}")
 
     try:
         series_dir = os.path.join(UPLOAD_DIR, job_id, 'series')
         if os.path.exists(series_dir):
             shutil.rmtree(series_dir)
-            print(f"Yassmine now the delete_series - deleted directory: {series_dir}")
+            print(f"Nadine Yassmine - delete_series - deleted directory: {series_dir}")
     except Exception as e:
-        print(f"Yassmine now the delete_series WARNING - failed to delete files: {str(e)}")
+        print(f"Nadine Yassmine - delete_series WARNING - failed to delete files: {str(e)}")
 
     series.delete()
-    print(f"Yassmine now the delete_series SUCCESS - series_id: {series_id} deleted from DB")
+    print(f"Nadine Yassmine - delete_series SUCCESS - series_id: {series_id} deleted from DB")
 
     return JsonResponse({'message': 'series deleted successfully'})
 
@@ -1217,13 +1337,13 @@ def delete_series(request):
 @require_http_methods(["POST"])
 def preprocess_image(request):
     if not request.user or not request.user.is_authenticated:
-        print(f"Yassmine now the preprocess endpoint FAILED - not authenticated")
+        print(f"Nadine Yassmine - preprocess endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
 
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
-        print(f"Yassmine now the preprocess FAILED - invalid JSON")
+        print(f"Nadine Yassmine - preprocess FAILED - invalid JSON")
         return JsonResponse({'error': 'invalid JSON'}, status=400)
 
     job_id = data.get('jobId')
@@ -1231,16 +1351,16 @@ def preprocess_image(request):
     method = data.get('method')
     intensity = float(data.get('intensity', 1.0))
 
-    print(f"Yassmine now the preprocess endpoint works - job_id: {job_id}, target: {target}, method: {method}, intensity: {intensity}")
+    print(f"Nadine Yassmine - preprocess endpoint works - job_id: {job_id}, target: {target}, method: {method}, intensity: {intensity}")
 
     if not job_id or not target or not method:
-        print(f"Yassmine now the preprocess FAILED - missing parameters")
+        print(f"Nadine Yassmine - preprocess FAILED - missing parameters")
         return JsonResponse({'error': 'missing jobId, target, or method'}, status=400)
 
     try:
         series = Series.objects.get(job_id=job_id, user=request.user)
         if not series.files or len(series.files) < 2:
-            print(f"Yassmine now the preprocess FAILED - job files not found in DB: {job_id}")
+            print(f"Nadine Yassmine - preprocess FAILED - job files not found in DB: {job_id}")
             return JsonResponse({'error': 'job files not found'}, status=404)
 
         if target == 'ref':
@@ -1251,12 +1371,12 @@ def preprocess_image(request):
             return JsonResponse({'error': 'invalid target (must be ref or patient)'}, status=400)
 
     except Series.DoesNotExist:
-        print(f"Yassmine now the preprocess FAILED - job not found: {job_id}")
+        print(f"Nadine Yassmine - preprocess FAILED - job not found: {job_id}")
         return JsonResponse({'error': 'job not found'}, status=404)
 
     img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
     if img is None:
-        print(f"Yassmine now the preprocess FAILED - cannot read image: {img_path}")
+        print(f"Nadine Yassmine - preprocess FAILED - cannot read image: {img_path}")
         return JsonResponse({'error': 'cannot read image'}, status=500)
 
     img = cv2.resize(img, (512, 512))
@@ -1282,11 +1402,11 @@ def preprocess_image(request):
             return JsonResponse({'error': f'unknown method: {method}'}, status=400)
 
         _, buf = cv2.imencode('.png', processed)
-        print(f"Yassmine now the preprocess SUCCESS - job_id: {job_id}, method: {method}")
+        print(f"Nadine Yassmine - preprocess SUCCESS - job_id: {job_id}, method: {method}")
         return HttpResponse(buf.tobytes(), content_type='image/png')
 
     except Exception as e:
-        print(f"Yassmine now the preprocess FAILED - error: {str(e)}")
+        print(f"Nadine Yassmine - preprocess FAILED - error: {str(e)}")
         return JsonResponse({'error': f'preprocessing failed: {str(e)}'}, status=500)
 
 
@@ -1294,33 +1414,33 @@ def preprocess_image(request):
 @require_http_methods(["POST"])
 def apply_tform_to_series(request):
     if not request.user or not request.user.is_authenticated:
-        print(f"Yassmine now the apply_tform endpoint FAILED - not authenticated")
+        print(f"Nadine Yassmine - apply_tform endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
 
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
-        print(f"Yassmine now the apply_tform FAILED - invalid JSON")
+        print(f"Nadine Yassmine - apply_tform FAILED - invalid JSON")
         return JsonResponse({'error': 'invalid JSON'}, status=400)
 
     job_id = data.get('jobId')
     source_dir = data.get('source_dir', '')
     pattern = data.get('pattern', '*.*')
 
-    print(f"Yassmine now the apply_tform endpoint works - job_id: {job_id}, source_dir: {source_dir}")
+    print(f"Nadine Yassmine - apply_tform endpoint works - job_id: {job_id}, source_dir: {source_dir}")
 
     if not job_id:
-        print(f"Yassmine now the apply_tform FAILED - missing jobId")
+        print(f"Nadine Yassmine - apply_tform FAILED - missing jobId")
         return JsonResponse({'error': 'missing jobId'}, status=400)
 
     try:
         series = Series.objects.get(job_id=job_id, user=request.user)
         tform = series.tform
         if not tform:
-            print(f"Yassmine now the apply_tform FAILED - no tform for job_id: {job_id}")
+            print(f"Nadine Yassmine - apply_tform FAILED - no tform for job_id: {job_id}")
             return JsonResponse({'error': 'transformation not found'}, status=404)
     except Series.DoesNotExist:
-        print(f"Yassmine now the apply_tform FAILED - job not found: {job_id}")
+        print(f"Nadine Yassmine - apply_tform FAILED - job not found: {job_id}")
         return JsonResponse({'error': 'job not found'}, status=404)
 
     M = affine_from_tform(tform)
@@ -1356,10 +1476,10 @@ def apply_tform_to_series(request):
                     os.remove(temp_img_path)
                     count += 1
                 except Exception as e:
-                    print(f"Yassmine now the apply_tform WARNING - failed to process {filename}: {str(e)}")
+                    print(f"Nadine Yassmine - apply_tform WARNING - failed to process {filename}: {str(e)}")
                     continue
 
-        print(f"Yassmine now the apply_tform SUCCESS - job_id: {job_id}, processed {count} files")
+        print(f"Nadine Yassmine - apply_tform SUCCESS - job_id: {job_id}, processed {count} files")
 
         with open(zip_path, 'rb') as f:
             response = HttpResponse(f.read(), content_type='application/zip')
@@ -1367,7 +1487,7 @@ def apply_tform_to_series(request):
             return response
 
     except Exception as e:
-        print(f"Yassmine now the apply_tform FAILED - error: {str(e)}")
+        print(f"Nadine Yassmine - apply_tform FAILED - error: {str(e)}")
         return JsonResponse({'error': f'transformation failed: {str(e)}'}, status=500)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -1376,19 +1496,19 @@ def apply_tform_to_series(request):
 @api_view(['GET'])
 def download_series(request, series_id):
     if not request.user or not request.user.is_authenticated:
-        print(f"Yassmine now the download_series endpoint FAILED - not authenticated")
+        print(f"Nadine Yassmine - download_series endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
 
-    print(f"Yassmine now the download_series endpoint works - series_id: {series_id}, user: {request.user.username}")
+    print(f"Nadine Yassmine - download_series endpoint works - series_id: {series_id}, user: {request.user.username}")
 
     try:
         series = Series.objects.get(id=series_id, user=request.user)
     except Series.DoesNotExist:
-        print(f"Yassmine now the download_series FAILED - series not found: {series_id}")
+        print(f"Nadine Yassmine - download_series FAILED - series not found: {series_id}")
         return JsonResponse({'error': 'series not found'}, status=404)
 
     if not series.files:
-        print(f"Yassmine now the download_series FAILED - no files in series: {series_id}")
+        print(f"Nadine Yassmine - download_series FAILED - no files in series: {series_id}")
         return JsonResponse({'error': 'no files in series'}, status=404)
 
     temp_dir = tempfile.mkdtemp()
@@ -1402,7 +1522,7 @@ def download_series(request, series_id):
                     filename = os.path.basename(rel_path)
                     zipf.write(abs_path, filename)
 
-        print(f"Yassmine now the download_series SUCCESS - series_id: {series_id}, files: {len(series.files)}")
+        print(f"Nadine Yassmine - download_series SUCCESS - series_id: {series_id}, files: {len(series.files)}")
 
         with open(zip_path, 'rb') as f:
             response = HttpResponse(f.read(), content_type='application/zip')
@@ -1410,7 +1530,7 @@ def download_series(request, series_id):
             return response
 
     except Exception as e:
-        print(f"Yassmine now the download_series FAILED - error: {str(e)}")
+        print(f"Nadine Yassmine - download_series FAILED - error: {str(e)}")
         return JsonResponse({'error': f'download failed: {str(e)}'}, status=500)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -1419,15 +1539,15 @@ def download_series(request, series_id):
 @api_view(['GET'])
 def download_patient(request, patient_id):
     if not request.user or not request.user.is_authenticated:
-        print(f"Yassmine now the download_patient endpoint FAILED - not authenticated")
+        print(f"Nadine Yassmine - download_patient endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
 
-    print(f"Yassmine now the download_patient endpoint works - patient_id: {patient_id}, user: {request.user.username}")
+    print(f"Nadine Yassmine - download_patient endpoint works - patient_id: {patient_id}, user: {request.user.username}")
 
     series_list = Series.objects.filter(patient_id=patient_id, user=request.user)
 
     if not series_list.exists():
-        print(f"Yassmine now the download_patient FAILED - no series found for patient: {patient_id}")
+        print(f"Nadine Yassmine - download_patient FAILED - no series found for patient: {patient_id}")
         return JsonResponse({'error': 'no series found for patient'}, status=404)
 
     temp_dir = tempfile.mkdtemp()
@@ -1443,7 +1563,7 @@ def download_patient(request, patient_id):
                         filename = os.path.basename(rel_path)
                         zipf.write(abs_path, os.path.join(series_folder, filename))
 
-        print(f"Yassmine now the download_patient SUCCESS - patient_id: {patient_id}, series: {series_list.count()}")
+        print(f"Nadine Yassmine - download_patient SUCCESS - patient_id: {patient_id}, series: {series_list.count()}")
 
         with open(zip_path, 'rb') as f:
             response = HttpResponse(f.read(), content_type='application/zip')
@@ -1451,7 +1571,7 @@ def download_patient(request, patient_id):
             return response
 
     except Exception as e:
-        print(f"Yassmine now the download_patient FAILED - error: {str(e)}")
+        print(f"Nadine Yassmine - download_patient FAILED - error: {str(e)}")
         return JsonResponse({'error': f'download failed: {str(e)}'}, status=500)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -1461,15 +1581,15 @@ def download_patient(request, patient_id):
 @api_view(['DELETE'])
 def delete_patient(request, patient_id):
     if not request.user or not request.user.is_authenticated:
-        print(f"Yassmine now the delete_patient endpoint FAILED - not authenticated")
+        print(f"Nadine Yassmine - delete_patient endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
 
-    print(f"Yassmine now the delete_patient endpoint works - patient_id: {patient_id}, user: {request.user.username}")
+    print(f"Nadine Yassmine - delete_patient endpoint works - patient_id: {patient_id}, user: {request.user.username}")
 
     series_list = Series.objects.filter(patient_id=patient_id, user=request.user)
 
     if not series_list.exists():
-        print(f"Yassmine now the delete_patient FAILED - no series found for patient: {patient_id}")
+        print(f"Nadine Yassmine - delete_patient FAILED - no series found for patient: {patient_id}")
         return JsonResponse({'error': 'no series found for patient'}, status=404)
 
     deleted_count = 0
@@ -1479,14 +1599,14 @@ def delete_patient(request, patient_id):
             job_dir = os.path.join(UPLOAD_DIR, job_id)
             if os.path.exists(job_dir):
                 shutil.rmtree(job_dir)
-                print(f"Yassmine now the delete_patient - deleted directory: {job_dir}")
+                print(f"Nadine Yassmine - delete_patient - deleted directory: {job_dir}")
         except Exception as e:
-            print(f"Yassmine now the delete_patient WARNING - failed to delete files for series {series.id}: {str(e)}")
+            print(f"Nadine Yassmine - delete_patient WARNING - failed to delete files for series {series.id}: {str(e)}")
 
         series.delete()
         deleted_count += 1
 
-    print(f"Yassmine now the delete_patient SUCCESS - patient_id: {patient_id}, deleted {deleted_count} series")
+    print(f"Nadine Yassmine - delete_patient SUCCESS - patient_id: {patient_id}, deleted {deleted_count} series")
     return JsonResponse({'message': f'patient deleted successfully ({deleted_count} series)'})
 
 
@@ -1536,14 +1656,24 @@ def check_emergency_limit(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def forgot_password(request):
+    print(f"Nadine Yassmine - FORGOT_PASSWORD ENDPOINT CALLED", flush=True)
+    sys.stdout.flush()
     try:
         data = json.loads(request.body)
         email = (data.get('email') or '').strip().lower()
+        print(f"Nadine Yassmine - forgot_password: received email: {email}", flush=True)
+        sys.stdout.flush()
         if not email:
             return JsonResponse({'ok': False, 'error': 'email required'}, status=400)
         try:
+            print(f"Nadine Yassmine - forgot_password: searching for user with email: {email}", flush=True)
+            sys.stdout.flush()
             user = User.objects.get(username=email)
+            print(f"Nadine Yassmine - forgot_password: user FOUND: {user.username}", flush=True)
+            sys.stdout.flush()
         except User.DoesNotExist:
+            print(f"Nadine Yassmine - forgot_password: user NOT FOUND with email: {email}", flush=True)
+            sys.stdout.flush()
             return JsonResponse({'ok': True, 'message': 'Si cet email existe, un lien de réinitialisation sera envoyé.'})
 
         PasswordResetToken.objects.filter(user=user).delete()
@@ -1574,10 +1704,27 @@ def forgot_password(request):
         plain_message = f"Réinitialisez votre mot de passe VisionMed:\n\n{reset_link}\n\nCe lien est valide 15 minutes."
 
         try:
-            send_mail(subject=subject, message=plain_message, from_email=settings.DEFAULT_FROM_EMAIL,
-                      recipient_list=[email], html_message=html_message, fail_silently=False)
+            print(f"Nadine Yassmine - forgot_password: Attempting to send email to {email}", flush=True)
+            print(f"Nadine Yassmine - EMAIL_BACKEND: {settings.EMAIL_BACKEND}", flush=True)
+            print(f"Nadine Yassmine - DEFAULT_FROM_EMAIL: {settings.DEFAULT_FROM_EMAIL}", flush=True)
+            print(f"Nadine Yassmine - reset_link: {reset_link}", flush=True)
+            sys.stdout.flush()
+            
+            # Send email asynchronously to avoid blocking HTTP response
+            send_email_async(
+                subject=subject,
+                message=plain_message,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[email],
+                html_message=html_message
+            )
+            print(f"Nadine Yassmine - forgot_password: Email request queued for {email}", flush=True)
+            sys.stdout.flush()
         except Exception as e:
-            print(f"Error sending email: {str(e)}")
+            print(f"Nadine Yassmine - Error queuing email: {str(e)}", flush=True)
+            import traceback
+            print(f"Nadine Yassmine - traceback: {traceback.format_exc()}", flush=True)
+            sys.stdout.flush()
 
         return JsonResponse({'ok': True, 'message': 'Si cet email existe, un lien de réinitialisation sera envoyé.'})
 

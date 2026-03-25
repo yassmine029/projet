@@ -202,8 +202,8 @@ export default function ResetPasswordPage({ onNavigate, token }) {
 
   return (
     <div className="min-h-screen flex bg-blue-50 font-sans">
-      <div className="flex-1 flex flex-col justify-center px-4 sm:px-6 lg:px-20 xl:px-24">
-        <div className="mx-auto w-full max-w-sm lg:w-96">
+      <div className="flex-1 flex flex-col justify-center px-4 sm:px-6 lg:px-20 xl:px-24 py-12">
+        <div className="mx-auto w-full max-w-sm lg:w-96 py-8">
 
           <div className="flex items-center gap-3 mb-6">
             <div className="w-10 h-10 bg-blue-900 rounded-xl flex items-center justify-center">

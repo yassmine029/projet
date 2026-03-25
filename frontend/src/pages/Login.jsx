@@ -175,7 +175,8 @@ export default function Login({ onLogin }) {
     if (!prenom.trim()) { setPrenomError('Requis'); hasError = true }
     if (!affiliation.trim()) { setAffiliationError('Requis'); hasError = true }
     if (!validateEmail(username)) { setEmailError('Email invalide'); hasError = true }
-    else if (isPersonalEmailDomain(username)) { setEmailError('Veuillez utiliser votre email professionnel'); hasError = true }
+    // TODO: Réactiver la vérification du domaine professionnel après tests
+    // else if (isPersonalEmailDomain(username)) { setEmailError('Veuillez utiliser votre email professionnel'); hasError = true }
     if (password.length < 8) { setPasswordError('Minimum 8 caractères'); hasError = true }
     if (!acceptTerms) { setError('Veuillez accepter les conditions'); hasError = true }
     if (!acceptPrivacy) { setError('Veuillez accepter la politique de confidentialité'); hasError = true }

@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.contrib.postgres.fields import ArrayField
+from django.core.validators import RegexValidator
 import secrets
 import uuid
 
@@ -52,14 +53,19 @@ class EmergencyLoginAttempt(models.Model):
         return f"Emergency attempts for {self.email}: {self.count}"
 
 
+dossier_number_regex = RegexValidator(
+    regex=r'^DOS-\d{4}-\d{4}$',
+    message='Dossier number must be in the format DOS-YYYY-NNNN.'
+)
+
 class Patient(models.Model):
     SEX_CHOICES = [
         ('M', 'Masculin'),
         ('F', 'Féminin'),
     ]
 
-    id = models.BigAutoField(primary_key=True)
-    num_dossier = models.CharField(max_length=50, unique=True)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    dossier_number = models.CharField(max_length=50, unique=True, validators=[dossier_number_regex])
     nom = models.CharField(max_length=100)
     prenom = models.CharField(max_length=100)
     date_naissance = models.DateField()
@@ -69,7 +75,16 @@ class Patient(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.nom} {self.prenom} - {self.num_dossier}"
+        return f"{self.nom} {self.prenom} - {self.dossier_number}"
+
+class MRIFile(models.Model):
+    patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='mri_files')
+    file = models.FileField(upload_to='patients_mri_files/') # No format restriction
+    original_filename = models.CharField(max_length=255)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.original_filename} for {self.patient.dossier_number}"
 
 
 class Reclamation(models.Model):

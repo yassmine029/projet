@@ -66,7 +66,7 @@ export default function PatientsList() {
           <p className="text-[#6b7280]">{patients.length} patients enregistrés</p>
         </div>
         <button 
-          onClick={() => setIsModalOpen(true)}
+          onClick={() => navigate('/new-patient')}
           className="flex items-center gap-2 px-5 py-2.5 bg-[#4f6ef7] text-white rounded-xl font-bold shadow-[0_4px_14px_rgba(79,110,247,0.3)] hover:bg-blue-600 transition-colors"
         >
           <Plus className="w-5 h-5" />
@@ -187,12 +187,14 @@ export default function PatientsList() {
         </div>
       </div>
 
-      {/* Create Patient Modal */}
+      {/* Create Patient Modal (disabled for reset) */}
+      {/*
       <PatientModal 
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)} 
         onPatientCreated={handlePatientCreated} 
       />
+      */}
     </div>
   );
 }

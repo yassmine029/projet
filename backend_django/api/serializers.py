@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Series, Average, Reclamation, Patient
+from .models import Series, Average, Reclamation, Patient, MRIFile
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -24,6 +24,14 @@ class AverageSerializer(serializers.ModelSerializer):
 class PatientSerializer(serializers.ModelSerializer):
     class Meta:
         model = Patient
+        fields = ('id', 'dossier_number', 'nom', 'prenom', 'date_naissance', 'sexe', 'autres_maladies', 'doctor', 'created_at')
+        # dossier_number is included by default as it is in fields
+        read_only_fields = ('id', 'doctor', 'created_at')
+
+
+class MRIFileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MRIFile
         fields = '__all__'
 
 

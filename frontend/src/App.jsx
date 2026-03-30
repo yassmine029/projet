@@ -17,6 +17,7 @@ import Dashboard from './pages/Dashboard'
 import PatientsList from './pages/dashboard/PatientsList'
 import PatientDetail from './pages/dashboard/PatientDetail'
 import ReclamationsList from './pages/dashboard/ReclamationsList'
+import NewPatient from './pages/NewPatient'
 import './index.css'
 
 import api, { checkSession, logout } from './api'
@@ -79,6 +80,7 @@ export default function App() {
         <Route path="patients/:id" element={<PatientDetail />} />
         <Route path="reclamations" element={<ReclamationsList />} />
       </Route>
+      <Route path="/new-patient" element={<NewPatient />} />
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>
   )

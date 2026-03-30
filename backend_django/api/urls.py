@@ -32,11 +32,9 @@ urlpatterns = [
     path('history', views.history, name='history'),
 
     # Patient routes
-    path('patients', views.list_patients, name='patients'),
-    path('patients/<int:patient_id>/', views.patient_detail_view, name='patient_detail_view'),
-    path('patient/<str:patient_id>/series', views.get_patient_series, name='patient_series'),
-    path('patient/<str:patient_id>/download', views.download_patient, name='download_patient'),
-    path('patient/<str:patient_id>', views.delete_patient, name='delete_patient'),
+    path('patients/', views.patients_list_create, name='patients_list_create'),
+    path('patients/<uuid:patient_id>/', views.patient_detail_update_delete, name='patient_detail_update_delete'),
+    path('patients/<uuid:patient_id>/mri-files/', views.mri_files_list_upload, name='mri_files_list_upload'),
 
     # Reclamation routes
     path('reclamations/', views.reclamations_list_create, name='reclamations_list_create'),
@@ -52,9 +50,4 @@ urlpatterns = [
 
     # Brodmann projection route
     path('project_brodmann', views.project_brodmann, name='project_brodmann'),
-
-
-    # Dashboard Patient routes
-    path('patients/', views.list_patients, name='list_patients'),
-    path('patients/<int:patient_id>/', views.patient_detail_view, name='patient_detail_view_dashboard'),
 ]

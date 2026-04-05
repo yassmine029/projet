@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Series, Average, PatientImageOrientation, PatientImage
+from .models import Series, Average, PatientImageOrientation, PatientImage, Reclamation, Patient, MRIFile
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -21,6 +21,7 @@ class AverageSerializer(serializers.ModelSerializer):
         fields = ('id', 'name', 'files', 'created_at')
 
 
+# ✅ Tes serializers (Yesmine)
 class OrientationSerializer(serializers.ModelSerializer):
     class Meta:
         model = PatientImageOrientation
@@ -45,3 +46,23 @@ class PatientImageSerializer(serializers.ModelSerializer):
         if obj.image and request:
             return request.build_absolute_uri(obj.image.url)
         return None
+
+
+# ✅ Serializers de Nadine
+class PatientSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Patient
+        fields = ('id', 'dossier_number', 'nom', 'prenom', 'date_naissance', 'sexe', 'autres_maladies', 'doctor', 'created_at')
+        read_only_fields = ('id', 'doctor', 'created_at')
+
+
+class MRIFileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MRIFile
+        fields = '__all__'
+
+
+class ReclamationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Reclamation
+        fields = '__all__'

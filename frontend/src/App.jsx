@@ -12,6 +12,13 @@ import BrodmannPage from "./pages/Brodmann"
 import Brodmann3DPage from "./pages/Brodmann3D"
 import ExplorationPage from "./pages/ExplorationPage"
 
+import PrivacyPage from './pages/PrivacyPage'
+import TermsPage from './pages/TermsPage'
+import Dashboard from './pages/Dashboard'
+import PatientsList from './pages/dashboard/PatientsList'
+import PatientDetail from './pages/dashboard/PatientDetail'
+import ReclamationsList from './pages/dashboard/ReclamationsList'
+import NewPatient from './pages/NewPatient'
 import './index.css'
 
 import api, { checkSession, logout } from './api'
@@ -22,6 +29,9 @@ export default function App() {
   const [checking, setChecking] = useState(true)
 
   // 🔐 Vérification session au chargement
+  const [user, setUser] = useState(null)
+  const [checking, setChecking] = useState(true)
+
   useEffect(() => {
     checkSession()
       .then(r => {
@@ -41,12 +51,10 @@ export default function App() {
     return <div style={{ padding: 40 }}>Vérification session...</div>
   }
 
-  // 🔑 Non connecté → Login
   if (!user) {
     return <Login onLogin={setUser} />
   }
 
-  // 🚪 Déconnexion
   const doLogout = async () => {
     try {
       await logout()
@@ -57,7 +65,7 @@ export default function App() {
   }
 
   const handleNavigate = (page) => {
-    navigate(`/${page}`)
+    window.location.pathname = `/${page}`
   }
 
   return (
@@ -69,6 +77,8 @@ export default function App() {
       <Route path="/registration" element={<RegistrationPage user={user} accessToken={null} onNavigate={handleNavigate} />} />
 
       {/* Fonctionnalités */}
+      <Route path="/" element={<LandingPage user={user} onNavigate={handleNavigate} onLogout={doLogout} />} />
+      <Route path="/registration" element={<RegistrationPage user={user} accessToken={null} onNavigate={handleNavigate} />} />
       <Route path="/upload" element={<Upload />} />
       <Route path="/history" element={<History />} />
       <Route path="/patients" element={<Patients />} />
@@ -79,6 +89,16 @@ export default function App() {
 
 
       {/* Sécurité */}
+      <Route path="/brodmann3D" element={<Brodmann3DPage />} />
+      <Route path="/exploration" element={<ExplorationPage />} />
+      <Route path="/privacy" element={<PrivacyPage />} />
+      <Route path="/terms" element={<TermsPage />} />
+      <Route path="/dashboard" element={<Dashboard />}>
+        <Route path="patients" element={<PatientsList />} />
+        <Route path="patients/:id" element={<PatientDetail />} />
+        <Route path="reclamations" element={<ReclamationsList />} />
+      </Route>
+      <Route path="/new-patient" element={<NewPatient />} />
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>
   )

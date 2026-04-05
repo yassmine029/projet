@@ -7,6 +7,7 @@ import shutil
 import json
 import uuid
 import base64
+import threading
 from datetime import datetime
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
@@ -24,10 +25,23 @@ from rest_framework import status
 from .models import Series, PatientImageOrientation, PatientImage
 from .serializers import OrientationSerializer, PatientImageSerializer
 from django.shortcuts import get_object_or_404
+from django.core.validators import RegexValidator
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from .models import Series
+from django.shortcuts import get_object_or_404, Http404
 
 import numpy as np
 import cv2
 from PIL import Image, ImageOps
+
+from datetime import timedelta
+from django.utils import timezone
+from django.core.mail import send_mail
+# from django.core.paginator import Paginator # Not used, can be removed
+from django.db.models import Q
+from .models import Series, PasswordResetToken, EmergencyLoginAttempt, Patient, Reclamation, MRIFile
+from .serializers import ReclamationSerializer, PatientSerializer, MRIFileSerializer
 
 # auto_registration (ANTs) supprimé — MINE uniquement
 from .mine_registration import run_mine_registration
@@ -42,6 +56,35 @@ JOBS = {}
 UPLOAD_DIR = settings.MEDIA_ROOT
 MEDIA_ROOT = settings.MEDIA_ROOT
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+def send_email_async(subject, message, from_email, recipient_list, html_message=None):
+    """Send email in a background thread to avoid blocking HTTP response"""
+    def _send():
+        try:
+            print(f"Nadine Yassmine - [ASYNC EMAIL] Starting send to {recipient_list}", flush=True)
+            sys.stdout.flush()
+            send_mail(
+                subject=subject,
+                message=message,
+                from_email=from_email,
+                recipient_list=recipient_list,
+                html_message=html_message,
+                fail_silently=False
+            )
+            print(f"Nadine Yassmine - [ASYNC EMAIL] Success to {recipient_list}", flush=True)
+            sys.stdout.flush()
+        except Exception as e:
+            print(f"Nadine Yassmine - [ASYNC EMAIL] Failed to {recipient_list}: {str(e)}", flush=True)
+            import traceback
+            print(f"Nadine Yassmine - [ASYNC EMAIL] traceback: {traceback.format_exc()}", flush=True)
+            sys.stdout.flush()
+    
+    thread = threading.Thread(target=_send, daemon=True)
+    thread.start()
+    print(f"Nadine Yassmine - [ASYNC EMAIL] Thread started for {recipient_list}", flush=True)
+    sys.stdout.flush()
+
 
 
 def make_preview(path, size=(512, 512)):
@@ -390,19 +433,25 @@ def register(request):
 @require_http_methods(["POST"])
 def login_view(request):
     try:
+        print(f"Nadine Yassmine - login endpoint reached - body: {request.body}")
         data = json.loads(request.body)
         username = (data.get('username') or '').strip()
         password = data.get('password') or ''
+        print(f"Nadine Yassmine - login attempt - username: {username}")
 
         user = authenticate(request, username=username, password=password)
         if user is None:
+            print(f"Nadine Yassmine - login failed - user not found: {username}")
             return JsonResponse({'ok': False, 'error': 'invalid credentials'}, status=401)
 
         login(request, user)
         request.session['username'] = username
+        print(f"Nadine Yassmine - login success - user: {username}")
         return JsonResponse({'ok': True, 'message': 'Connexion réussie', 'user': username})
     except Exception as e:
-        print(f"Error in login: {e}")
+        import traceback
+        print(f"Nadine Yassmine - Error in login: {e}")
+        print(f"Nadine Yassmine - traceback: {traceback.format_exc()}")
         return JsonResponse({'ok': False, 'error': 'Internal Server Error'}, status=500)
 
 
@@ -1546,7 +1595,346 @@ def delete_patient(request, patient_id):
         series.delete()
         deleted_count += 1
 
-    print(f"Yassmine now the delete_patient SUCCESS - patient_id: {patient_id}, deleted {deleted_count} series")
+    print(f"Nadine Yassmine - delete_patient SUCCESS - patient_id: {patient_id}, deleted {deleted_count} series")
     return JsonResponse({'message': f'patient deleted successfully ({deleted_count} series)'})
 
 
+@csrf_exempt
+@require_http_methods(["POST"])
+def emergency_login(request):
+    try:
+        data = json.loads(request.body)
+        email = (data.get('email') or '').strip().lower()
+        if not email:
+            return JsonResponse({'ok': False, 'error': 'Email requis'}, status=400)
+        try:
+            user = User.objects.get(username=email)
+        except User.DoesNotExist:
+            return JsonResponse({'ok': False, 'error': 'Aucun compte trouvé avec cet email professionnel.'}, status=404)
+        attempt, created = EmergencyLoginAttempt.objects.get_or_create(email=email)
+        if attempt.count >= 5:
+            return JsonResponse({'ok': False, 'error': 'Limite d\'accès d\'urgence atteinte (max 5).'}, status=403)
+        attempt.count += 1
+        attempt.save()
+        login(request, user)
+        request.session['username'] = user.username
+        return JsonResponse({'ok': True, 'message': f'Connexion d\'urgence réussie ({attempt.count}/5)', 'user': user.username, 'count': attempt.count})
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'JSON invalide'}, status=400)
+    except Exception as e:
+        return JsonResponse({'ok': False, 'error': 'Erreur serveur interne'}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def check_emergency_limit(request):
+    try:
+        data = json.loads(request.body)
+        email = (data.get('email') or '').strip().lower()
+        if not email:
+            return JsonResponse({'ok': False, 'error': 'Email requis'}, status=400)
+        attempt = EmergencyLoginAttempt.objects.filter(email=email).first()
+        count = attempt.count if attempt else 0
+        return JsonResponse({'ok': True, 'count': count, 'remaining': max(0, 5 - count)})
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'JSON invalide'}, status=400)
+    except Exception as e:
+        return JsonResponse({'ok': False, 'error': 'Erreur serveur interne'}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def forgot_password(request):
+    print(f"Nadine Yassmine - FORGOT_PASSWORD ENDPOINT CALLED", flush=True)
+    sys.stdout.flush()
+    try:
+        data = json.loads(request.body)
+        email = (data.get('email') or '').strip().lower()
+        print(f"Nadine Yassmine - forgot_password: received email: {email}", flush=True)
+        sys.stdout.flush()
+        if not email:
+            return JsonResponse({'ok': False, 'error': 'email required'}, status=400)
+        try:
+            print(f"Nadine Yassmine - forgot_password: searching for user with email: {email}", flush=True)
+            sys.stdout.flush()
+            user = User.objects.get(username=email)
+            print(f"Nadine Yassmine - forgot_password: user FOUND: {user.username}", flush=True)
+            sys.stdout.flush()
+        except User.DoesNotExist:
+            print(f"Nadine Yassmine - forgot_password: user NOT FOUND with email: {email}", flush=True)
+            sys.stdout.flush()
+            return JsonResponse({'ok': True, 'message': 'Si cet email existe, un lien de réinitialisation sera envoyé.'})
+
+        PasswordResetToken.objects.filter(user=user).delete()
+        reset_token = PasswordResetToken.objects.create(
+            user=user,
+            expires_at=timezone.now() + timedelta(minutes=15)
+        )
+
+        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+        reset_link = f"{frontend_url}/reset-password?token={reset_token.token}"
+
+        subject = "VisionMed - Lien de réinitialisation de mot de passe"
+        html_message = f"""
+        <html><body style="font-family: Arial, sans-serif;">
+            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+                <h1 style="color: #2563eb;">VisionMed</h1>
+                <h2>Réinitialisation de votre mot de passe</h2>
+                <p>Vous avez demandé la réinitialisation de votre mot de passe VisionMed.</p>
+                <p style="margin: 30px 0;">
+                    <a href="{reset_link}" style="padding: 12px 30px; background-color: #2563eb; color: white; text-decoration: none; border-radius: 6px;">
+                        Réinitialiser mon mot de passe
+                    </a>
+                </p>
+                <p style="color: #666; font-size: 12px;">Ce lien reste valide pendant 15 minutes.</p>
+            </div>
+        </body></html>
+        """
+        plain_message = f"Réinitialisez votre mot de passe VisionMed:\n\n{reset_link}\n\nCe lien est valide 15 minutes."
+
+        try:
+            print(f"Nadine Yassmine - forgot_password: Attempting to send email to {email}", flush=True)
+            print(f"Nadine Yassmine - EMAIL_BACKEND: {settings.EMAIL_BACKEND}", flush=True)
+            print(f"Nadine Yassmine - DEFAULT_FROM_EMAIL: {settings.DEFAULT_FROM_EMAIL}", flush=True)
+            print(f"Nadine Yassmine - reset_link: {reset_link}", flush=True)
+            sys.stdout.flush()
+            
+            # Send email asynchronously to avoid blocking HTTP response
+            send_email_async(
+                subject=subject,
+                message=plain_message,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[email],
+                html_message=html_message
+            )
+            print(f"Nadine Yassmine - forgot_password: Email request queued for {email}", flush=True)
+            sys.stdout.flush()
+        except Exception as e:
+            print(f"Nadine Yassmine - Error queuing email: {str(e)}", flush=True)
+            import traceback
+            print(f"Nadine Yassmine - traceback: {traceback.format_exc()}", flush=True)
+            sys.stdout.flush()
+
+        return JsonResponse({'ok': True, 'message': 'Si cet email existe, un lien de réinitialisation sera envoyé.'})
+
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'invalid JSON'}, status=400)
+    except Exception as e:
+        return JsonResponse({'ok': False, 'error': 'Internal Server Error'}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def validate_reset_token(request):
+    try:
+        data = json.loads(request.body)
+        token = (data.get('token') or '').strip()
+        if not token:
+            return JsonResponse({'ok': False, 'error': 'token required'}, status=400)
+        try:
+            reset_token = PasswordResetToken.objects.get(token=token)
+        except PasswordResetToken.DoesNotExist:
+            return JsonResponse({'ok': False, 'error_type': 'token_invalid', 'error': 'Lien invalide'}, status=400)
+        if not reset_token.is_valid():
+            if timezone.now() > reset_token.expires_at:
+                return JsonResponse({'ok': False, 'error_type': 'token_expired', 'error': 'Lien expiré'}, status=400)
+            return JsonResponse({'ok': False, 'error_type': 'token_invalid', 'error': 'Lien déjà utilisé'}, status=400)
+        return JsonResponse({'ok': True, 'message': 'Token valide'})
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'invalid JSON'}, status=400)
+    except Exception as e:
+        return JsonResponse({'ok': False, 'error': 'Internal Server Error'}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def reset_password(request):
+    try:
+        data = json.loads(request.body)
+        token = (data.get('token') or '').strip()
+        new_password = data.get('new_password') or ''
+        if not token or not new_password:
+            return JsonResponse({'ok': False, 'error': 'token and new_password required'}, status=400)
+        try:
+            reset_token = PasswordResetToken.objects.get(token=token)
+        except PasswordResetToken.DoesNotExist:
+            return JsonResponse({'ok': False, 'error_type': 'token_invalid', 'error': 'Lien invalide'}, status=400)
+        if not reset_token.is_valid():
+            if timezone.now() > reset_token.expires_at:
+                return JsonResponse({'ok': False, 'error_type': 'token_expired', 'error': 'Lien expiré'}, status=400)
+            return JsonResponse({'ok': False, 'error_type': 'token_invalid', 'error': 'Lien déjà utilisé'}, status=400)
+        user = reset_token.user
+        user.set_password(new_password)
+        user.save()
+        reset_token.is_used = True
+        reset_token.save()
+        return JsonResponse({'ok': True, 'message': 'Mot de passe réinitialisé avec succès'})
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'invalid JSON'}, status=400)
+    except Exception as e:
+        return JsonResponse({'ok': False, 'error': 'Internal Server Error'}, status=500)
+
+
+@login_required
+def patient_detail_update_delete(request, patient_id: uuid.UUID):
+    print(f"Nadine Yassmine - patient_detail_update_delete endpoint works - patient_id: {patient_id}, method: {request.method}, user: {request.user.username}")
+    patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
+
+    if request.method == 'GET':
+        serializer = PatientSerializer(patient)
+        return JsonResponse({'ok': True, 'patient': serializer.data})
+
+    elif request.method == 'PATCH':
+        try:
+            data = json.loads(request.body)
+            # Validate dossier_number if it's being updated
+            if 'dossier_number' in data and data['dossier_number'] != patient.dossier_number:
+                dossier_number_validator = RegexValidator(regex=r'^DOS-\d{4}-\d{4}$', message='Dossier number must be in the format DOS-YYYY-NNNN.')
+                try:
+                    dossier_number_validator(data['dossier_number'])
+                except Exception as e:
+                    return JsonResponse({'ok': False, 'error': str(e)}, status=400)
+                # Check for uniqueness if changed
+                if Patient.objects.filter(dossier_number=data['dossier_number']).exclude(id=patient_id).exists():
+                    return JsonResponse({'ok': False, 'error': f"Dossier number '{data['dossier_number']}' already exists."}, status=400)
+
+            serializer = PatientSerializer(patient, data=data, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                return JsonResponse({'ok': True, 'patient': serializer.data, 'message': 'Patient updated successfully'})
+            return JsonResponse({'ok': False, 'errors': serializer.errors}, status=400)
+        except json.JSONDecodeError:
+            return JsonResponse({'ok': False, 'error': 'Invalid JSON'}, status=400)
+        except Exception as e:
+            print(f"Nadine Yassmine - PATCH /patients/{patient_id}/ FAILED - Exception: {str(e)}", flush=True)
+            import traceback
+            print(f"Nadine Yassmine - PATCH /patients/{patient_id}/ traceback: {traceback.format_exc()}", flush=True)
+            return JsonResponse({'ok': False, 'error': f'Internal Server Error: {str(e)}'}, status=500)
+
+    elif request.method == 'DELETE':
+        try:
+            # Delete associated Series (using dossier_number as the link)
+            series_to_delete = Series.objects.filter(patient_id=patient.dossier_number, user=request.user)
+            for s in series_to_delete:
+                job_dir = os.path.join(UPLOAD_DIR, s.job_id)
+                if os.path.exists(job_dir):
+                    shutil.rmtree(job_dir)
+                    print(f"Nadine Yassmine - delete_patient - deleted series directory: {job_dir}")
+                s.delete()
+            
+            # Delete MRI files directory
+            patient_mri_dir = os.path.join(settings.MEDIA_ROOT, 'patients', str(patient.id))
+            if os.path.exists(patient_mri_dir):
+                shutil.rmtree(patient_mri_dir)
+                print(f"Nadine Yassmine - delete_patient - deleted MRI files directory: {patient_mri_dir}")
+
+            patient.delete() # This will CASCADE delete MRIFile objects
+            return JsonResponse({'ok': True, 'message': 'Patient and all associated data deleted successfully'})
+        except Exception as e:
+            print(f"Nadine Yassmine - DELETE /patients/{patient_id}/ FAILED - Exception: {str(e)}", flush=True)
+            import traceback
+            print(f"Nadine Yassmine - DELETE /patients/{patient_id}/ traceback: {traceback.format_exc()}", flush=True)
+            return JsonResponse({'ok': False, 'error': f'Internal Server Error: {str(e)}'}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@login_required
+def upload_mri_files(request, patient_id: uuid.UUID):
+    print(f"Nadine Yassmine - upload_mri_files endpoint works - patient_id: {patient_id}, user: {request.user.username}")
+    patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
+
+    files = request.FILES.getlist('files')
+    if not files:
+        return JsonResponse({'ok': False, 'error': 'No files provided'}, status=400)
+
+    patient_mri_dir = os.path.join(settings.MEDIA_ROOT, 'patients', str(patient.id), 'mri_files')
+    os.makedirs(patient_mri_dir, exist_ok=True)
+
+    uploaded_count = 0
+    errors = []
+    for f in files:
+        try:
+            file_path = os.path.join(patient_mri_dir, f.name)
+            with open(file_path, 'wb+') as destination:
+                for chunk in f.chunks():
+                    destination.write(chunk)
+            
+            MRIFile.objects.create(
+                patient=patient,
+                file=os.path.relpath(file_path, settings.MEDIA_ROOT),
+                original_filename=f.name
+            )
+            uploaded_count += 1
+        except Exception as e:
+            errors.append(f"Failed to upload {f.name}: {str(e)}")
+            print(f"Nadine Yassmine - upload_mri_files FAILED for {f.name}: {str(e)}")
+
+    if errors:
+        return JsonResponse({'ok': False, 'message': f'Uploaded {uploaded_count} files with errors: {"; ".join(errors)}'}, status=400)
+    return JsonResponse({'ok': True, 'message': f'Successfully uploaded {uploaded_count} files for patient {patient.dossier_number}'})
+
+
+@api_view(['GET'])
+@login_required
+def list_mri_files(request, patient_id: uuid.UUID):
+    print(f"Nadine Yassmine - list_mri_files endpoint works - patient_id: {patient_id}, user: {request.user.username}")
+    patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
+    mri_files = MRIFile.objects.filter(patient=patient).order_by('-uploaded_at')
+    serializer = MRIFileSerializer(mri_files, many=True)
+    return JsonResponse({'ok': True, 'mri_files': serializer.data})
+
+
+# The original get_patient_series and patient_file views remain, as they deal with Series objects
+# which are still linked by CharField patient_id and job_id.
+# If the intention was to replace Series with MRIFile for all image handling,
+# then these views would need significant refactoring or removal.
+# Based on the prompt, MRIFile is an *additional* model for patient-specific files,
+# not necessarily replacing the Series concept for alignment jobs.
+
+
+# The original delete_patient view is now replaced by the DELETE method in patient_detail_update_delete.
+# The original patient_detail_view is now replaced by the GET method in patient_detail_update_delete.
+
+# The original list_patients is now list_patients_create.
+
+
+@csrf_exempt
+@login_required
+def reclamations_list_create(request):
+    user = request.user
+    if request.method == 'GET':
+        queryset = Reclamation.objects.filter(user=user).order_by('-date')
+        data = []
+        for rec in queryset:
+            rec_data = ReclamationSerializer(rec).data
+            rec_data['fichier_url'] = rec.fichier.url if rec.fichier else None
+            data.append(rec_data)
+        return JsonResponse({'ok': True, 'reclamations': data})
+
+    elif request.method == 'POST':
+        description = request.POST.get('description', '')
+        if not description:
+            return JsonResponse({'ok': False, 'error': 'description required'}, status=400)
+        fichier = request.FILES.get('fichier', None)
+        try:
+            reclamation = Reclamation.objects.create(user=user, description=description, fichier=fichier)
+            rec_data = ReclamationSerializer(reclamation).data
+            rec_data['fichier_url'] = reclamation.fichier.url if reclamation.fichier else None
+            return JsonResponse({'ok': True, 'reclamation': rec_data}, status=201)
+        except Exception as e:
+            return JsonResponse({'ok': False, 'error': str(e)}, status=400)
+
+
+@csrf_exempt
+@login_required
+def reclamation_detail(request, reclamation_id):
+    user = request.user
+    try:
+        reclamation = Reclamation.objects.get(id=reclamation_id, user=user)
+    except Reclamation.DoesNotExist:
+        return JsonResponse({'ok': False, 'error': 'Reclamation not found'}, status=404)
+    if request.method == 'GET':
+        rec_data = ReclamationSerializer(reclamation).data
+        rec_data['fichier_url'] = reclamation.fichier.url if reclamation.fichier else None
+        return JsonResponse({'ok': True, 'reclamation': rec_data})

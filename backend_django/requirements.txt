@@ -6,7 +6,11 @@ django-cors-headers
 numpy
 opencv-python
 Pillow
+nibabel
+SimpleITK
+nilearn
 torch
 torchvision
 scikit-image
 scipy
+channels

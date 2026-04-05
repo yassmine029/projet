@@ -1,0 +1,69 @@
+{% load static %}
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Slice Viewer</title>
+    <link rel="stylesheet" href="{% static 'css/sliceViewer.css' %}">
+    <style>
+      body {
+        margin: 24px;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        background: #f7f9fc;
+        color: #1f2937;
+      }
+      .page {
+        max-width: 760px;
+      }
+      .upload-row {
+        margin-bottom: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <h1>Selection de coupe NIfTI</h1>
+      <p>Chargez un volume, naviguez dans les axes, puis confirmez la coupe.</p>
+
+      <div class="upload-row">
+        <input id="file-input" type="file" accept=".nii,.nii.gz,image/*">
+      </div>
+
+      <div id="slice-viewer-container" style="max-width: 520px;"></div>
+    </main>
+
+    <script type="module">
+      import SliceViewer from '{% static "js/sliceViewer.js" %}';
+
+      async function handleUpload(file) {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const res = await fetch('/api/volume/upload', { method: 'POST', body: formData });
+        const data = await res.json();
+
+        if (!data.success) {
+          alert('Erreur : ' + data.error);
+          return;
+        }
+
+        const viewer = new SliceViewer('slice-viewer-container', {
+          jobId: data.jobId,
+          shape: data.shape,
+          suggested: data.suggested,
+          apiBase: '/api',
+        });
+
+        viewer.onConfirm = ({ axis, index }) => {
+          console.log(`Coupe confirmee : ${axis} n°${index + 1}`);
+          // Branchez ici votre etape de recalage.
+        };
+      }
+
+      document.getElementById('file-input').addEventListener('change', e => {
+        if (e.target.files[0]) handleUpload(e.target.files[0]);
+      });
+    </script>
+  </body>
+</html>

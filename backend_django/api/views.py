@@ -16,9 +16,13 @@ from django.http import JsonResponse, HttpResponse, FileResponse
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.decorators import login_required
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, parser_classes
 from rest_framework.permissions import AllowAny
-from .models import Series
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.response import Response
+from rest_framework import status
+from .models import Series, PatientImageOrientation, PatientImage
+from .serializers import OrientationSerializer, PatientImageSerializer
 from django.shortcuts import get_object_or_404
 
 import numpy as np
@@ -281,6 +285,47 @@ def brain_normalize(img, out_size=(512, 512)):
     return norm_img, norm_mask, meta
 
 
+@api_view(["POST"])
+def save_orientation(request):
+    patient_id = request.data.get("patient_id")
+    if not patient_id:
+        return Response({"error": "patient_id est requis."}, status=status.HTTP_400_BAD_REQUEST)
+
+    instance, _ = PatientImageOrientation.objects.get_or_create(patient_id=int(patient_id))
+    serializer = OrientationSerializer(instance, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET"])
+def load_orientation(request, patient_id):
+    try:
+        instance = PatientImageOrientation.objects.get(patient_id=patient_id)
+    except PatientImageOrientation.DoesNotExist:
+        return Response({"detail": "Aucune orientation trouvee."}, status=status.HTTP_404_NOT_FOUND)
+
+    serializer = OrientationSerializer(instance)
+    return Response(serializer.data)
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+def viewer_upload_image(request):
+    patient_id = request.data.get("patient_id")
+    image_file = request.FILES.get("image")
+
+    if not patient_id:
+        return Response({"error": "patient_id est requis."}, status=status.HTTP_400_BAD_REQUEST)
+    if not image_file:
+        return Response({"error": "Aucun fichier image fourni."}, status=status.HTTP_400_BAD_REQUEST)
+
+    obj = PatientImage.objects.create(patient_id=int(patient_id), image=image_file)
+    serializer = PatientImageSerializer(obj, context={"request": request})
+    return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
 def _mask_sdf01(mask_u8):
     m = (mask_u8 > 0).astype(np.uint8)
     dist_in = cv2.distanceTransform(m, cv2.DIST_L2, 3)
@@ -375,7 +420,11 @@ def logout_view(request):
 def check_session(request):
     if request.user and request.user.is_authenticated:
         print(f"Yassmine now the check_session works - user: {request.user.username}")
-        return JsonResponse({'logged_in': True, 'user': request.user.username})
+        return JsonResponse({
+            'logged_in': True, 
+            'user': request.user.username,
+            'is_staff': request.user.is_staff
+        })
     print(f"Yassmine now the check_session works - no authenticated user")
     return JsonResponse({'logged_in': False})
 
@@ -468,12 +517,31 @@ def align(request):
     if ref is None or pat is None:
         print(f"Yassmine now the align FAILED - cannot read images for job_id: {job_id}")
         return JsonResponse({'error': 'cannot read images'}, status=500)
-    ref = cv2.resize(ref, (512, 512))
-    pat = cv2.resize(pat, (512, 512))
+
+    # Keep a fixed working canvas but scale clicked landmarks accordingly.
+    # Frontend points are in original image pixel coordinates.
+    ref_h0, ref_w0 = ref.shape[:2]
+    pat_h0, pat_w0 = pat.shape[:2]
+    target_w, target_h = 512, 512
+
+    ref = cv2.resize(ref, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+    pat = cv2.resize(pat, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+
+    sx_ref = float(target_w) / float(max(ref_w0, 1))
+    sy_ref = float(target_h) / float(max(ref_h0, 1))
+    sx_pat = float(target_w) / float(max(pat_w0, 1))
+    sy_pat = float(target_h) / float(max(pat_h0, 1))
+
+    X_scaled = X.copy()
+    Y_scaled = Y.copy()
+    X_scaled[:, 0] *= sx_ref
+    X_scaled[:, 1] *= sy_ref
+    Y_scaled[:, 0] *= sx_pat
+    Y_scaled[:, 1] *= sy_pat
     # ✅ RANSAC estimateAffinePartial2D — plus robuste que procrustes
     # ignore automatiquement les points mal placés (outliers)
-    src_pts = Y.astype(np.float32)
-    dst_pts = X.astype(np.float32)
+    src_pts = Y_scaled.astype(np.float32)
+    dst_pts = X_scaled.astype(np.float32)
     M, inliers = cv2.estimateAffinePartial2D(
         src_pts, dst_pts,
         method=cv2.RANSAC,
@@ -483,7 +551,7 @@ def align(request):
     )
     if M is None:
         # fallback procrustes si RANSAC échoue
-        _, Z, tform = procrustes(X, Y)
+        _, Z, tform = procrustes(X_scaled, Y_scaled)
         M = affine_from_tform(tform)
         inliers = None
         print(f"Yassmine RANSAC failed, fallback to procrustes for job_id: {job_id}")
@@ -1480,3 +1548,5 @@ def delete_patient(request, patient_id):
 
     print(f"Yassmine now the delete_patient SUCCESS - patient_id: {patient_id}, deleted {deleted_count} series")
     return JsonResponse({'message': f'patient deleted successfully ({deleted_count} series)'})
+
+

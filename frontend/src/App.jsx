@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 
 import Login from './pages/Login'
@@ -11,11 +11,13 @@ import PredictionPage from "./pages/Prediction"
 import BrodmannPage from "./pages/Brodmann"
 import Brodmann3DPage from "./pages/Brodmann3D"
 import ExplorationPage from "./pages/ExplorationPage"
+
 import './index.css'
 
 import api, { checkSession, logout } from './api'
 
 export default function App() {
+  const navigate = useNavigate()
   const [user, setUser] = useState(null)
   const [checking, setChecking] = useState(true)
 
@@ -27,7 +29,7 @@ export default function App() {
           const u =
             (r.data.user && typeof r.data.user === 'object')
               ? r.data.user
-              : { username: r.data.user, fullName: r.data.user }
+              : { username: r.data.user, fullName: r.data.user, is_staff: r.data.is_staff }
           setUser(u)
         }
       })
@@ -55,7 +57,7 @@ export default function App() {
   }
 
   const handleNavigate = (page) => {
-    window.location.pathname = `/${page}`
+    navigate(`/${page}`)
   }
 
   return (
@@ -72,8 +74,9 @@ export default function App() {
       <Route path="/patients" element={<Patients />} />
       <Route path="/prediction" element={<PredictionPage />} />
       <Route path="/brodmann" element={<BrodmannPage />} />
-      <Route path="/brodmann3D" element={<Brodmann3DPage />} />
       <Route path="/exploration" element={<ExplorationPage />} />
+      <Route path="/brodmann3D" element={<Brodmann3DPage />} />
+
 
       {/* Sécurité */}
       <Route path="*" element={<Navigate to="/" />} />

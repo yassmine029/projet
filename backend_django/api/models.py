@@ -25,3 +25,23 @@ class Average(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class PatientImageOrientation(models.Model):
+    patient_id = models.IntegerField(unique=True, db_index=True)
+    rotation = models.IntegerField(default=0)
+    flip_h = models.BooleanField(default=False)
+    flip_v = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Orientation patient {self.patient_id}"
+
+
+class PatientImage(models.Model):
+    patient_id = models.IntegerField(db_index=True)
+    image = models.ImageField(upload_to='patient_images/%Y/%m/%d')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"PatientImage {self.id} (patient {self.patient_id})"

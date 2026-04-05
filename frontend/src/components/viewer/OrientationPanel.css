@@ -1,0 +1,204 @@
+.op-panel {
+  width: 200px;
+  min-width: 200px;
+  background: #111820;
+  border: 1px solid #1e3a5f;
+  border-radius: 10px;
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  font-family: "Courier New", monospace;
+  color: #c5d8f0;
+}
+
+.op-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #1e3a5f;
+  padding-bottom: 10px;
+}
+
+.op-title {
+  font-size: 11px;
+  color: #00bfff;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.op-btn-reset {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #1a0f2e;
+  border: 1px solid #3a1e5f;
+  color: #a78bfa;
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 10px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+.op-btn-reset:hover { background: #2a1a4a; }
+
+.op-section { display: flex; flex-direction: column; gap: 6px; }
+.op-section--center { align-items: center; }
+
+.op-label {
+  font-size: 9px;
+  color: #3a6fa8;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.op-angle-display {
+  background: #0d1a2a;
+  border: 1px solid #1e3a5f;
+  border-radius: 6px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.op-angle-value {
+  font-size: 26px;
+  font-weight: 700;
+  color: #00e5ff;
+  line-height: 1;
+  min-width: 52px;
+}
+.op-angle-unit { font-size: 12px; color: #3a6fa8; }
+
+.op-slider {
+  width: 100%;
+  accent-color: #00bfff;
+  cursor: pointer;
+  height: 4px;
+  background: #1e3a5f;
+  border-radius: 2px;
+  outline: none;
+}
+
+.op-presets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+
+.op-preset-btn {
+  background: #0f1e30;
+  border: 1px solid #1e3a5f;
+  border-radius: 6px;
+  padding: 6px 4px;
+  font-size: 11px;
+  color: #7dd3fc;
+  cursor: pointer;
+  text-align: center;
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s;
+}
+.op-preset-btn:hover { background: #1a3a5c; }
+.op-preset-btn--active {
+  background: #0e4a7a;
+  border-color: #00bfff;
+  color: #00e5ff;
+}
+
+.op-flip-row { display: flex; gap: 5px; }
+
+.op-flip-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: #0f1e30;
+  border: 1px solid #1e3a5f;
+  border-radius: 6px;
+  padding: 6px 4px;
+  font-size: 10px;
+  color: #7dd3fc;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s;
+}
+.op-flip-btn:hover { background: #1a3a5c; }
+.op-flip-btn--active {
+  background: #0e3a2a;
+  border-color: #00e5a0;
+  color: #00e5a0;
+}
+
+.op-compass { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+
+.op-compass-ring {
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  border: 1.5px solid #1e3a5f;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.op-compass-lbl {
+  position: absolute;
+  font-size: 9px;
+  color: #3a6fa8;
+  font-family: inherit;
+}
+.op-compass-lbl--s { top: 3px; left: 50%; transform: translateX(-50%); }
+.op-compass-lbl--i { bottom: 3px; left: 50%; transform: translateX(-50%); }
+.op-compass-lbl--l { left: 3px; top: 50%; transform: translateY(-50%); }
+.op-compass-lbl--r { right: 3px; top: 50%; transform: translateY(-50%); }
+
+.op-compass-arrow {
+  position: absolute;
+  width: 2px;
+  height: 24px;
+  background: linear-gradient(to bottom, #00e5ff, transparent);
+  top: 8px;
+  left: 50%;
+  transform-origin: bottom center;
+  border-radius: 2px;
+  transition: transform 0.25s ease;
+}
+
+.op-compass-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #00bfff;
+  position: relative;
+  z-index: 1;
+}
+
+.op-orient-label {
+  font-size: 10px;
+  color: #3a6fa8;
+  text-align: center;
+}
+
+.op-save-btn {
+  width: 100%;
+  background: #0f2a44;
+  border: 1px solid #1e4a7a;
+  color: #7dd3fc;
+  border-radius: 7px;
+  padding: 9px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  text-align: center;
+}
+.op-save-btn:hover:not(:disabled) { background: #173d5c; }
+.op-save-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.op-save-btn--saved {
+  background: #0e3a2a;
+  border-color: #00e5a0;
+  color: #00e5a0;
+}

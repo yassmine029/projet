@@ -23,6 +23,7 @@ interface User {
   full_name?: string;
   speciality?: string;
   specialty?: string;
+  is_staff?: boolean;
 }
 
 interface LandingPageProps {

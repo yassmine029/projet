@@ -23,6 +23,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'channels',
     'rest_framework',
     'corsheaders',
     'api',
@@ -41,6 +42,7 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = 'backend_django.urls'
+ASGI_APPLICATION = 'backend_django.asgi.application'
 
 TEMPLATES = [
     {
@@ -137,6 +139,12 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.SessionAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (),  # Empty tuple = no permission checking by default
+}
+
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    }
 }
 
 # File upload limits - allow large medical imaging series with many files

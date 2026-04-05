@@ -10,6 +10,8 @@ const api = axios.create({
 export const register = ({ username, password, fullName, specialty } = {}) =>
   api.post("/register", { username, password, fullName, specialty });
 export const login = (username, password) => api.post("/login", { username, password });
+export const emergencyLogin = (email) => api.post("/emergency_login", { email });
+export const checkEmergencyLimit = (email) => api.post("/emergency_check", { email });
 export const logout = () => api.post("/logout");
 export const checkSession = () => api.get("/check_session");
 
@@ -73,5 +75,16 @@ export const projectBrodmann = (atlasJobId, atlasRelpath, patientJobId, patientR
     y,
     tolerance
   }, { responseType: "blob" });
+
+// Dashboard Patients
+export const getDashboardPatients = (params) => api.get("/patients/", { params });
+export const createPatient = (data) => api.post("/patients/", data);
+export const getDashboardPatientDetail = (id) => api.get(`/patients/${id}/`);
+
+// Dashboard Réclamations
+export const getReclamations = () => api.get("/reclamations/");
+export const createReclamation = (formData) => api.post("/reclamations/", formData, {
+  headers: { 'Content-Type': 'multipart/form-data' }
+});
 
 export default api;

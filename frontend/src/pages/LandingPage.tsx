@@ -147,6 +147,13 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
             <div className="flex flex-col sm:flex-row gap-4">
               <button
                 onClick={() => onNavigate('dashboard')}
+                className="inline-flex items-center justify-center gap-2 px-8 py-4 bg-emerald-600 text-white font-medium rounded-xl hover:bg-emerald-700 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 shadow-emerald-600/30"
+              >
+                <Target className="w-5 h-5" />
+                Accéder au Dashboard
+              </button>
+              <button
+                onClick={scrollToModules}
                 className="inline-flex items-center justify-center gap-2 px-8 py-4 bg-blue-900 text-white font-medium rounded-xl hover:bg-blue-800 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 shadow-blue-900/20"
               >
                 Démarrer une analyse
@@ -157,6 +164,7 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
                 className="inline-flex items-center justify-center gap-2 px-8 py-4 bg-white text-blue-900 font-medium rounded-xl border border-blue-100 hover:border-blue-300 hover:bg-blue-50/50 transition-all duration-300"
               >
                 Explorer les modules
+                En savoir plus
               </button>
             </div>
 

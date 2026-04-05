@@ -1,4 +1,3 @@
-
 Recalage Procrustes - projet corrigé (backend + frontend)
 
 Backend (Flask):

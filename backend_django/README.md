@@ -30,4 +30,3 @@ python backend_django/manage.py runserver
 Notes:
 - Media files are stored in the original `backend/uploads` folder so the frontend pathing stays compatible.
 - The API endpoints aim to mirror the original Flask ones (`/api/register`, `/api/login`, `/api/upload`, `/api/align`, ...).
-- Auto 3D registration now uses FSL `flirt` (affine 12 DOF). Install FSL and expose `flirt` in `PATH` or set `FSLDIR`.

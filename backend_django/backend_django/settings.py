@@ -151,11 +151,6 @@ DATA_UPLOAD_MAX_NUMBER_FILES = 10000  # Allow up to 10,000 files per request
 DATA_UPLOAD_MAX_MEMORY_SIZE = 10737418240  # 10 GB
 
 # Logging removed - rely on stdout prints or environment-specific logging
-    'DEFAULT_PERMISSION_CLASSES': (),
-}
-
-DATA_UPLOAD_MAX_NUMBER_FILES = 10000
-DATA_UPLOAD_MAX_MEMORY_SIZE = 10737418240
 
 # Email Configuration
 EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
@@ -164,7 +159,8 @@ EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
 EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
-DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'noreply@visionmed.com')
+# Gmail and many SMTP providers require sender = authenticated account.
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'noreply@visionmed.com')
 
 # Frontend URL (for password reset links)
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')

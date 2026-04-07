@@ -131,11 +131,42 @@ def _get_job_entry(job_id: str):
     return entry
 
 
-def _save_volume_nifti(vol: np.ndarray, path: str):
+def _save_volume_nifti(vol: np.ndarray, path: str, affine: np.ndarray = None):
+    """Save volume as NIfTI with proper affine matrix.
+    
+    CRITICAL: Always use atlas affine when saving for MINE 3D registration.
+    This ensures both fixed and moving volumes share the same world coordinate space.
+    
+    Args:
+        vol: Volume array [X, Y, Z]
+        path: Output file path
+        affine: Optional explicit affine. If not provided, uses atlas affine.
+    """
     if nib is None:
         raise RuntimeError('nibabel not installed')
+    
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    nii = nib.Nifti1Image(np.asarray(vol, dtype=np.float32), np.eye(4))
+    
+    # CRITICAL FIX: Always use atlas affine to ensure spatial coherence
+    if affine is not None:
+        aff = np.asarray(affine, dtype=np.float32)
+    else:
+        # Ensure atlas is loaded and use its affine
+        try:
+            _ensure_atlas()
+            atlas_affine = VOLUMES_CACHE['atlas'].get('affine')
+            if atlas_affine is not None:
+                aff = np.asarray(atlas_affine, dtype=np.float32)
+            else:
+                aff = np.eye(4, dtype=np.float32)
+        except Exception:
+            aff = np.eye(4, dtype=np.float32)
+    
+    print(f"[DEBUG_NIFTI] Saving: {os.path.basename(path)}")
+    print(f"              Shape: {vol.shape}")
+    print(f"              Affine:\n{aff}")
+    
+    nii = nib.Nifti1Image(np.asarray(vol, dtype=np.float32), aff)
     nii.header.set_data_dtype(np.float32)
     nib.save(nii, path)
 
@@ -557,6 +588,85 @@ def _extract_patient_contours(
     return []
 
 
+def _remap_mask_atlas_to_patient(
+    mask_atlas: np.ndarray,
+    atlas_vol_shape: tuple,
+    patient_vol_shape: tuple,
+    axis: str,
+    patient_img_shape: tuple,
+) -> np.ndarray:
+    """
+    Reproject a mask from atlas slice space to patient slice space while
+    respecting 3D voxel-grid proportions for the current viewing axis.
+    """
+    axis = (axis or 'axial').lower()
+
+    # _render_slice + rot90 mapping to 2D (h, w) voxel extents.
+    if axis == 'sagittal':
+        atlas_h_vox = atlas_vol_shape[2]
+        atlas_w_vox = atlas_vol_shape[1]
+        patient_h_vox = patient_vol_shape[2]
+        patient_w_vox = patient_vol_shape[1]
+    elif axis == 'coronal':
+        atlas_h_vox = atlas_vol_shape[2]
+        atlas_w_vox = atlas_vol_shape[0]
+        patient_h_vox = patient_vol_shape[2]
+        patient_w_vox = patient_vol_shape[0]
+    else:  # axial
+        atlas_h_vox = atlas_vol_shape[1]
+        atlas_w_vox = atlas_vol_shape[0]
+        patient_h_vox = patient_vol_shape[1]
+        patient_w_vox = patient_vol_shape[0]
+
+    ah, aw = mask_atlas.shape[:2]
+    ph, pw = patient_img_shape[:2]
+
+    cx_atlas = aw / 2.0
+    cy_atlas = ah / 2.0
+    cx_patient = pw / 2.0
+    cy_patient = ph / 2.0
+
+    # Pixel-atlas -> pixel-patient centered affine scale.
+    sx = (pw / max(aw, 1)) * (atlas_w_vox / max(patient_w_vox, 1))
+    sy = (ph / max(ah, 1)) * (atlas_h_vox / max(patient_h_vox, 1))
+    tx = cx_patient - cx_atlas * sx
+    ty = cy_patient - cy_atlas * sy
+
+    M = np.array([[sx, 0.0, tx], [0.0, sy, ty]], dtype=np.float32)
+    mask_patient = cv2.warpAffine(
+        mask_atlas,
+        M,
+        (pw, ph),
+        flags=cv2.INTER_NEAREST,
+        borderValue=0,
+    )
+    return mask_patient
+
+
+def _extract_patient_contours_v2(
+    mask_patient: np.ndarray,
+    patient_img: np.ndarray,
+    vol_state: str = 'raw',
+) -> list:
+    """
+    Simpler and more stable extraction: avoid phase-correlation shifts and
+    prioritize overlap with patient foreground.
+    """
+    if mask_patient is None or np.count_nonzero(mask_patient) == 0:
+        return []
+
+    patient_fg = _patient_foreground_mask(patient_img)
+
+    candidate = cv2.bitwise_and(mask_patient, patient_fg)
+    if np.count_nonzero(candidate) > 0:
+        contours, _ = cv2.findContours(candidate, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if contours:
+            return contours
+
+    contours, _ = cv2.findContours(mask_patient, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    return contours if contours else []
+
+
 def _max_index(shape, axis: str) -> int:
     axis = (axis or 'axial').lower()
     if axis == 'sagittal':
@@ -660,6 +770,60 @@ def _center_volume_by_foreground(vol: np.ndarray) -> np.ndarray:
     return out.astype(np.float32)
 
 
+def _stabilize_translation_to_reference(
+    moving_vol: np.ndarray,
+    ref_vol: np.ndarray,
+    threshold: float = 0.10,
+    max_shift_ratio: float = 0.10,
+) -> tuple:
+    """Apply a small global translation so moving and reference foreground centers overlap."""
+    moving = np.asarray(moving_vol, dtype=np.float32)
+    ref = np.asarray(ref_vol, dtype=np.float32)
+    if moving.shape != ref.shape or moving.ndim != 3:
+        return moving, (0, 0, 0)
+
+    mov_mask = _robust_normalize_01(moving) > float(threshold)
+    ref_mask = _robust_normalize_01(ref) > float(threshold)
+    if np.count_nonzero(mov_mask) == 0 or np.count_nonzero(ref_mask) == 0:
+        return moving, (0, 0, 0)
+
+    mov_pts = np.where(mov_mask)
+    ref_pts = np.where(ref_mask)
+
+    mov_center = np.array([np.mean(mov_pts[0]), np.mean(mov_pts[1]), np.mean(mov_pts[2])], dtype=np.float32)
+    ref_center = np.array([np.mean(ref_pts[0]), np.mean(ref_pts[1]), np.mean(ref_pts[2])], dtype=np.float32)
+
+    raw_shift = ref_center - mov_center
+    max_shift = np.array([
+        max(1, int(round(moving.shape[0] * max_shift_ratio))),
+        max(1, int(round(moving.shape[1] * max_shift_ratio))),
+        max(1, int(round(moving.shape[2] * max_shift_ratio))),
+    ], dtype=np.int32)
+
+    shift = np.clip(np.round(raw_shift).astype(np.int32), -max_shift, max_shift)
+    dx, dy, dz = int(shift[0]), int(shift[1]), int(shift[2])
+    if dx == 0 and dy == 0 and dz == 0:
+        return moving, (0, 0, 0)
+
+    out = np.roll(moving, shift=(dx, dy, dz), axis=(0, 1, 2))
+
+    # Remove wrapped borders introduced by np.roll.
+    if dx > 0:
+        out[:dx, :, :] = 0
+    elif dx < 0:
+        out[dx:, :, :] = 0
+    if dy > 0:
+        out[:, :dy, :] = 0
+    elif dy < 0:
+        out[:, dy:, :] = 0
+    if dz > 0:
+        out[:, :, :dz] = 0
+    elif dz < 0:
+        out[:, :, dz:] = 0
+
+    return out.astype(np.float32), (dx, dy, dz)
+
+
 def _is_suspicious_spatial_position(vol: np.ndarray) -> bool:
     """Heuristic to detect bad affine placement (brain clipped/off-center in atlas grid)."""
     arr = np.asarray(vol, dtype=np.float32)
@@ -742,6 +906,7 @@ def _get_patient_volume(job_id: str, prefer_pending: bool = False):
 def _ensure_atlas():
     if 'atlas' in VOLUMES_CACHE:
         return
+
     vol = None
     labels = None
     lut = None
@@ -755,55 +920,46 @@ def _ensure_atlas():
         except Exception:
             vol = None
 
-        # Prefer a real cortical label atlas to avoid synthetic block artifacts.
         if nilearn_image is not None:
             try:
-                ho = datasets.fetch_atlas_harvard_oxford('cort-maxprob-thr25-2mm', symmetric_split=False)
+                ho = datasets.fetch_atlas_harvard_oxford(
+                    'cort-maxprob-thr25-2mm',
+                    symmetric_split=False
+                )
                 ho_img = ho['maps']
+
+                # Toujours resampler sur le template pour avoir la même shape
                 if vol is not None and tuple(ho_img.shape) != tuple(vol.shape):
-                    ho_img = nilearn_image.resample_to_img(ho_img, template_img, interpolation='nearest')
+                    ho_img = nilearn_image.resample_to_img(
+                        ho_img,
+                        template_img,
+                        interpolation='nearest'
+                    )
+
                 labels = ho_img.get_fdata().astype(np.int16)
                 raw_labels = list(ho.get('labels', []))
-                lut = {i: str(name) for i, name in enumerate(raw_labels) if i > 0 and str(name).strip()}
+                lut = {
+                    i: str(name)
+                    for i, name in enumerate(raw_labels)
+                    if i > 0 and str(name).strip()
+                }
             except Exception:
                 labels = None
                 lut = None
 
+    # Fallbacks inchangés...
     if vol is None:
-        # Offline fallback
-        vol = np.zeros((128, 128, 96), dtype=np.float32)
-        atlas_affine = np.eye(4, dtype=np.float32)
-        yy, xx = np.mgrid[:128, :128]
-        mask = ((xx - 64) ** 2 + (yy - 64) ** 2) < (45 ** 2)
-        for z in range(96):
-            vol[:, :, z][mask] = 80 + (z * 1.2)
+        vol = np.zeros((182, 218, 182), dtype=np.float32)
+        atlas_affine = np.array([
+            [-1, 0, 0, 90],
+            [0, 1, 0, -126],
+            [0, 0, 1, -72],
+            [0, 0, 0, 1]
+        ], dtype=np.float32)
 
     if labels is None:
-        # Curved synthetic fallback (no rectangular blocks).
-        sx, sy, sz = vol.shape
-        labels = np.zeros_like(vol, dtype=np.int16)
-        xx, yy = np.mgrid[0:sx, 0:sy]
-        cx, cy = sx / 2.0, sy / 2.0
-        rx, ry = sx * 0.36, sy * 0.36
-        brain = (((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2) <= 1.0
-
-        for z in range(sz):
-            zt = (z / max(1, sz - 1) - 0.5)
-            band1 = brain & (xx < cx) & (yy > cy + 0.08 * sy * zt)
-            band2 = brain & (xx >= cx) & (yy > cy + 0.04 * sy * zt)
-            band3 = brain & (yy < cy) & (xx > cx - 0.10 * sx * zt)
-            band4 = brain & (yy < cy) & (xx <= cx + 0.05 * sx * zt)
-            labels[:, :, z][band1] = 44
-            labels[:, :, z][band2] = 22
-            labels[:, :, z][band3] = 17
-            labels[:, :, z][band4] = 4
-
-        lut = {
-            4: 'Cortex Moteur Primaire',
-            17: 'Cortex Visuel Primaire',
-            22: 'Aire de Wernicke',
-            44: 'Aire de Broca',
-        }
+        labels = np.zeros(vol.shape, dtype=np.int16)
+        lut = {}
 
     VOLUMES_CACHE['atlas'] = {
         'data': vol,
@@ -813,6 +969,33 @@ def _ensure_atlas():
         'affine': np.asarray(atlas_affine, dtype=np.float32),
     }
 
+
+def _register_patient_to_atlas(patient_nib):
+    """
+    Recale le volume patient dans l'espace MNI de l'atlas.
+    Retourne le volume recalé en numpy array.
+    """
+    _ensure_atlas()
+
+    atlas_affine = VOLUMES_CACHE['atlas']['affine']
+    atlas_shape = VOLUMES_CACHE['atlas']['data'].shape
+
+    # Créer une image nibabel fictive pour l'atlas (espace cible)
+    import nibabel as nib
+    atlas_ref_img = nib.Nifti1Image(
+        VOLUMES_CACHE['atlas']['data'],
+        atlas_affine
+    )
+
+    # Resampler le patient dans l'espace atlas
+    patient_resampled = nilearn_image.resample_to_img(
+        patient_nib,
+        atlas_ref_img,
+        interpolation='continuous',
+        copy=True,
+    )
+
+    return patient_resampled.get_fdata().astype(np.float32)
 
 def _set_custom_atlas_volume(vol: np.ndarray):
     _ensure_atlas()
@@ -934,8 +1117,8 @@ def upload_volume(request):
         else:
             vol, best_z = _load_image_as_volume(f)
             shape_before = tuple(int(v) for v in vol.shape)
-            # Non-NIfTI files need explicit shape mapping to atlas grid.
-            # Keep non-NIfTI uploads in native display geometry.
+            # Keep non-NIfTI images in their native geometry for display
+            # Don't resample here - do it only for registration
 
         shape_after = tuple(int(v) for v in vol.shape)
 
@@ -1298,9 +1481,23 @@ def get_patient_slice(request):
     if entry is None:
         return JsonResponse({'error': 'jobId not found'}, status=404)
     axis = request.GET.get('axis', 'axial')
-    # IMPORTANT: Always use raw patient volume, NOT warped
-    # MINE 3D transformation breaks slice-to-slice correspondence
-    vol, vol_state = _get_patient_volume(job_id, prefer_pending=False)
+    
+    # CRITICAL FIX: After registration, use the warped volume for display
+    # to ensure consistency with atlas for overlay positioning
+    entry = _get_job_entry(job_id)
+    if entry is None:
+        return JsonResponse({'error': 'jobId not found'}, status=404)
+    
+    pending = entry.get('pending_registration')
+    has_registration = bool(pending) or bool(entry.get('registered_data') is not None)
+    
+    if has_registration:
+        vol, vol_state = _get_patient_volume(job_id, prefer_pending=True)
+        print(f"[PATIENT_SLICE] Using registered volume (shape {vol.shape})")
+    else:
+        vol, vol_state = _get_patient_volume(job_id, prefer_pending=False)
+        print(f"[PATIENT_SLICE] No registration - using original volume (shape {vol.shape})")
+    
     idx = int(request.GET.get('index', request.GET.get('z', _max_index(vol.shape, axis) // 2)))
     idx = int(np.clip(idx, 0, _max_index(vol.shape, axis)))
     
@@ -1362,25 +1559,72 @@ def get_brodmann_zone(request):
     max_idx = _max_index(atlas_labels.shape, axis)
     index = int(np.clip(int(request.GET.get('index', request.GET.get('z', max_idx // 2))), 0, max_idx))
 
-    xr = float(request.GET.get('xRatio', 0.5))
-    yr = float(request.GET.get('yRatio', 0.5))
     sl_labels = _render_slice(atlas_labels, index, axis)
     h, w = sl_labels.shape
-    x = int(np.clip(xr * (w - 1), 0, w - 1))
-    y = int(np.clip(yr * (h - 1), 0, h - 1))
-    # If the exact pixel is unlabeled, snap to nearest cortical label around the click.
-    label = _nearest_nonzero_label(sl_labels, x, y, max_radius=max(12, min(h, w) // 12))
+
+    label = 0
+    mask_atlas = None
+    label_param = request.GET.get('labelId')
+
+    if label_param is not None:
+        try:
+            requested_label = int(label_param)
+        except (TypeError, ValueError):
+            requested_label = 0
+
+        if requested_label > 0:
+            # If label is absent on the current slice, jump to the nearest slice where it exists.
+            if axis == 'axial':
+                hit_indices = np.where(np.any(atlas_labels == requested_label, axis=(0, 1)))[0]
+            elif axis == 'coronal':
+                hit_indices = np.where(np.any(atlas_labels == requested_label, axis=(0, 2)))[0]
+            else:  # sagittal
+                hit_indices = np.where(np.any(atlas_labels == requested_label, axis=(1, 2)))[0]
+
+            if hit_indices.size > 0 and requested_label not in sl_labels:
+                nearest_idx = int(hit_indices[np.argmin(np.abs(hit_indices - index))])
+                index = int(np.clip(nearest_idx, 0, max_idx))
+                sl_labels = _render_slice(atlas_labels, index, axis)
+                h, w = sl_labels.shape
+
+            candidate_mask = (sl_labels == requested_label).astype(np.uint8) * 255
+            if np.count_nonzero(candidate_mask) > 0:
+                label = requested_label
+                # From list selection, keep the component nearest to slice center.
+                center_x = int(np.clip((w - 1) // 2, 0, max(0, w - 1)))
+                center_y = int(np.clip((h - 1) // 2, 0, max(0, h - 1)))
+                mask_atlas = _component_mask_near_point(candidate_mask, center_x, center_y)
+    else:
+        xr = float(request.GET.get('xRatio', 0.5))
+        yr = float(request.GET.get('yRatio', 0.5))
+        x = int(np.clip(xr * (w - 1), 0, w - 1))
+        y = int(np.clip(yr * (h - 1), 0, h - 1))
+        snap_radius = max(3, min(8, min(h, w) // 64))
+        label = _nearest_nonzero_label(sl_labels, x, y, max_radius=snap_radius)
+        if label > 0:
+            candidate_mask = (sl_labels == label).astype(np.uint8) * 255
+            mask_atlas = _component_mask_near_point(candidate_mask, x, y)
 
     entry['selected_label'] = label if label > 0 else None
     name = VOLUMES_CACHE['atlas']['lut'].get(label, f'Region {label}') if label > 0 else None
     entry['selected_label_name'] = name
+    entry['selected_slice'] = {'axis': axis, 'index': int(index)}
     _persist_job_entry(job_id)
 
     atlas_img = _normalize_u8(_render_slice(VOLUMES_CACHE['atlas']['data'], index, axis))
-    # IMPORTANT: Use raw patient volume for zone identification, NOT warped
-    # MINE 3D transformation changes spatial correspondence of slices
-    # Use raw patient data to maintain correct anatomical alignment
-    patient_vol, vol_state = _get_patient_volume(job_id, prefer_pending=False)
+    
+    # CRITICAL FIX: After registration, use the registered (warped) volume
+    # to ensure shapes match atlas for correct overlay positioning
+    pending = entry.get('pending_registration')
+    has_registration = bool(pending) or bool(entry.get('registered_data') is not None)
+    
+    if has_registration:
+        patient_vol, vol_state = _get_patient_volume(job_id, prefer_pending=True)
+        print(f"[BRODMANN] Using registered/warped volume (shape {patient_vol.shape} matching atlas)")
+    else:
+        patient_vol, vol_state = _get_patient_volume(job_id, prefer_pending=False)
+        print(f"[BRODMANN] No registration - using original volume (shape {patient_vol.shape})")
+    
     patient_max_idx = _max_index(patient_vol.shape, axis)
     patient_index = int(np.clip(index, 0, patient_max_idx))
     patient_img = _normalize_u8(_render_slice(patient_vol, patient_index, axis))
@@ -1402,26 +1646,32 @@ def get_brodmann_zone(request):
             'max_index': max_idx,
         })
 
-    # Draw only the connected zone component near the click, not all bilateral islands.
-    mask = (sl_labels == label).astype(np.uint8) * 255
-    mask = _component_mask_near_point(mask, x, y)
-    mask_for_patient = _resize_mask_to_shape(mask, patient_img.shape)
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Atlas mask in atlas 2D slice space.
+    if mask_atlas is None:
+        mask_atlas = (sl_labels == label).astype(np.uint8) * 255
 
-    # Use COLORED LABELS for atlas, grayscale for patient
-    atlas_labels_rgb = _render_label_slice_rgb(atlas_labels, index, axis)
-    patient_rgb = cv2.cvtColor(patient_img, cv2.COLOR_GRAY2RGB)
-    # For MINE-registered volumes: use larger shift ratio to handle 3D→2D projection errors
-    max_shift_ratio = 0.18 if vol_state == 'raw' else 0.25
-    contours_patient = _extract_patient_contours(
-        mask_for_patient,
-        patient_img,
-        atlas_u8=atlas_img,
-        max_shift_ratio=max_shift_ratio,
-        min_phase_response=0.015,
+    # Correct reprojection: atlas voxel grid -> patient voxel grid.
+    mask_patient = _remap_mask_atlas_to_patient(
+        mask_atlas,
+        atlas_vol_shape=atlas_labels.shape,
+        patient_vol_shape=patient_vol.shape,
+        axis=axis,
+        patient_img_shape=patient_img.shape,
     )
 
-    atlas_labels_rgb = _draw_clinical_contour(atlas_labels_rgb, contours)
+    contours_atlas, _ = cv2.findContours(mask_atlas, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    atlas_labels_rgb = _render_label_slice_rgb(atlas_labels, index, axis)
+    patient_rgb = cv2.cvtColor(patient_img, cv2.COLOR_GRAY2RGB)
+
+    # Light residual stabilization only through brain-foreground intersection.
+    contours_patient = _extract_patient_contours_v2(
+        mask_patient,
+        patient_img,
+        vol_state=vol_state,
+    )
+
+    atlas_labels_rgb = _draw_clinical_contour(atlas_labels_rgb, contours_atlas)
     patient_rgb = _draw_clinical_contour(patient_rgb, contours_patient)
 
     images = {
@@ -1570,6 +1820,14 @@ def auto_align_volume(request):
     if entry is None:
         return JsonResponse({'error': 'jobId not found'}, status=404)
 
+    # Let clinician tune registration depth while keeping safe execution bounds.
+    raw_n_iters = payload.get('n_iters', payload.get('iterations', 120))
+    try:
+        n_iters = int(raw_n_iters)
+    except (TypeError, ValueError):
+        n_iters = 120
+    n_iters = int(np.clip(n_iters, 30, 1000))
+
     _ensure_atlas()
     selected = entry.get('selected_slice') or {}
     axis = str(payload.get('axis', selected.get('axis', 'axial'))).lower()
@@ -1592,15 +1850,60 @@ def auto_align_volume(request):
     moving_prepared_nifti_path = os.path.join(work_dir, 'moving_prepared.nii.gz')
 
     try:
-        # Use the same preprocessed patient volume as the viewer to keep geometry consistent
-        # between auto registration output and Brodmann visualization.
-        _save_volume_nifti(atlas_vol, atlas_nifti_path)
-        _save_volume_nifti(patient_vol, moving_prepared_nifti_path)
+        # Prepare moving volume in atlas grid without introducing synthetic affine drift.
+        patient_vol_for_mine = np.asarray(patient_vol, dtype=np.float32)
+        atlas_shape = tuple(int(v) for v in atlas_vol.shape)
+        patient_shape = tuple(int(v) for v in patient_vol.shape)
+        
+        if patient_shape != atlas_shape:
+            print(f"[AUTO_ALIGN] Patient shape {patient_shape} != atlas {atlas_shape}")
+            print(f"[AUTO_ALIGN] Resampling moving volume to atlas grid...")
+            
+            try:
+                atlas_affine = np.asarray(VOLUMES_CACHE['atlas'].get('affine', np.eye(4)), dtype=np.float32)
+                if patient_nifti_path and nib is not None and os.path.exists(patient_nifti_path):
+                    from nibabel.processing import resample_from_to
+
+                    src_img = nib.as_closest_canonical(nib.load(patient_nifti_path))
+                    patient_resampled_nii = resample_from_to(
+                        src_img,
+                        (atlas_shape, atlas_affine),
+                        order=1,
+                        mode='nearest',
+                        cval=0.0,
+                    )
+                    patient_vol_for_mine = patient_resampled_nii.get_fdata(dtype=np.float32)
+                    if _is_suspicious_spatial_position(patient_vol_for_mine):
+                        raise ValueError('affine resampling produced suspicious position')
+                    print("[AUTO_ALIGN] Affine-aware resampling from original NIfTI succeeded")
+                else:
+                    raise ValueError('original nifti path unavailable')
+                
+            except Exception as e:
+                print(f"[AUTO_ALIGN] Affine resampling unavailable/failed ({e}), fallback to shape+center")
+                source_vol = np.asarray(entry.get('data_original', patient_vol), dtype=np.float32)
+                patient_vol_for_mine = _resample_volume_to_shape(source_vol, atlas_shape)
+                patient_vol_for_mine = _center_volume_by_foreground(patient_vol_for_mine)
+            
+            # Robustly normalize to match atlas intensity range
+            patient_vol_for_mine = _robust_normalize_01(patient_vol_for_mine)
+        
+        # Save with guaranteed atlas affine coherence
+        _ensure_atlas()
+        print(f"[AUTO_ALIGN] Saving atlas NIfTI: {atlas_nifti_path}")
+        _save_volume_nifti(atlas_vol, atlas_nifti_path, 
+                          affine=VOLUMES_CACHE['atlas'].get('affine'))
+        
+        print(f"[AUTO_ALIGN] Saving patient NIfTI: {moving_prepared_nifti_path}")
+        _save_volume_nifti(patient_vol_for_mine, moving_prepared_nifti_path,
+                          affine=VOLUMES_CACHE['atlas'].get('affine'))
+        
+        print(f"[AUTO_ALIGN] Running MINE 3D registration with n_iters={n_iters}...")
         result = run_mine_3d_nifti(
             fixed_path=atlas_nifti_path,
             moving_path=moving_prepared_nifti_path,
             output_dir=work_dir,
-            n_iters=120,
+            n_iters=n_iters,
             max_levels=3,
             levels_used=3,
             device_name='auto',
@@ -1616,8 +1919,28 @@ def auto_align_volume(request):
         return JsonResponse({'error': 'warped volume not found'}, status=500)
 
     warped_vol = nib.load(warped_path).get_fdata(dtype=np.float32)
+    warped_nib = nib.load(warped_path)
+    
+    print(f"[DEBUG_WARPED] Loaded warped volume")
+    print(f"              Shape: {warped_vol.shape}")
+    print(f"              Affine from NIfTI:\n{warped_nib.affine}")
+    print(f"              Atlas shape: {atlas_vol.shape}")
+    print(f"              Atlas affine:\n{VOLUMES_CACHE['atlas'].get('affine')}")
+    
     if tuple(int(v) for v in warped_vol.shape) != tuple(int(v) for v in atlas_vol.shape):
+        print(f"[WARNING] Shape mismatch after warping, resampling...")
         warped_vol = _resample_volume_to_shape(warped_vol, atlas_vol.shape)
+    else:
+        print(f"[OK] Warped volume shape matches atlas")
+
+    # Final residual translation correction to remove small visual offsets.
+    warped_vol, residual_shift = _stabilize_translation_to_reference(
+        np.asarray(warped_vol, dtype=np.float32),
+        np.asarray(atlas_vol, dtype=np.float32),
+        threshold=0.10,
+        max_shift_ratio=0.08,
+    )
+    print(f"[AUTO_ALIGN] Residual translation stabilization shift: {residual_shift}")
 
     matrix_4x4 = result.get('matrix')
     suspicious_matrix = _is_suspicious_affine_matrix_3d(matrix_4x4)
@@ -1631,6 +1954,7 @@ def auto_align_volume(request):
         'mode': 'auto3d',
         'axis': axis,
         'index': idx,
+        'n_iters': n_iters,
         'matrix_4x4': matrix_4x4,
         'warped_path': warped_path,
         'fallback_used': auto_fallback_used,
@@ -1664,7 +1988,9 @@ def auto_align_volume(request):
         },
         'axis': axis,
         'index': idx,
+        'n_iters': n_iters,
         'metrics': {
+            'n_iters': n_iters,
             'mutual_information': round(final_mi, 4),
             'mi_quality': mi_quality,
             'mse_before': float(result.get('metrics', {}).get('mse_before', 0.0)),

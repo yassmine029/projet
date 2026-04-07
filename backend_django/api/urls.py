@@ -54,6 +54,12 @@ urlpatterns = [
     # History routes
     path('history', views.history, name='history'),
 
+    # Admin dashboard routes
+    path('admin/dashboard/overview', views.admin_dashboard_overview, name='admin_dashboard_overview'),
+    path('admin/dashboard/accounts', views.admin_dashboard_accounts, name='admin_dashboard_accounts'),
+    path('admin/dashboard/history', views.admin_dashboard_history, name='admin_dashboard_history'),
+    path('admin/dashboard/settings', views.admin_dashboard_settings, name='admin_dashboard_settings'),
+
     # Patient routes (Yesmine - anciennes)
     path('patients', views.list_patients, name='patients'),
     path('patient/<str:patient_id>/series', views.get_patient_series, name='patient_series'),
@@ -68,6 +74,7 @@ urlpatterns = [
     # Reclamation routes
     path('reclamations/', views.reclamations_list_create, name='reclamations_list_create'),
     path('reclamations/<int:reclamation_id>/', views.reclamation_detail, name='reclamation_detail'),
+    path('contact_requests/', views.create_contact_request, name='create_contact_request'),
 
     # Series routes
     path('series/<int:series_id>/download', views.download_series, name='download_series'),

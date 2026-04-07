@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Series, Average, PatientImageOrientation, PatientImage, Reclamation, Patient, MRIFile
+from .models import Series, Average, PatientImageOrientation, PatientImage, Reclamation, Patient, MRIFile, ContactRequest
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -66,3 +66,10 @@ class ReclamationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Reclamation
         fields = '__all__'
+
+
+class ContactRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ContactRequest
+        fields = ('id', 'full_name', 'email', 'institution', 'subject', 'message', 'created_at')
+        read_only_fields = ('id', 'created_at')

@@ -20,6 +20,8 @@ export default function BrodmannPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [autoAlignIters, setAutoAlignIters] = useState(120);
+  const [alignRuns, setAlignRuns] = useState([]);
 
   const [uploadFile, setUploadFile] = useState(null);
   const viewerRef = useRef(null);
@@ -130,16 +132,25 @@ export default function BrodmannPage() {
     if (!jobId) return;
     setBusy(true);
     setError('');
-    setMessage('Recalage atlas automatique en cours...');
+    setMessage(`Recalage atlas automatique en cours (${autoAlignIters} iterations)...`);
     try {
-      const res = await api.post('/volume/auto-align', { jobId });
+      const res = await api.post('/volume/auto-align', { jobId, n_iters: autoAlignIters });
       const data = res.data || {};
       if (data.images?.atlas) setAtlasImage(data.images.atlas);
       if (data.images?.patient) setPatientImage(data.images.patient);
       if (!data.images?.atlas || !data.images?.patient) {
         await syncSlices(jobId, axis, index);
       }
-      setMessage('Recalage atlas termine. Validez le resultat si correct.');
+      const metrics = data.metrics || {};
+      const runSummary = {
+        n_iters: Number(data.n_iters || metrics.n_iters || autoAlignIters),
+        mutual_information: Number(metrics.mutual_information || 0),
+        ncc_after: Number(metrics.ncc_after || 0),
+        processing_time_ms: Number(metrics.processing_time_ms || 0),
+        mi_quality: metrics.mi_quality || 'N/A',
+      };
+      setAlignRuns((prev) => [runSummary, ...prev].slice(0, 5));
+      setMessage('Recalage atlas termine. Comparez les metriques et validez si correct.');
     } catch (e) {
       setError('Recalage atlas automatique echoue.');
       setMessage('');
@@ -298,7 +309,7 @@ export default function BrodmannPage() {
         </header>
 
         <section className="rounded-3xl border border-white/10 bg-slate-900/70 p-4 shadow-[0_10px_40px_rgba(15,23,42,0.55)] backdrop-blur md:p-5">
-          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-5">
             <input
               type="file"
               accept=".nii,.nii.gz,image/*"
@@ -326,12 +337,54 @@ export default function BrodmannPage() {
             >
               Lancer recalage auto
             </button>
+            <label className="flex items-center gap-2 rounded-xl border border-emerald-300/25 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100">
+              <span className="whitespace-nowrap">Iterations</span>
+              <input
+                type="number"
+                min={30}
+                max={1000}
+                step={10}
+                value={autoAlignIters}
+                onChange={(e) => setAutoAlignIters(Number(e.target.value || 120))}
+                className="w-24 rounded-md border border-emerald-200/30 bg-slate-900/80 px-2 py-1 text-sm text-white outline-none focus:border-cyan-300"
+              />
+            </label>
           </div>
 
           {(message || error) && (
             <div className="mt-4 grid gap-2 md:grid-cols-2">
               {message && <p className="rounded-xl border border-cyan-300/20 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100">{message}</p>}
               {error && <p className="rounded-xl border border-rose-300/25 bg-rose-500/10 px-3 py-2 text-sm font-medium text-rose-200">{error}</p>}
+            </div>
+          )}
+
+          {alignRuns.length > 0 && (
+            <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/50 p-3">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-300">Comparaison des derniers recalages</p>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-left text-xs text-slate-200">
+                  <thead className="text-slate-400">
+                    <tr>
+                      <th className="px-2 py-1">Iterations</th>
+                      <th className="px-2 py-1">MI</th>
+                      <th className="px-2 py-1">Qualite MI</th>
+                      <th className="px-2 py-1">NCC apres</th>
+                      <th className="px-2 py-1">Temps (s)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {alignRuns.map((run, idxRun) => (
+                      <tr key={`${run.n_iters}-${idxRun}`} className={idxRun === 0 ? 'bg-emerald-500/10' : ''}>
+                        <td className="px-2 py-1 font-semibold text-emerald-200">{run.n_iters}</td>
+                        <td className="px-2 py-1">{run.mutual_information.toFixed(4)}</td>
+                        <td className="px-2 py-1">{run.mi_quality}</td>
+                        <td className="px-2 py-1">{run.ncc_after.toFixed(4)}</td>
+                        <td className="px-2 py-1">{(run.processing_time_ms / 1000).toFixed(1)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </section>

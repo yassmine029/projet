@@ -1,37 +1,41 @@
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
+import { Moon, Sun } from 'lucide-react'
 
 import Login from './pages/Login'
+import Dashboard from './pages/Dashboard'
 import { LandingPage } from './pages/LandingPage'
 import { RegistrationPage } from './pages/RegistrationPage'
-import Upload from './pages/Upload'
-import History from './pages/History'
-import Patients from './pages/Patients'
-import PredictionPage from "./pages/Prediction"
-import BrodmannPage from "./pages/Brodmann"
-import Brodmann3DPage from "./pages/Brodmann3D"
-import ExplorationPage from "./pages/ExplorationPage"
+// import Upload from './pages/Upload'
+// import History from './pages/History'
+// import Patients from './pages/Patients'
+// import PredictionPage from "./pages/Prediction"
+// import BrodmannPage from "./pages/Brodmann"
+// import Brodmann3DPage from "./pages/Brodmann3D"
+// import ExplorationPage from "./pages/ExplorationPage"
 
-import PrivacyPage from './pages/PrivacyPage'
-import TermsPage from './pages/TermsPage'
-import Dashboard from './pages/Dashboard'
-import PatientsList from './pages/dashboard/PatientsList'
-import PatientDetail from './pages/dashboard/PatientDetail'
-import ReclamationsList from './pages/dashboard/ReclamationsList'
-import NewPatient from './pages/NewPatient'
+// import PrivacyPage from './pages/PrivacyPage'
+// import TermsPage from './pages/TermsPage'
+// import Dashboard from './pages/Dashboard'
+// import PatientsList from './pages/dashboard/PatientsList'
+// import PatientDetail from './pages/dashboard/PatientDetail'
+// import ReclamationsList from './pages/dashboard/ReclamationsList'
+// import NewPatient from './pages/NewPatient'
 import './index.css'
 
-import api, { checkSession, logout } from './api'
+import { checkSession, logout } from './api'
 
 export default function App() {
-  const navigate = useNavigate()
   const [user, setUser] = useState(null)
   const [checking, setChecking] = useState(true)
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const saved = localStorage.getItem('theme')
+    if (saved === 'dark') return true
+    if (saved === 'light') return false
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+  })
 
   // 🔐 Vérification session au chargement
-  const [user, setUser] = useState(null)
-  const [checking, setChecking] = useState(true)
-
   useEffect(() => {
     checkSession()
       .then(r => {
@@ -47,59 +51,82 @@ export default function App() {
       .finally(() => setChecking(false))
   }, [])
 
+  useEffect(() => {
+    document.documentElement.classList.toggle('theme-dark', isDarkMode)
+    localStorage.setItem('theme', isDarkMode ? 'dark' : 'light')
+  }, [isDarkMode])
+
   if (checking) {
     return <div style={{ padding: 40 }}>Vérification session...</div>
   }
 
-  if (!user) {
-    return <Login onLogin={setUser} />
+  const handleNavigate = (page) => {
+    if (page === 'dashboard') {
+      window.location.pathname = '/dashboard'
+      return
+    }
+    if (page === 'login') {
+      window.location.pathname = '/login'
+      return
+    }
+    if (page === 'registration') {
+      window.location.pathname = user ? '/registration' : '/login'
+      return
+    }
+    window.location.pathname = '/'
   }
 
-  const doLogout = async () => {
+  const handleLogout = async () => {
     try {
       await logout()
-      setUser(null)
     } catch (e) {
       console.error(e)
+    } finally {
+      setUser(null)
+      window.location.pathname = '/'
     }
   }
 
-  const handleNavigate = (page) => {
-    window.location.pathname = `/${page}`
-  }
-
   return (
-    <Routes>
-      {/* Landing page par défaut */}
-      <Route path="/" element={<LandingPage user={user} onNavigate={handleNavigate} onLogout={doLogout} />} />
+    <>
+      <button
+        type="button"
+        onClick={() => setIsDarkMode((v) => !v)}
+        className="theme-toggle-btn"
+        aria-label={isDarkMode ? 'Activer le mode clair' : 'Activer le mode sombre'}
+        title={isDarkMode ? 'Mode clair' : 'Mode sombre'}
+      >
+        {isDarkMode ? <Sun size={16} /> : <Moon size={16} />}
+        <span>{isDarkMode ? 'Clair' : 'Sombre'}</span>
+      </button>
 
-      {/* Registration page */}
-      <Route path="/registration" element={<RegistrationPage user={user} accessToken={null} onNavigate={handleNavigate} />} />
-
-      {/* Fonctionnalités */}
-      <Route path="/" element={<LandingPage user={user} onNavigate={handleNavigate} onLogout={doLogout} />} />
-      <Route path="/registration" element={<RegistrationPage user={user} accessToken={null} onNavigate={handleNavigate} />} />
-      <Route path="/upload" element={<Upload />} />
-      <Route path="/history" element={<History />} />
-      <Route path="/patients" element={<Patients />} />
-      <Route path="/prediction" element={<PredictionPage />} />
-      <Route path="/brodmann" element={<BrodmannPage />} />
-      <Route path="/exploration" element={<ExplorationPage />} />
-      <Route path="/brodmann3D" element={<Brodmann3DPage />} />
-
-
-      {/* Sécurité */}
-      <Route path="/brodmann3D" element={<Brodmann3DPage />} />
-      <Route path="/exploration" element={<ExplorationPage />} />
-      <Route path="/privacy" element={<PrivacyPage />} />
-      <Route path="/terms" element={<TermsPage />} />
-      <Route path="/dashboard" element={<Dashboard />}>
-        <Route path="patients" element={<PatientsList />} />
-        <Route path="patients/:id" element={<PatientDetail />} />
-        <Route path="reclamations" element={<ReclamationsList />} />
-      </Route>
-      <Route path="/new-patient" element={<NewPatient />} />
-      <Route path="*" element={<Navigate to="/" />} />
-    </Routes>
+      <Routes>
+        <Route
+          path="/"
+          element={<LandingPage user={user} onNavigate={handleNavigate} onLogout={handleLogout} />}
+        />
+        <Route
+          path="/login"
+          element={user ? <Navigate to="/" replace /> : <Login onLogin={setUser} />}
+        />
+        <Route
+          path="/dashboard/*"
+          element={user ? <Dashboard /> : <Navigate to="/login" replace />}
+        />
+        <Route
+          path="/admin/*"
+          element={user ? <Dashboard /> : <Navigate to="/login" replace />}
+        />
+        <Route
+          path="/registration"
+          element={
+            user
+              ? <RegistrationPage user={user} accessToken={null} onNavigate={handleNavigate} />
+              : <Navigate to="/login" replace />
+          }
+        />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </>
   )
 }

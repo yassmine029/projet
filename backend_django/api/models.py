@@ -126,3 +126,23 @@ class Reclamation(models.Model):
 
     def __str__(self):
         return f"Réclamation {self.numero} - {self.user.username}"
+
+
+class ContactRequest(models.Model):
+    SUBJECT_CHOICES = [
+        ('demonstration', 'Demonstration'),
+        ('integration', 'Integration clinique'),
+        ('support', 'Support technique'),
+        ('partnership', 'Partenariat'),
+        ('other', 'Autre'),
+    ]
+
+    full_name = models.CharField(max_length=150)
+    email = models.EmailField()
+    institution = models.CharField(max_length=180, blank=True)
+    subject = models.CharField(max_length=30, choices=SUBJECT_CHOICES, default='demonstration')
+    message = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"ContactRequest({self.full_name}, {self.email}, {self.subject})"

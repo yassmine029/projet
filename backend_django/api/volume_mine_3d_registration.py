@@ -253,6 +253,9 @@ def multi_resolution_loss_3d(affine_net: AffineNet3D, mine_net: MINE3D,
 # ============================================================
 # CELL 10 — Warp Full-Resolution Volume
 # ============================================================
+# ============================================================
+# CELL 10 — Warp Full-Resolution Volume
+# ============================================================
 @torch.no_grad()
 def warp_full_resolution_3d(I_np: np.ndarray, J_np: np.ndarray,
                             affine_net: AffineNet3D,

@@ -5,6 +5,7 @@ import zipfile
 import tempfile
 import shutil
 import json
+import smtplib
 import uuid
 import base64
 import threading
@@ -40,8 +41,8 @@ from django.utils import timezone
 from django.core.mail import send_mail
 # from django.core.paginator import Paginator # Not used, can be removed
 from django.db.models import Q
-from .models import Series, PasswordResetToken, EmergencyLoginAttempt, Patient, Reclamation, MRIFile
-from .serializers import ReclamationSerializer, PatientSerializer, MRIFileSerializer
+from .models import Series, PasswordResetToken, EmergencyLoginAttempt, Patient, Reclamation, MRIFile, ContactRequest
+from .serializers import ReclamationSerializer, PatientSerializer, MRIFileSerializer, ContactRequestSerializer
 
 # auto_registration (ANTs) supprimé — MINE uniquement
 from .mine_registration import run_mine_registration
@@ -421,7 +422,8 @@ def register(request):
             if User.objects.filter(username=username).exists():
                 print(f"Yassmine now the register FAILED - username exists: {username}")
                 return JsonResponse({'ok': False, 'error': 'username exists'}, status=400)
-            User.objects.create_user(username=username, password=password)
+            # Keep username=email convention and also persist email for robust lookup.
+            User.objects.create_user(username=username, email=username, password=password)
             print(f"Yassmine now the register SUCCESS for user: {username}")
             return JsonResponse({'ok': True, 'message': 'Compte créé avec succès'})
     except IntegrityError as e:
@@ -435,19 +437,28 @@ def login_view(request):
     try:
         print(f"Nadine Yassmine - login endpoint reached - body: {request.body}")
         data = json.loads(request.body)
-        username = (data.get('username') or '').strip()
+        username = (data.get('username') or '').strip().lower()
         password = data.get('password') or ''
         print(f"Nadine Yassmine - login attempt - username: {username}")
 
-        user = authenticate(request, username=username, password=password)
+        if not username or not password:
+            return JsonResponse({'ok': False, 'error': 'email et mot de passe requis'}, status=400)
+
+        # Accept either username or account email as login identifier.
+        account = User.objects.filter(Q(username=username) | Q(email__iexact=username)).first()
+        if account is None:
+            print(f"Nadine Yassmine - login failed - account not found: {username}")
+            return JsonResponse({'ok': False, 'error': 'Compte introuvable', 'error_type': 'user_not_found'}, status=401)
+
+        user = authenticate(request, username=account.username, password=password)
         if user is None:
-            print(f"Nadine Yassmine - login failed - user not found: {username}")
-            return JsonResponse({'ok': False, 'error': 'invalid credentials'}, status=401)
+            print(f"Nadine Yassmine - login failed - invalid password for: {account.username}")
+            return JsonResponse({'ok': False, 'error': 'Mot de passe incorrect', 'error_type': 'invalid_password'}, status=401)
 
         login(request, user)
-        request.session['username'] = username
-        print(f"Nadine Yassmine - login success - user: {username}")
-        return JsonResponse({'ok': True, 'message': 'Connexion réussie', 'user': username})
+        request.session['username'] = user.username
+        print(f"Nadine Yassmine - login success - user: {user.username}")
+        return JsonResponse({'ok': True, 'message': 'Connexion réussie', 'user': user.username})
     except Exception as e:
         import traceback
         print(f"Nadine Yassmine - Error in login: {e}")
@@ -1608,7 +1619,9 @@ def emergency_login(request):
         if not email:
             return JsonResponse({'ok': False, 'error': 'Email requis'}, status=400)
         try:
-            user = User.objects.get(username=email)
+            user = User.objects.filter(Q(username=email) | Q(email__iexact=email)).first()
+            if not user:
+                raise User.DoesNotExist
         except User.DoesNotExist:
             return JsonResponse({'ok': False, 'error': 'Aucun compte trouvé avec cet email professionnel.'}, status=404)
         attempt, created = EmergencyLoginAttempt.objects.get_or_create(email=email)
@@ -1657,7 +1670,9 @@ def forgot_password(request):
         try:
             print(f"Nadine Yassmine - forgot_password: searching for user with email: {email}", flush=True)
             sys.stdout.flush()
-            user = User.objects.get(username=email)
+            user = User.objects.filter(Q(username=email) | Q(email=email)).first()
+            if not user:
+                raise User.DoesNotExist
             print(f"Nadine Yassmine - forgot_password: user FOUND: {user.username}", flush=True)
             sys.stdout.flush()
         except User.DoesNotExist:
@@ -1671,18 +1686,17 @@ def forgot_password(request):
             expires_at=timezone.now() + timedelta(minutes=15)
         )
 
-        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
-        reset_link = f"{frontend_url}/reset-password?token={reset_token.token}"
+        reset_link = f"{settings.FRONTEND_URL}/reset-password?token={reset_token.token}"
 
-        subject = "VisionMed - Lien de réinitialisation de mot de passe"
+        subject = "NeuroScan - Lien de réinitialisation de mot de passe"
         html_message = f"""
         <html><body style="font-family: Arial, sans-serif;">
             <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                <h1 style="color: #2563eb;">VisionMed</h1>
+                <h1 style="color: #4f46e5;">NeuroScan</h1>
                 <h2>Réinitialisation de votre mot de passe</h2>
-                <p>Vous avez demandé la réinitialisation de votre mot de passe VisionMed.</p>
+                <p>Vous avez demandé la réinitialisation de votre mot de passe NeuroScan.</p>
                 <p style="margin: 30px 0;">
-                    <a href="{reset_link}" style="padding: 12px 30px; background-color: #2563eb; color: white; text-decoration: none; border-radius: 6px;">
+                    <a href="{reset_link}" style="padding: 12px 30px; background-color: #4f46e5; color: white; text-decoration: none; border-radius: 6px;">
                         Réinitialiser mon mot de passe
                     </a>
                 </p>
@@ -1690,36 +1704,78 @@ def forgot_password(request):
             </div>
         </body></html>
         """
-        plain_message = f"Réinitialisez votre mot de passe VisionMed:\n\n{reset_link}\n\nCe lien est valide 15 minutes."
+        plain_message = f"Réinitialisez votre mot de passe NeuroScan:\n\n{reset_link}\n\nCe lien est valide 15 minutes."
+
+        using_smtp = settings.EMAIL_BACKEND == 'django.core.mail.backends.smtp.EmailBackend'
+        sender_email = settings.EMAIL_HOST_USER or settings.DEFAULT_FROM_EMAIL
+
+        if using_smtp and (not settings.EMAIL_HOST_USER or not settings.EMAIL_HOST_PASSWORD):
+            return JsonResponse(
+                {
+                    'ok': False,
+                    'error': 'Configuration email incomplète: renseignez EMAIL_HOST_USER et EMAIL_HOST_PASSWORD dans .env puis redémarrez le serveur.'
+                },
+                status=500,
+            )
 
         try:
             print(f"Nadine Yassmine - forgot_password: Attempting to send email to {email}", flush=True)
             print(f"Nadine Yassmine - EMAIL_BACKEND: {settings.EMAIL_BACKEND}", flush=True)
-            print(f"Nadine Yassmine - DEFAULT_FROM_EMAIL: {settings.DEFAULT_FROM_EMAIL}", flush=True)
+            print(f"Nadine Yassmine - DEFAULT_FROM_EMAIL: {sender_email}", flush=True)
             print(f"Nadine Yassmine - reset_link: {reset_link}", flush=True)
             sys.stdout.flush()
-            
-            # Send email asynchronously to avoid blocking HTTP response
-            send_email_async(
-                subject=subject,
-                message=plain_message,
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[email],
-                html_message=html_message
-            )
+
+            # In DEBUG, send synchronously so configuration errors are visible immediately.
+            if settings.DEBUG:
+                send_mail(
+                    subject=subject,
+                    message=plain_message,
+                    from_email=sender_email,
+                    recipient_list=[email],
+                    html_message=html_message,
+                    fail_silently=False,
+                )
+            else:
+                # In production keep async behavior to reduce request latency.
+                send_email_async(
+                    subject=subject,
+                    message=plain_message,
+                    from_email=sender_email,
+                    recipient_list=[email],
+                    html_message=html_message
+                )
             print(f"Nadine Yassmine - forgot_password: Email request queued for {email}", flush=True)
             sys.stdout.flush()
+        except (smtplib.SMTPAuthenticationError, smtplib.SMTPSenderRefused):
+            print("Nadine Yassmine - Email auth error: check EMAIL_HOST_USER/EMAIL_HOST_PASSWORD and sender address", flush=True)
+            return JsonResponse(
+                {
+                    'ok': False,
+                    'error': 'Authentification SMTP échouée. Vérifiez EMAIL_HOST_USER, EMAIL_HOST_PASSWORD (App Password) et DEFAULT_FROM_EMAIL.'
+                },
+                status=500,
+            )
         except Exception as e:
             print(f"Nadine Yassmine - Error queuing email: {str(e)}", flush=True)
             import traceback
             print(f"Nadine Yassmine - traceback: {traceback.format_exc()}", flush=True)
             sys.stdout.flush()
+            if settings.DEBUG:
+                return JsonResponse({'ok': False, 'error': f'Email send failed: {str(e)}'}, status=500)
 
-        return JsonResponse({'ok': True, 'message': 'Si cet email existe, un lien de réinitialisation sera envoyé.'})
+        resp = {'ok': True, 'message': 'Si cet email existe, un lien de réinitialisation sera envoyé.'}
+        if settings.DEBUG and settings.EMAIL_BACKEND == 'django.core.mail.backends.console.EmailBackend':
+            resp['debug_warning'] = 'EMAIL_BACKEND=console: le mail est affiche dans le terminal, pas envoye vers une boite mail.'
+        return JsonResponse(resp)
 
     except json.JSONDecodeError:
         return JsonResponse({'ok': False, 'error': 'invalid JSON'}, status=400)
     except Exception as e:
+        import traceback
+        print(f"Nadine Yassmine - forgot_password OUTER exception: {str(e)}", flush=True)
+        print(f"Nadine Yassmine - forgot_password OUTER traceback: {traceback.format_exc()}", flush=True)
+        if settings.DEBUG:
+            return JsonResponse({'ok': False, 'error': f'Internal Server Error: {str(e)}'}, status=500)
         return JsonResponse({'ok': False, 'error': 'Internal Server Error'}, status=500)
 
 
@@ -1773,6 +1829,94 @@ def reset_password(request):
         return JsonResponse({'ok': False, 'error': 'invalid JSON'}, status=400)
     except Exception as e:
         return JsonResponse({'ok': False, 'error': 'Internal Server Error'}, status=500)
+
+
+def _dashboard_patient_payload(patient):
+    return {
+        'id': str(patient.id),
+        'num_dossier': patient.dossier_number,
+        'nom': patient.nom,
+        'prenom': patient.prenom,
+        'date_naissance': patient.date_naissance.isoformat() if patient.date_naissance else None,
+        'sexe': patient.sexe,
+        'autres_maladies': patient.autres_maladies,
+        'created_at': patient.created_at.isoformat() if patient.created_at else None,
+    }
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+@login_required
+def patients_list_create(request):
+    if request.method == 'GET':
+        qs = Patient.objects.filter(doctor=request.user).order_by('-created_at')
+
+        # Dashboard filters from query params
+        search = (request.GET.get('id') or '').strip()
+        num_dossier = (request.GET.get('num_dossier') or '').strip()
+        date_naissance = (request.GET.get('date_naissance') or '').strip()
+        sexe = (request.GET.get('sexe') or '').strip()
+        autres_maladies = (request.GET.get('autres_maladies') or '').strip()
+
+        if search:
+            qs = qs.filter(
+                Q(nom__icontains=search)
+                | Q(prenom__icontains=search)
+                | Q(dossier_number__icontains=search)
+                | Q(id__icontains=search)
+            )
+        if num_dossier:
+            qs = qs.filter(dossier_number__icontains=num_dossier)
+        if date_naissance:
+            qs = qs.filter(date_naissance=date_naissance)
+        if sexe:
+            qs = qs.filter(sexe=sexe)
+        if autres_maladies:
+            qs = qs.filter(autres_maladies__icontains=autres_maladies)
+
+        data = [_dashboard_patient_payload(p) for p in qs]
+        return JsonResponse({'ok': True, 'patients': data})
+
+    try:
+        if request.content_type and 'application/json' in request.content_type:
+            raw_data = json.loads(request.body or '{}')
+        else:
+            raw_data = request.POST.dict()
+
+        payload = {
+            'dossier_number': raw_data.get('dossier_number') or raw_data.get('num_dossier') or '',
+            'nom': raw_data.get('nom') or '',
+            'prenom': raw_data.get('prenom') or '',
+            'date_naissance': raw_data.get('date_naissance') or '',
+            'sexe': raw_data.get('sexe') or '',
+            'autres_maladies': raw_data.get('autres_maladies') or '',
+        }
+
+        serializer = PatientSerializer(data=payload)
+        if serializer.is_valid():
+            patient = serializer.save(doctor=request.user)
+            return JsonResponse(
+                {
+                    'ok': True,
+                    'message': 'Patient created successfully',
+                    'patient': _dashboard_patient_payload(patient),
+                },
+                status=201,
+            )
+
+        first_error = 'Invalid patient data'
+        if serializer.errors:
+            first_key = next(iter(serializer.errors))
+            first_value = serializer.errors[first_key]
+            if isinstance(first_value, list) and first_value:
+                first_error = str(first_value[0])
+            else:
+                first_error = str(first_value)
+        return JsonResponse({'ok': False, 'error': first_error, 'errors': serializer.errors}, status=400)
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'Invalid JSON payload'}, status=400)
+    except Exception as e:
+        return JsonResponse({'ok': False, 'error': f'Internal Server Error: {str(e)}'}, status=500)
 
 
 @login_required
@@ -1885,6 +2029,15 @@ def list_mri_files(request, patient_id: uuid.UUID):
     return JsonResponse({'ok': True, 'mri_files': serializer.data})
 
 
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+@login_required
+def mri_files_list_upload(request, patient_id: uuid.UUID):
+    if request.method == 'GET':
+        return list_mri_files(request, patient_id)
+    return upload_mri_files(request, patient_id)
+
+
 # The original get_patient_series and patient_file views remain, as they deal with Series objects
 # which are still linked by CharField patient_id and job_id.
 # If the intention was to replace Series with MRIFile for all image handling,
@@ -1938,3 +2091,209 @@ def reclamation_detail(request, reclamation_id):
         rec_data = ReclamationSerializer(reclamation).data
         rec_data['fichier_url'] = reclamation.fichier.url if reclamation.fichier else None
         return JsonResponse({'ok': True, 'reclamation': rec_data})
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def create_contact_request(request):
+    data = request.data if hasattr(request, 'data') else {}
+
+    subject_map = {
+        'Demande de démonstration': 'demonstration',
+        'Intégration clinique': 'integration',
+        'Support technique': 'support',
+        'Partenariat': 'partnership',
+        'Autre': 'other',
+    }
+
+    normalized_subject = subject_map.get(str(data.get('subject', '')).strip(), str(data.get('subject', 'demonstration')).strip().lower())
+    if normalized_subject not in {'demonstration', 'integration', 'support', 'partnership', 'other'}:
+        normalized_subject = 'other'
+
+    payload = {
+        'full_name': data.get('full_name') or data.get('fullName') or '',
+        'email': data.get('email') or '',
+        'institution': data.get('institution') or '',
+        'subject': normalized_subject,
+        'message': data.get('message') or '',
+    }
+
+    serializer = ContactRequestSerializer(data=payload)
+    if serializer.is_valid():
+        contact = serializer.save()
+        return Response(
+            {
+                'ok': True,
+                'message': 'Contact request created successfully',
+                'contact_request_id': contact.id,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    return Response(
+        {
+            'ok': False,
+            'error': 'Invalid contact request data',
+            'errors': serializer.errors,
+        },
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
+def _admin_scope_users(request):
+    if request.user.is_staff:
+        return User.objects.all()
+    return User.objects.filter(id=request.user.id)
+
+
+def _admin_scope_patients(request):
+    if request.user.is_staff:
+        return Patient.objects.all()
+    return Patient.objects.filter(doctor=request.user)
+
+
+def _admin_scope_series(request):
+    if request.user.is_staff:
+        return Series.objects.all()
+    return Series.objects.filter(user=request.user)
+
+
+def _admin_scope_reclamations(request):
+    if request.user.is_staff:
+        return Reclamation.objects.all()
+    return Reclamation.objects.filter(user=request.user)
+
+
+@api_view(['GET'])
+@login_required
+def admin_dashboard_overview(request):
+    series_qs = _admin_scope_series(request)
+    patients_qs = _admin_scope_patients(request)
+    reclamations_qs = _admin_scope_reclamations(request)
+
+    analyses_totales = int(series_qs.count())
+    patients_actifs = int(patients_qs.count())
+    rapports_generes = int(reclamations_qs.count())
+
+    recent = []
+    for s in series_qs.order_by('-created_at')[:6]:
+        recent.append({
+            'action': 'Analyse IRM cérébrale',
+            'user': (s.user.username if s.user else 'Utilisateur inconnu'),
+            'type': 'Segmentation',
+            'status': 'segmentation',
+            'date': s.created_at.isoformat() if s.created_at else None,
+        })
+    for r in reclamations_qs.order_by('-date')[:6]:
+        recent.append({
+            'action': f'Réclamation {r.numero}',
+            'user': r.user.username,
+            'type': 'Rapport',
+            'status': 'rapport',
+            'date': r.date.isoformat() if r.date else None,
+        })
+    recent.sort(key=lambda x: x.get('date') or '', reverse=True)
+
+    return JsonResponse({
+        'ok': True,
+        'stats': {
+            'analyses_totales': analyses_totales,
+            'patients_actifs': patients_actifs,
+            'rapports_generes': rapports_generes,
+            'taux_precision': 99.2,
+            'deltas': {
+                'analyses_totales': 12.5,
+                'patients_actifs': 8.2,
+                'rapports_generes': 23.1,
+                'taux_precision': 0.3,
+            }
+        },
+        'activity': recent[:8],
+        'repartition': [
+            {'label': 'Segmentation IRM', 'percent': 42},
+            {'label': 'PET-Scan', 'percent': 28},
+            {'label': 'SPECT', 'percent': 18},
+            {'label': 'Rapports', 'percent': 12},
+        ]
+    })
+
+
+@api_view(['GET'])
+@login_required
+def admin_dashboard_accounts(request):
+    users_qs = _admin_scope_users(request).order_by('-date_joined')
+    accounts = []
+    for i, u in enumerate(users_qs[:100], start=1):
+        if not u.last_login:
+            status_label = 'En attente'
+        else:
+            status_label = 'Actif' if u.is_active else 'Inactif'
+        accounts.append({
+            'id': f'USR-{i:03d}',
+            'username': u.username,
+            'full_name': (u.get_full_name() or u.username),
+            'email': u.email or '-',
+            'role': 'Super Admin' if u.is_superuser else ('Admin' if u.is_staff else 'Clinicien'),
+            'status': status_label,
+            'last_login': u.last_login.isoformat() if u.last_login else None,
+        })
+
+    return JsonResponse({'ok': True, 'count': len(accounts), 'accounts': accounts})
+
+
+@api_view(['GET'])
+@login_required
+def admin_dashboard_history(request):
+    series_qs = _admin_scope_series(request)
+    reclamations_qs = _admin_scope_reclamations(request)
+
+    items = []
+    for s in series_qs.order_by('-created_at')[:20]:
+        items.append({
+            'title': 'Analyse IRM cérébrale',
+            'subtitle': f"{s.user.username if s.user else 'Utilisateur'} · Série {s.job_id[:8]}",
+            'type': 'Segmentation',
+            'status': 'segmentation',
+            'date': s.created_at.isoformat() if s.created_at else None,
+        })
+    for r in reclamations_qs.order_by('-date')[:20]:
+        items.append({
+            'title': f'Réclamation {r.numero}',
+            'subtitle': f'{r.user.username} · Ticket support',
+            'type': 'Rapport',
+            'status': 'rapport',
+            'date': r.date.isoformat() if r.date else None,
+        })
+
+    items.sort(key=lambda x: x.get('date') or '', reverse=True)
+    return JsonResponse({'ok': True, 'items': items[:20]})
+
+
+@api_view(['GET'])
+@login_required
+def admin_dashboard_settings(request):
+    user = request.user
+    return JsonResponse({
+        'ok': True,
+        'profile': {
+            'full_name': user.get_full_name() or user.username,
+            'email': user.email or '-',
+            'role': 'Super Admin' if user.is_superuser else ('Admin' if user.is_staff else 'Clinicien'),
+        },
+        'security': {
+            'two_factor': True,
+            'session_expiration': '30 min',
+            'password_rotation': '90 jours',
+        },
+        'notifications': {
+            'email': True,
+            'push': True,
+            'auto_reports': False,
+            'security_alerts': True,
+        },
+        'platform': {
+            'language': 'Français',
+            'timezone': 'Europe/Paris (UTC+2)',
+            'date_format': 'DD/MM/YYYY',
+        }
+    })

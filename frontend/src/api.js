@@ -14,6 +14,9 @@ export const emergencyLogin = (email) => api.post("/emergency_login", { email })
 export const checkEmergencyLimit = (email) => api.post("/emergency_check", { email });
 export const logout = () => api.post("/logout");
 export const checkSession = () => api.get("/check_session");
+export const forgotPassword = (email) => api.post("/forgot_password", { email });
+export const validateResetToken = (token) => api.post("/validate_reset_token", { token });
+export const resetPassword = (token, newPassword) => api.post("/reset_password", { token, new_password: newPassword });
 
 // Uploads
 export const uploadTwo = (patientId, refFile, patFile) => {
@@ -86,5 +89,14 @@ export const getReclamations = () => api.get("/reclamations/");
 export const createReclamation = (formData) => api.post("/reclamations/", formData, {
   headers: { 'Content-Type': 'multipart/form-data' }
 });
+
+// Contact requests (landing popup)
+export const createContactRequest = (data) => api.post('/contact_requests/', data);
+
+// Admin dashboard
+export const getAdminOverview = () => api.get('/admin/dashboard/overview');
+export const getAdminAccounts = () => api.get('/admin/dashboard/accounts');
+export const getAdminHistory = () => api.get('/admin/dashboard/history');
+export const getAdminSettings = () => api.get('/admin/dashboard/settings');
 
 export default api;

@@ -12,3 +12,4 @@ scikit-image
 scipy
 onnxruntime
 trimesh
+reportlab

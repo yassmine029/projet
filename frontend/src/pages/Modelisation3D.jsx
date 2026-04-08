@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Box, ArrowLeft } from 'lucide-react';
+import { Box, ArrowLeft, X, FileText, Download, UserRound, Hash, CalendarDays, Brain, Activity, BarChart3 } from 'lucide-react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
-import api from '../api';
+import api, { downloadSegmentationReportPdf } from '../api';
 
 function MeshViewer({ objUrl, stlUrl }) {
   const mountRef = useRef(null);
@@ -391,7 +391,11 @@ function getNiStatus(value) {
   return { label: 'Haut', tone: 'info', shortRule: '> 110%' };
 }
 
-function AIGauge({ value }) {
+function LegendDot({ colorClass }) {
+  return <span className={`inline-block h-2.5 w-2.5 rounded-full ${colorClass}`} />;
+}
+
+function AIGauge({ value, interpretation }) {
   const v = Math.abs(Number(value || 0));
   const status = getAiStatus(v);
   const marker = (clamp(v, 0, 100) / 100) * 100;
@@ -399,41 +403,58 @@ function AIGauge({ value }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
       <div className="flex items-start justify-between gap-2">
-        <p className="text-2xl font-semibold text-[#213a63]">AI - Asymetrie Index</p>
+        <p className="text-sm uppercase tracking-[0.14em] text-slate-400">IA - Indice d'asymetrie</p>
         <StatusBadge tone={status.tone} label={status.label} />
       </div>
-      <p className="mt-2 text-5xl font-bold text-[#213a63]">{v.toFixed(2)}%</p>
+      <h5 className="mt-1 text-2xl font-medium text-[#1e3563]">Asymetrie hippocampique</h5>
+      <p className="text-sm text-slate-400">Marqueur de l'epilepsie du lobe temporal mesial (MTLE)</p>
+
+      <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 px-4 py-3 text-xs text-[#4f6292]">
+        IA = |D - G| / ((D + G) / 2) - D = vol. droit - G = vol. gauche
+      </div>
+
+      <p className="mt-4 text-5xl font-semibold text-[#1e3563]">{v.toFixed(2)} <span className="text-3xl font-medium text-[#7b8eb8]">%</span></p>
 
       <div className="relative mt-5 h-3 overflow-hidden rounded-full border border-slate-200 bg-white">
-        <div className="h-full bg-emerald-500" style={{ width: '10%' }} />
-        <div className="absolute top-0 h-full bg-red-500" style={{ left: '10%', width: '90%' }} />
-        <ThresholdLine leftPercent={10} colorClass="bg-slate-600" />
+        <div className="h-full bg-emerald-400" style={{ width: '10%' }} />
+        <div className="absolute top-0 h-full bg-amber-400" style={{ left: '10%', width: '10%' }} />
+        <div className="absolute top-0 h-full bg-orange-500" style={{ left: '20%', width: '10%' }} />
+        <div className="absolute top-0 h-full bg-red-400" style={{ left: '30%', width: '70%' }} />
+        <span className="absolute top-1/2 h-8 w-[2px] -translate-y-1/2 bg-[#234986]" style={{ left: '10%' }} />
 
         <span
           className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2"
           style={{ left: `${marker}%` }}
           title={`AI=${v.toFixed(2)}%`}
         >
-          <span className="block h-8 w-4 rounded-md border-2 border-white bg-[#1f3357] shadow-[0_4px_14px_rgba(15,23,42,0.45)] ring-2 ring-[#1f3357]/25" />
+          <span className="block h-8 w-1.5 rounded bg-[#244a89] shadow" />
         </span>
       </div>
 
       <div className="relative mt-2 h-5 text-sm text-slate-500">
         <span className="absolute left-0">0%</span>
         <span className="absolute" style={{ left: '10%', transform: 'translateX(-50%)' }}>10%</span>
+        <span className="absolute" style={{ left: '20%', transform: 'translateX(-50%)' }}>20%</span>
+        <span className="absolute" style={{ left: '30%', transform: 'translateX(-50%)' }}>30%</span>
         <span className="absolute right-0">100%</span>
       </div>
 
-      <div className="mt-4 border-t border-slate-200 pt-3 text-sm text-slate-600">
-        <p><span className="font-semibold">Seuil clinique:</span> 10%</p>
-        <p className="mt-1">&lt; 10%: asymetrie non significative</p>
-        <p>&gt;= 10%: asymetrie significative</p>
+      <div className="mt-1 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-[#5e73a0]">
+        <span><LegendDot colorClass="bg-emerald-500" /> <span className="ml-1">0-10 % : Asymetrie non significative</span></span>
+        <span><LegendDot colorClass="bg-amber-400" /> <span className="ml-1">10-20 % : Asymetrie moderee</span></span>
+        <span><LegendDot colorClass="bg-orange-500" /> <span className="ml-1">20-30 % : Asymetrie marquee</span></span>
+        <span><LegendDot colorClass="bg-red-400" /> <span className="ml-1">&gt; 30 % : Asymetrie severe</span></span>
+      </div>
+
+      <div className="mt-3 rounded-lg border-l-2 border-emerald-400 bg-emerald-50 px-4 py-3">
+        <p className="text-xs uppercase tracking-[0.14em] text-[#77a89f]">Interpretation clinique - Epilepsie (MTLE)</p>
+        <p className="mt-1 text-sm text-[#38527b]">{interpretation || `IA = ${v.toFixed(2)} % - interpretation indisponible.`}</p>
       </div>
     </div>
   );
 }
 
-function NIGauge({ value }) {
+function NIGauge({ value, interpretation }) {
   const v = Number(value || 0);
   const status = getNiStatus(v);
   const min = 0;
@@ -448,45 +469,634 @@ function NIGauge({ value }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
       <div className="flex items-start justify-between gap-2">
-        <p className="text-2xl font-semibold text-[#213a63]">NI - Normalisation Index</p>
+        <p className="text-sm uppercase tracking-[0.14em] text-slate-400">IN - Indice de normalisation</p>
         <StatusBadge tone={status.tone} label={status.label} />
       </div>
-      <p className="mt-2 text-5xl font-bold text-[#213a63]">{v.toFixed(2)}%</p>
+      <h5 className="mt-1 text-2xl font-medium text-[#1e3563]">Normalisation volumetrique hippocampique</h5>
+      <p className="text-sm text-slate-400">Quantification de l'atrophie dans la maladie d'Alzheimer (MA)</p>
+
+      <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 px-4 py-3 text-xs text-[#4f6292]">
+        IN = (V_total patient / V_moy. sains) x 100
+      </div>
+
+      <p className="mt-4 text-5xl font-semibold text-[#1e3563]">{v.toFixed(2)} <span className="text-3xl font-medium text-[#7b8eb8]">%</span></p>
 
       <div className="relative mt-5 h-3 overflow-hidden rounded-full border border-slate-200 bg-slate-100">
-        <div className="absolute left-0 top-0 h-full bg-red-500/75" style={{ width: `${p60}%` }} />
-        <div className="absolute top-0 h-full bg-amber-500/80" style={{ left: `${p60}%`, width: `${p80 - p60}%` }} />
-        <div className="absolute top-0 h-full bg-yellow-400/85" style={{ left: `${p80}%`, width: `${p90 - p80}%` }} />
-        <div className="absolute top-0 h-full bg-green-500/70" style={{ left: `${p90}%`, width: `${p110 - p90}%` }} />
-        <div className="absolute top-0 h-full bg-blue-500/70" style={{ left: `${p110}%`, width: `${100 - p110}%` }} />
-
-        <ThresholdLine leftPercent={p60} colorClass="bg-slate-700" />
-        <ThresholdLine leftPercent={p80} colorClass="bg-slate-700" />
-        <ThresholdLine leftPercent={p90} colorClass="bg-orange-700" />
-        <ThresholdLine leftPercent={p110} colorClass="bg-slate-700" />
+        <div className="absolute left-0 top-0 h-full bg-red-400" style={{ width: `${p60}%` }} />
+        <div className="absolute top-0 h-full bg-orange-400" style={{ left: `${p60}%`, width: `${p80 - p60}%` }} />
+        <div className="absolute top-0 h-full bg-yellow-400" style={{ left: `${p80}%`, width: `${p90 - p80}%` }} />
+        <div className="absolute top-0 h-full bg-emerald-400" style={{ left: `${p90}%`, width: `${p110 - p90}%` }} />
+        <div className="absolute top-0 h-full bg-blue-400" style={{ left: `${p110}%`, width: `${100 - p110}%` }} />
+        <span className="absolute top-1/2 h-8 w-[2px] -translate-y-1/2 bg-[#234986]" style={{ left: `${p110}%` }} />
 
         <span
-          className="absolute top-1/2 h-6 w-6 -translate-y-1/2 rounded-md border-2 border-white bg-slate-800 shadow"
-          style={{ left: `calc(${marker}% - 12px)` }}
+          className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2"
+          style={{ left: `${marker}%` }}
           title={`NI=${v.toFixed(2)}%`}
-        />
+        >
+          <span className="block h-8 w-1.5 rounded bg-[#244a89] shadow" />
+        </span>
       </div>
 
       <div className="mt-2 flex items-center justify-between text-sm text-slate-500">
         <span>0%</span>
-        <span>&lt;60</span>
+        <span>60</span>
         <span>80</span>
         <span>90</span>
         <span>110</span>
         <span>150%</span>
       </div>
 
-      <div className="mt-4 border-t border-slate-200 pt-3 text-sm text-slate-600">
-        <p><span className="font-semibold">Seuils:</span> 60 / 80 / 90 / 110</p>
-        <p className="mt-1">&gt;= 90%: normal</p>
-        <p>80-90%: reduction legere</p>
-        <p>60-80%: reduction moderee</p>
-        <p>&lt; 60%: reduction severe</p>
+      <div className="mt-1 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-[#5e73a0]">
+        <span><LegendDot colorClass="bg-red-400" /> <span className="ml-1">IN &lt; 60 % : Reduction severe</span></span>
+        <span><LegendDot colorClass="bg-orange-400" /> <span className="ml-1">60-80 % : Reduction moderee</span></span>
+        <span><LegendDot colorClass="bg-yellow-400" /> <span className="ml-1">80-90 % : Reduction legere</span></span>
+        <span><LegendDot colorClass="bg-emerald-400" /> <span className="ml-1">&gt;= 90 % : Volume normal</span></span>
+        <span><LegendDot colorClass="bg-blue-400" /> <span className="ml-1">&gt; 110 % : Volume superieur a la moyenne</span></span>
+      </div>
+
+      <div className="mt-3 rounded-lg border-l-2 border-emerald-400 bg-emerald-50 px-4 py-3">
+        <p className="text-xs uppercase tracking-[0.14em] text-[#77a89f]">Interpretation clinique - Alzheimer (MA)</p>
+        <p className="mt-1 text-sm text-[#38527b]">{interpretation || `IN = ${v.toFixed(2)} % - interpretation indisponible.`}</p>
+      </div>
+    </div>
+  );
+}
+
+function ageFromBirthDate(value) {
+  if (!value) return null;
+  const dob = new Date(value);
+  if (Number.isNaN(dob.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - dob.getFullYear();
+  const m = now.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < dob.getDate())) age -= 1;
+  return Math.max(0, age);
+}
+
+function formatDateFr(value) {
+  if (!value) return '-';
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return '-';
+  return dt.toLocaleDateString('fr-FR');
+}
+
+function statusDotClass(status) {
+  if (status === 'ok' || status === 'Normal') return 'bg-emerald-500';
+  if (status === 'Alerte') return 'bg-amber-500';
+  return 'bg-red-500';
+}
+
+function formatMm3(value) {
+  return Number(value || 0).toLocaleString('fr-FR');
+}
+
+function niceCeil(value, step) {
+  const safe = Math.max(1, Number(value || 0));
+  return Math.ceil(safe / step) * step;
+}
+
+function ComparativeGroupedChart({ title, unit, yTicks, yMax, series, categories }) {
+  const safeMax = Math.max(1, Number(yMax || 1));
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <p className="text-2xl font-semibold text-[#1f3566]">{title}</p>
+
+      <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-[#2b3f72]">
+        {series.map((s) => (
+          <span key={s.key} className="inline-flex items-center gap-2">
+            <span className="h-3 w-3 rounded-sm" style={{ backgroundColor: s.color }} />
+            <span>{s.label}</span>
+          </span>
+        ))}
+      </div>
+
+      <div className="mt-4 grid grid-cols-[72px_1fr] gap-3">
+        <div className="relative h-72">
+          {yTicks.map((tick) => {
+            const p = (tick / safeMax) * 100;
+            return (
+              <span
+                key={tick}
+                className="absolute -translate-y-1/2 text-right text-[12px] text-slate-500"
+                style={{ bottom: `${p}%`, right: 0, width: '100%' }}
+              >
+                {`${Number(tick).toLocaleString('fr-FR')} ${unit}`}
+              </span>
+            );
+          })}
+        </div>
+
+        <div className="relative h-72 rounded-xl border border-slate-200 bg-slate-50 px-4 pb-8 pt-3">
+          {yTicks.map((tick) => {
+            const p = (tick / safeMax) * 100;
+            return (
+              <span
+                key={`line-${tick}`}
+                className="absolute left-0 right-0 border-t border-slate-200"
+                style={{ bottom: `${p}%` }}
+              />
+            );
+          })}
+
+          <div className="relative z-10 flex h-full items-end justify-around gap-5">
+            {categories.map((cat) => (
+              <div key={cat.label} className="flex h-full min-w-[90px] flex-col justify-end">
+                <div className="flex h-full items-end justify-center gap-1.5">
+                  {series.map((s) => {
+                    const v = Number(cat.values?.[s.key] || 0);
+                    const h = (v / safeMax) * 100;
+                    return (
+                      <span
+                        key={`${cat.label}-${s.key}`}
+                        className="w-7 rounded-t-md"
+                        style={{
+                          height: `${Math.max(2, h)}%`,
+                          backgroundColor: s.color,
+                          border: s.borderColor ? `2px solid ${s.borderColor}` : 'none',
+                        }}
+                        title={`${cat.label} - ${s.label}: ${v.toFixed(2)} ${unit}`}
+                      />
+                    );
+                  })}
+                </div>
+                <p className="mt-3 text-center text-[13px] font-medium leading-5 text-slate-600">{cat.label}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Mini3DPreview({ objUrl, stlUrl }) {
+  const mountRef = useRef(null);
+
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (!mount) return undefined;
+
+    const w = Math.max(mount.clientWidth, 260);
+    const h = Math.max(mount.clientHeight, 220);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color('#0f1d3d');
+
+    const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 4000);
+    camera.position.set(0, 0, 180);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(window.devicePixelRatio || 1);
+    renderer.setSize(w, h);
+    mount.appendChild(renderer.domElement);
+
+    const a = new THREE.AmbientLight(0xffffff, 0.85);
+    const d = new THREE.DirectionalLight(0xffffff, 0.7);
+    d.position.set(40, 80, 120);
+    scene.add(a);
+    scene.add(d);
+
+    let root = null;
+    let frame = 0;
+
+    const fit = (obj) => {
+      const box = new THREE.Box3().setFromObject(obj);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      obj.position.sub(center);
+      const maxDim = Math.max(size.x, size.y, size.z) || 1;
+      const fov = (camera.fov * Math.PI) / 180;
+      const dist = Math.abs(maxDim / (2 * Math.tan(fov / 2))) * 2.0;
+      camera.position.set(0, 0, Math.max(dist, 120));
+      camera.near = Math.max(0.01, dist / 1000);
+      camera.far = dist * 100;
+      camera.updateProjectionMatrix();
+    };
+
+    const materialize = (obj) => {
+      obj.traverse((child) => {
+        if (child.isMesh) {
+          child.material = new THREE.MeshStandardMaterial({
+            color: '#6aa9ff',
+            metalness: 0.15,
+            roughness: 0.45,
+            side: THREE.DoubleSide,
+          });
+        }
+      });
+    };
+
+    const animate = () => {
+      if (root) root.rotation.y += 0.006;
+      renderer.render(scene, camera);
+      frame = requestAnimationFrame(animate);
+    };
+
+    const failFallback = () => {
+      const geo = new THREE.IcosahedronGeometry(36, 2);
+      const mat = new THREE.MeshStandardMaterial({ color: '#6aa9ff', roughness: 0.55, metalness: 0.1 });
+      root = new THREE.Mesh(geo, mat);
+      scene.add(root);
+      fit(root);
+      animate();
+    };
+
+    if (objUrl) {
+      new OBJLoader().load(
+        objUrl,
+        (obj) => {
+          materialize(obj);
+          root = obj;
+          scene.add(obj);
+          fit(obj);
+          animate();
+        },
+        undefined,
+        failFallback,
+      );
+    } else if (stlUrl) {
+      new STLLoader().load(
+        stlUrl,
+        (geometry) => {
+          geometry.computeVertexNormals();
+          root = new THREE.Mesh(
+            geometry,
+            new THREE.MeshStandardMaterial({ color: '#6aa9ff', roughness: 0.45, metalness: 0.15, side: THREE.DoubleSide }),
+          );
+          scene.add(root);
+          fit(root);
+          animate();
+        },
+        undefined,
+        failFallback,
+      );
+    } else {
+      failFallback();
+    }
+
+    const onResize = () => {
+      if (!mountRef.current) return;
+      const nw = Math.max(mountRef.current.clientWidth, 260);
+      const nh = Math.max(mountRef.current.clientHeight, 220);
+      camera.aspect = nw / nh;
+      camera.updateProjectionMatrix();
+      renderer.setSize(nw, nh);
+    };
+    window.addEventListener('resize', onResize);
+
+    return () => {
+      window.removeEventListener('resize', onResize);
+      cancelAnimationFrame(frame);
+      scene.traverse((child) => {
+        if (child.geometry) child.geometry.dispose?.();
+        if (child.material) {
+          if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose?.());
+          else child.material.dispose?.();
+        }
+      });
+      renderer.dispose();
+      if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
+    };
+  }, [objUrl, stlUrl]);
+
+  return <div ref={mountRef} className="h-[250px] w-full overflow-hidden rounded-xl border border-slate-200" />;
+}
+
+function ReportPreviewModal({
+  open,
+  onClose,
+  onExport,
+  exportLoading,
+  runInfo,
+  modelingResult,
+  patientDetail,
+  toAbsoluteMediaUrl,
+}) {
+  if (!open || !modelingResult) return null;
+
+  const ci = modelingResult?.clinical_indices || {};
+  const vols = modelingResult?.volumes_mm3 || {};
+  const ref = modelingResult?.reference_values_mm3 || {};
+  const interp = modelingResult?.clinical_interpretation || {};
+
+  const sex = patientDetail?.sexe === 'F' ? 'Feminin' : patientDetail?.sexe === 'M' ? 'Masculin' : '-';
+  const age = ageFromBirthDate(patientDetail?.date_naissance);
+  const examDate = formatDateFr(runInfo?.completed_at || runInfo?.created_at);
+
+  const allSlices = Array.isArray(runInfo?.results)
+    ? [...runInfo.results].sort((a, b) => (a.slice_index || 0) - (b.slice_index || 0))
+    : [];
+
+  const measures = [
+    {
+      name: 'Volume hippocampe gauche',
+      value: `${Number(vols.left || 0).toFixed(0)} mm3`,
+      norm: '2200 - 2600',
+      status: Number(vols.left || 0) >= 2200 && Number(vols.left || 0) <= 2600 ? 'Normal' : 'Alerte',
+    },
+    {
+      name: 'Volume hippocampe droit',
+      value: `${Number(vols.right || 0).toFixed(0)} mm3`,
+      norm: '2200 - 2600',
+      status: Number(vols.right || 0) >= 2200 && Number(vols.right || 0) <= 2600 ? 'Normal' : 'Alerte',
+    },
+    {
+      name: 'Volume total',
+      value: `${Number(vols.total || 0).toFixed(0)} mm3`,
+      norm: '4500 - 5300',
+      status: Number(vols.total || 0) >= 4500 && Number(vols.total || 0) <= 5300 ? 'Normal' : 'Alerte',
+    },
+    {
+      name: "Indice d'asymetrie (IA)",
+      value: `${Number(ci.asymmetry_index_percent || 0).toFixed(2)} %`,
+      norm: '< 10 %',
+      status: Math.abs(Number(ci.asymmetry_index_percent || 0)) < 10 ? 'Normal' : 'Alerte',
+    },
+    {
+      name: 'Indice de normalisation (IN)',
+      value: `${Number(ci.normality_index_percent || 0).toFixed(2)} %`,
+      norm: '90 - 110 %',
+      status: Number(ci.normality_index_percent || 0) >= 90 && Number(ci.normality_index_percent || 0) <= 110 ? 'Normal' : 'Alerte',
+    },
+    {
+      name: 'Z-Score',
+      value: `${Number(ci.z_score || 0).toFixed(2)}`,
+      norm: '-1.5 a +1.5',
+      status: Number(ci.z_score || 0) >= -1.5 && Number(ci.z_score || 0) <= 1.5 ? 'Normal' : 'Alerte',
+    },
+  ];
+
+  const bars = [
+    { label: 'Hippocampe gauche', patient: Number(vols.left || 0), norm: 2430 },
+    { label: 'Hippocampe droit', patient: Number(vols.right || 0), norm: 2430 },
+    { label: 'Volume total', patient: Number(vols.total || 0), norm: Number(ref.normative_total_mean || 4860) },
+  ];
+  const barMax = Math.max(1, ...bars.map((b) => Math.max(b.patient, b.norm)));
+
+  const volumeCategories = [
+    {
+      label: 'Hippocampe gauche',
+      values: {
+        patient: Number(vols.left || 0),
+        minNorm: Number(ref.left_min_mm3 || 2200),
+        maxNorm: Number(ref.left_max_mm3 || 2600),
+      },
+    },
+    {
+      label: 'Hippocampe droit',
+      values: {
+        patient: Number(vols.right || 0),
+        minNorm: Number(ref.right_min_mm3 || 2200),
+        maxNorm: Number(ref.right_max_mm3 || 2600),
+      },
+    },
+    {
+      label: 'Volume total',
+      values: {
+        patient: Number(vols.total || 0),
+        minNorm: Number(ref.total_min_mm3 || 4500),
+        maxNorm: Number(ref.total_max_mm3 || 5300),
+      },
+    },
+  ];
+
+  const volumeMaxValue = niceCeil(
+    Math.max(
+      5300,
+      ...volumeCategories.flatMap((c) => [
+        Number(c.values.patient || 0),
+        Number(c.values.minNorm || 0),
+        Number(c.values.maxNorm || 0),
+      ]),
+    ) * 1.03,
+    500,
+  );
+  const volumeTicks = [1500, 2500, 3500, 4500, volumeMaxValue].filter((v, i, arr) => v <= volumeMaxValue && arr.indexOf(v) === i);
+
+  const iaValue = Math.abs(Number(ci.asymmetry_index_percent || 0));
+  const inValue = Number(ci.normality_index_percent || 0);
+  const indicesCategories = [
+    {
+      label: 'IA - Asymetrie (%)',
+      values: {
+        patient: iaValue,
+        seuil: 10,
+      },
+    },
+    {
+      label: 'IN - Normalisation (%)',
+      values: {
+        patient: inValue,
+        seuil: 90,
+      },
+    },
+  ];
+  const indicesMaxValue = niceCeil(
+    Math.max(120, ...indicesCategories.flatMap((c) => [Number(c.values.patient || 0), Number(c.values.seuil || 0)])) * 1.08,
+    10,
+  );
+  const indexTicks = [0, 20, 40, 60, 80, 100, 120, indicesMaxValue]
+    .filter((v, i, arr) => v <= indicesMaxValue && arr.indexOf(v) === i)
+    .sort((a, b) => a - b);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-[1px]">
+      <div className="mx-auto mt-8 w-[96vw] max-w-[1180px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+          <p className="text-xl font-semibold text-[#1f3566]">Apercu du rapport</p>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={onExport}
+              disabled={exportLoading}
+              className="inline-flex items-center gap-2 rounded-xl bg-[#1f3a78] px-4 py-2 text-sm font-semibold text-white hover:bg-[#173062] disabled:opacity-60"
+            >
+              <Download className="h-5 w-5" />
+              {exportLoading ? 'Generation...' : 'Exporter PDF'}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-[#2a3f72] hover:bg-slate-50"
+            >
+              <X className="h-5 w-5" />
+              Fermer
+            </button>
+          </div>
+        </div>
+
+        <div className="max-h-[82vh] overflow-y-auto px-8 py-6">
+          <div className="flex items-start justify-between border-b-2 border-[#263e82] pb-4">
+            <div>
+              <p className="text-3xl font-bold text-[#1b3368]">VisionMed</p>
+              <p className="mt-1 text-xs uppercase tracking-[0.12em] text-[#8b9fc9]">Rapport de volumetrie hippocampique</p>
+            </div>
+            <div className="text-right">
+              <p className="text-sm text-slate-500">Genere le</p>
+              <p className="text-xl font-semibold text-[#1c366b]">{examDate}</p>
+            </div>
+          </div>
+
+          <div className="mt-6 rounded-2xl bg-slate-50 p-4">
+            <p className="text-xs uppercase tracking-[0.15em] text-[#8ea0c9]">Informations patient</p>
+            <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="flex items-center gap-3 rounded-xl bg-white p-3">
+                <UserRound className="h-5 w-5 text-[#8ea0c9]" />
+                <div>
+                  <p className="text-[11px] uppercase text-slate-400">Sexe</p>
+                  <p className="text-base font-semibold text-[#1f3566]">{sex}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 rounded-xl bg-white p-3">
+                <Hash className="h-5 w-5 text-[#8ea0c9]" />
+                <div>
+                  <p className="text-[11px] uppercase text-slate-400">Age</p>
+                  <p className="text-base font-semibold text-[#1f3566]">{age != null ? `${age} ans` : '-'}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 rounded-xl bg-white p-3">
+                <CalendarDays className="h-5 w-5 text-[#8ea0c9]" />
+                <div>
+                  <p className="text-[11px] uppercase text-slate-400">Date d'examen</p>
+                  <p className="text-base font-semibold text-[#1f3566]">{examDate}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6">
+            <p className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.15em] text-[#8ea0c9]"><Brain className="h-4 w-4" />Images cles - IRM segmentation</p>
+            <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-12">
+              <div className="lg:col-span-8 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <p className="mb-2 text-[11px] uppercase tracking-[0.12em] text-slate-500">Coupes du patient ({allSlices.length})</p>
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
+                  {allSlices.map((slice, idx) => (
+                    <div key={slice.id || idx} className="overflow-hidden rounded-lg border border-slate-200 bg-[#0e1b3e]">
+                      <div className="relative aspect-[4/3]">
+                        {slice?.source_url ? (
+                          <>
+                            <img
+                              src={toAbsoluteMediaUrl(slice.source_url)}
+                              alt={`slice-${slice.slice_index || idx + 1}`}
+                              className="h-full w-full object-cover"
+                            />
+                            {slice?.mask_url ? (
+                              <img
+                                src={toAbsoluteMediaUrl(slice.mask_url)}
+                                alt={`mask-${slice.slice_index || idx + 1}`}
+                                className="absolute inset-0 h-full w-full object-cover mix-blend-screen opacity-70"
+                              />
+                            ) : null}
+                          </>
+                        ) : (
+                          <div className="flex h-full items-center justify-center text-[#f06b86]"><Brain className="h-5 w-5" /></div>
+                        )}
+                      </div>
+                      <p className="border-t border-white/10 px-2 py-1 text-center text-[10px] text-[#d4def6]">Slice {slice?.slice_index ?? idx + 1}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="lg:col-span-4 overflow-hidden rounded-xl border border-slate-200 bg-white p-3">
+                <p className="mb-2 text-[11px] uppercase tracking-[0.12em] text-slate-500">Visualisation 3D claire</p>
+                <Mini3DPreview
+                  objUrl={toAbsoluteMediaUrl(modelingResult?.obj_url)}
+                  stlUrl={toAbsoluteMediaUrl(modelingResult?.stl_url)}
+                />
+                <p className="mt-2 text-xs text-slate-500">Reconstruction 3D des hippocampes (rotation automatique).</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6">
+            <p className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.15em] text-[#8ea0c9]"><FileText className="h-4 w-4" />Tableau des mesures volumetriques</p>
+            <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
+              <table className="w-full text-left">
+                <thead className="bg-[#233a83] text-xs uppercase tracking-[0.08em] text-white">
+                  <tr>
+                    <th className="px-4 py-3">Mesure</th>
+                    <th className="px-4 py-3">Valeur</th>
+                    <th className="px-4 py-3">Norme</th>
+                    <th className="px-4 py-3">Statut</th>
+                  </tr>
+                </thead>
+                <tbody className="text-sm text-[#2a3e72]">
+                  {measures.map((row) => (
+                    <tr key={row.name} className="border-t border-slate-100">
+                      <td className="px-4 py-3">{row.name}</td>
+                      <td className="px-4 py-3 font-semibold">{row.value}</td>
+                      <td className="px-4 py-3 text-slate-500">{row.norm}</td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-block h-2.5 w-2.5 rounded-full ${statusDotClass(row.status)}`} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="mt-6">
+            <p className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.15em] text-[#8ea0c9]"><Activity className="h-4 w-4" />Interpretation clinique automatique</p>
+            <div className="mt-3 space-y-3">
+              <div className="rounded-xl border-l-4 border-emerald-400 bg-emerald-50 px-4 py-3">
+                <p className="text-xs uppercase tracking-[0.12em] text-[#6a9f90]">Epilepsie (MTLE) - IA</p>
+                <p className="mt-1 text-sm leading-7 text-[#2d5772]">{interp.mtle_message || interp.ai_message || '-'}</p>
+              </div>
+              <div className="rounded-xl border-l-4 border-emerald-400 bg-emerald-50 px-4 py-3">
+                <p className="text-xs uppercase tracking-[0.12em] text-[#6a9f90]">Alzheimer (MA) - IN</p>
+                <p className="mt-1 text-sm leading-7 text-[#2d5772]">{interp.ni_message || '-'}</p>
+              </div>
+              <div className="rounded-xl border-l-4 border-blue-400 bg-blue-50 px-4 py-3">
+                <p className="text-xs uppercase tracking-[0.12em] text-[#6b86b6]">Deviation statistique - Z-score</p>
+                <p className="mt-1 text-sm leading-7 text-[#2d4f96]">{interp.z_message || '-'}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6">
+            <p className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.15em] text-[#8ea0c9]"><BarChart3 className="h-4 w-4" />Graphiques personnalises du patient</p>
+            <div className="mt-3 grid grid-cols-1 gap-4 xl:grid-cols-2">
+              <ComparativeGroupedChart
+                title="Volumes hippocampiques (mm3)"
+                unit="mm3"
+                yTicks={volumeTicks}
+                yMax={volumeMaxValue}
+                series={[
+                  { key: 'patient', label: 'Patient', color: '#1f2f77' },
+                  { key: 'minNorm', label: 'Norme minimale', color: '#a8c5e6' },
+                  { key: 'maxNorm', label: 'Norme maximale', color: '#d7dfc8' },
+                ]}
+                categories={volumeCategories}
+              />
+
+              <ComparativeGroupedChart
+                title="Indices cliniques IA et IN (%)"
+                unit="%"
+                yTicks={indexTicks}
+                yMax={indicesMaxValue}
+                series={[
+                  { key: 'patient', label: 'Valeur patient', color: '#de5b79' },
+                  { key: 'seuil', label: 'Seuil clinique', color: '#c4cad8', borderColor: '#1f4ea0' },
+                ]}
+                categories={indicesCategories}
+              />
+            </div>
+            <p className="mt-3 text-xs text-slate-500">
+              Donnees patient: G={formatMm3(vols.left)} mm3, D={formatMm3(vols.right)} mm3, Total={formatMm3(vols.total)} mm3, IA={iaValue.toFixed(2)} %, IN={inValue.toFixed(2)} %.
+            </p>
+          </div>
+
+          <div className="mt-6 rounded-2xl bg-[#20357d] px-6 py-5 text-white">
+            <p className="text-xs uppercase tracking-[0.12em] text-[#b6c7f5]">Conclusion synthetique</p>
+            <p className="mt-2 text-base leading-8 font-medium">{interp.summary || '-'}</p>
+            <p className="mt-3 border-t border-white/20 pt-3 text-xs text-[#94a8dc]">
+              Volumes: G={Number(vols.left || 0).toFixed(0)} mm3 - D={Number(vols.right || 0).toFixed(0)} mm3 - Total={Number(vols.total || 0).toFixed(0)} mm3 - IA={Number(ci.asymmetry_index_percent || 0).toFixed(2)}% - IN={Number(ci.normality_index_percent || 0).toFixed(2)}% - Z={Number(ci.z_score || 0).toFixed(2)}
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -503,6 +1113,10 @@ export default function Modelisation3D() {
   const [modelingLoading, setModelingLoading] = useState(false);
   const [modelingError, setModelingError] = useState('');
   const [modelingResult, setModelingResult] = useState(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState('');
+  const [reportPreviewOpen, setReportPreviewOpen] = useState(false);
+  const [reportPatientDetail, setReportPatientDetail] = useState(null);
 
   const [standardMode, setStandardMode] = useState({
     structure: 'both',
@@ -613,6 +1227,70 @@ export default function Modelisation3D() {
     run();
   };
 
+  const handleDownloadReportPdf = async () => {
+    if (!Number.isFinite(runId) || runId <= 0) return;
+    setReportLoading(true);
+    setReportError('');
+
+    try {
+      const payload = {
+        structure: standardMode.structure,
+        quality: standardMode.quality,
+        smoothing: standardMode.smoothing,
+        spacing_z: standardMode.knowsSpacing ? standardMode.spacingZ : 1.0,
+        spacing_y: standardMode.knowsSpacing ? standardMode.spacingY : 1.0,
+        spacing_x: standardMode.knowsSpacing ? standardMode.spacingX : 1.0,
+        ...(standardMode.useCustomReference
+          ? {
+              normative_total_mean_mm3: standardMode.normativeTotalMeanMm3,
+              normative_total_std_mm3: standardMode.normativeTotalStdMm3,
+            }
+          : {}),
+      };
+
+      const token = localStorage.getItem('access');
+      const response = await downloadSegmentationReportPdf(runId, payload, {
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `rapport_segmentation_run_${runId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      const apiMessage = err?.response?.data?.error || err?.response?.data?.detail;
+      setReportError(apiMessage || 'Echec generation du rapport PDF.');
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
+  const handleOpenReportPreview = async () => {
+    setReportPreviewOpen(true);
+    setReportError('');
+
+    if (!runInfo?.patient) return;
+    try {
+      const token = localStorage.getItem('access');
+      const response = await api.get(`/patients/${runInfo.patient}/`, {
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      const patient = response?.data?.patient || response?.data;
+      setReportPatientDetail(patient || null);
+    } catch {
+      setReportPatientDetail(null);
+    }
+  };
+
   const toAbsoluteMediaUrl = (raw) => {
     const value = String(raw || '').trim();
     if (!value) return '';
@@ -624,12 +1302,26 @@ export default function Modelisation3D() {
 
   const aiValue = Number(modelingResult?.clinical_indices?.asymmetry_index_percent || 0);
   const niValue = Number(modelingResult?.clinical_indices?.normality_index_percent || 0);
+  const aiMeaning = modelingResult?.clinical_interpretation?.ai_message || '';
+  const niMeaning = modelingResult?.clinical_interpretation?.ni_message || '';
   const mtleMeaning = modelingResult?.clinical_interpretation?.mtle_message || '-';
   const globalConclusion = modelingResult?.clinical_interpretation?.summary || '-';
+  const aiStatus = getAiStatus(aiValue).label;
+  const niStatus = getNiStatus(niValue).label;
+  const conciseConclusion =
+    niStatus === 'Severe'
+      ? 'Atrophie hippocampique probable. Correlation clinique recommandee.'
+      : niStatus === 'Alerte'
+        ? 'Profil borderline. Surveillance clinique et comparaison evolutive conseillees.'
+        : niStatus === 'Haut'
+          ? 'Profil d\'hyperplasie. A interpreter avec le contexte clinique.'
+          : aiStatus === 'Normal'
+            ? 'Profil volumetrique dans la norme, sans lateralisation nette.'
+            : 'Profil global stable avec asymetrie a surveiller.';
 
   return (
     <div className="min-h-screen bg-[#f5f7ff] p-6 md:p-10">
-      <div className="mx-auto max-w-5xl space-y-6">
+      <div className="mx-auto w-full max-w-[1500px] space-y-6">
         <div className="flex items-center justify-between">
           <button
             type="button"
@@ -860,7 +1552,7 @@ export default function Modelisation3D() {
 
                   <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
                     <div className="rounded-xl bg-[#1f3a63] px-5 py-4 text-white">
-                      <h4 className="text-3xl font-semibold">Synthese clinique - Hippocampe</h4>
+                      <h4 className="text-xl font-medium">Synthese clinique - Hippocampe</h4>
                       <p className="mt-1 text-sm text-slate-200">
                         Reference normative: moyenne {Number(modelingResult?.reference_values_mm3?.normative_total_mean || 0).toFixed(0)} mm3,
                         sigma {Number(modelingResult?.reference_values_mm3?.normative_total_std || 0).toFixed(0)} mm3
@@ -869,7 +1561,7 @@ export default function Modelisation3D() {
 
                     <div className="mt-4 overflow-hidden rounded-xl border border-slate-200">
                       <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
-                        <p className="text-xl font-semibold text-[#213a63]">Volumes hippocampiques</p>
+                        <p className="text-lg font-medium text-[#213a63]">Volumes hippocampiques</p>
                       </div>
                       <table className="w-full text-left">
                         <thead className="bg-white text-sm text-slate-500">
@@ -879,7 +1571,7 @@ export default function Modelisation3D() {
                             <th className="px-4 py-3 font-semibold">Norme</th>
                           </tr>
                         </thead>
-                        <tbody className="text-base text-slate-700">
+                        <tbody className="text-sm text-slate-700">
                           <tr className="border-t border-slate-200">
                             <td className="px-4 py-3">Hippocampe gauche</td>
                             <td className="px-4 py-3 font-semibold text-[#213a63]">{Number(modelingResult?.volumes_mm3?.left || 0).toFixed(0)} mm3</td>
@@ -903,28 +1595,33 @@ export default function Modelisation3D() {
                     </div>
 
                     <div className="mt-4 space-y-4">
-                      <AIGauge value={aiValue} />
-                      <NIGauge value={niValue} />
+                      <AIGauge value={aiValue} interpretation={mtleMeaning || aiMeaning} />
+                      <NIGauge value={niValue} interpretation={niMeaning} />
                     </div>
 
                     <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 md:h-36">
-                        <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Lecture rapide</p>
-                        <p className="mt-2 text-base leading-6 text-slate-800">AI : <span className="font-semibold">{getAiStatus(aiValue).label}</span></p>
-                        <p className="text-base leading-6 text-slate-800">NI : <span className="font-semibold">{getNiStatus(niValue).label}</span></p>
+                      <div className="rounded-xl border border-[#4c66ab] bg-[#2e4f9e] p-4 md:h-32">
+                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#d3def8]">Lecture rapide</p>
+                        <p className="mt-2 text-sm font-medium leading-6 text-[#e5ecff]">IA : <span className="font-semibold text-[#f2f6ff]">{aiValue.toFixed(2)} %</span> - <span className="text-[#c8f3df]">{aiStatus}</span></p>
+                        <p className="text-sm font-medium leading-6 text-[#e5ecff]">IN : <span className="font-semibold text-[#f2f6ff]">{niValue.toFixed(2)} %</span> - <span className="text-[#c8f3df]">{niStatus}</span></p>
                       </div>
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 md:h-36">
-                        <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">MTLE (epilepsie)</p>
-                        <div className="mt-2 max-h-20 overflow-y-auto pr-1">
-                          <p className="text-base leading-6 text-slate-800">{mtleMeaning}</p>
+                      <div className="rounded-xl border border-[#4c66ab] bg-[#2e4f9e] p-4 md:h-32">
+                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#d3def8]">Epilepsie (MTLE)</p>
+                        <div className="mt-2 max-h-16 overflow-y-auto pr-1">
+                          <p className="text-sm font-medium leading-6 text-[#e5ecff]">{mtleMeaning}</p>
                         </div>
                       </div>
-                      <div className="rounded-xl border border-slate-200 bg-slate-100 p-4 md:h-36">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-700">Conclusion</p>
-                        <div className="mt-2 max-h-20 overflow-y-auto pr-1">
-                          <p className="text-base leading-6 font-semibold text-[#1e3256]">{globalConclusion}</p>
+                      <div className="rounded-xl border border-[#4c66ab] bg-[#2e4f9e] p-4 md:h-32">
+                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#d3def8]">Alzheimer (MA)</p>
+                        <div className="mt-2 max-h-16 overflow-y-auto pr-1">
+                          <p className="text-sm font-medium leading-6 text-[#e5ecff]">{niMeaning || 'Interpretation MA indisponible.'}</p>
                         </div>
                       </div>
+                    </div>
+
+                    <div className="mt-3 rounded-xl border border-[#4c66ab] bg-[#29468f] p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#d3def8]">Conclusion synthetique</p>
+                      <p className="mt-2 text-base leading-7 font-semibold text-[#f0f5ff]">{conciseConclusion}</p>
                     </div>
                   </div>
 
@@ -947,7 +1644,18 @@ export default function Modelisation3D() {
                     >
                       Telecharger STL
                     </a>
+                    <button
+                      type="button"
+                      onClick={handleOpenReportPreview}
+                      disabled={reportLoading || !modelingResult}
+                      className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      Apercu rapport
+                    </button>
                   </div>
+                  {reportError ? (
+                    <p className="mt-2 text-xs text-red-600">{reportError}</p>
+                  ) : null}
                   <p className="mt-2 text-xs text-slate-500">
                     Le modele 3D est deja visualise ci-dessus dans la plateforme. Les boutons OBJ/STL servent a exporter les fichiers pour Blender, MeshLab ou 3D Slicer.
                   </p>
@@ -957,6 +1665,17 @@ export default function Modelisation3D() {
           )}
         </div>
       </div>
+
+      <ReportPreviewModal
+        open={reportPreviewOpen}
+        onClose={() => setReportPreviewOpen(false)}
+        onExport={handleDownloadReportPdf}
+        exportLoading={reportLoading}
+        runInfo={runInfo}
+        modelingResult={modelingResult}
+        patientDetail={reportPatientDetail}
+        toAbsoluteMediaUrl={toAbsoluteMediaUrl}
+      />
     </div>
   );
 }

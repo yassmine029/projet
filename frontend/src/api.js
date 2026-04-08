@@ -69,4 +69,10 @@ export const createReclamation = (formData) => api.post("/reclamations/", formDa
   headers: { 'Content-Type': 'multipart/form-data' }
 });
 
+export const downloadSegmentationReportPdf = (runId, payload = {}, config = {}) =>
+  api.post(`/segmentation-runs/${runId}/report-pdf/`, payload, {
+    responseType: 'blob',
+    ...config,
+  });
+
 export default api;

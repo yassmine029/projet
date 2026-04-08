@@ -17,7 +17,12 @@ import Dashboard from './pages/Dashboard'
 import PatientsList from './pages/dashboard/PatientsList'
 import PatientDetail from './pages/dashboard/PatientDetail'
 import ReclamationsList from './pages/dashboard/ReclamationsList'
+import AnalysesMRI from './pages/dashboard/AnalysesMRI'
+import Parametres from './pages/Parametres'
 import NewPatient from './pages/NewPatient'
+import MonProfil from './pages/MonProfil'
+import NouvelleSegmentation from './pages/NouvelleSegmentation'
+import Modelisation3D from './pages/Modelisation3D'
 import './index.css'
 
 import api, { checkSession, logout } from './api'
@@ -78,9 +83,16 @@ export default function App() {
       <Route path="/dashboard" element={<Dashboard />}>
         <Route path="patients" element={<PatientsList />} />
         <Route path="patients/:id" element={<PatientDetail />} />
+        <Route path="analysesMRI" element={<AnalysesMRI />} />
+        <Route path="mri" element={<Navigate to="/dashboard/analysesMRI" replace />} />
         <Route path="reclamations" element={<ReclamationsList />} />
+        <Route path="profile" element={<MonProfil />} />
+        <Route path="settings" element={<Parametres />} />
       </Route>
+      <Route path="/profil" element={<MonProfil />} />
       <Route path="/new-patient" element={<NewPatient />} />
+      <Route path="/segmentation/nouvelle" element={<NouvelleSegmentation />} />
+      <Route path="/segmentation/modelisation" element={<Modelisation3D />} />
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>
   )

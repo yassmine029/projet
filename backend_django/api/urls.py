@@ -12,6 +12,9 @@ urlpatterns = [
     path('forgot_password', views.forgot_password, name='forgot_password'),
     path('validate_reset_token', views.validate_reset_token, name='validate_reset_token'),
     path('reset_password', views.reset_password, name='reset_password'),
+    path('profile/', views.profile_view, name='profile'),
+    path('user-settings/', views.user_settings_view, name='user_settings'),
+    path('profile/change-password/', views.change_password_view, name='change_password'),
 
     # Upload routes
     path('upload', views.upload, name='upload'),
@@ -33,8 +36,14 @@ urlpatterns = [
 
     # Patient routes
     path('patients/', views.patients_list_create, name='patients_list_create'),
-    path('patients/<uuid:patient_id>/', views.patient_detail_update_delete, name='patient_detail_update_delete'),
-    path('patients/<uuid:patient_id>/mri-files/', views.mri_files_list_upload, name='mri_files_list_upload'),
+    path('patients/<int:patient_id>/', views.patient_detail_update_delete, name='patient_detail_update_delete'),
+    path('patients/<int:patient_id>/mri-files/', views.mri_files_list_upload, name='mri_files_list_upload'),
+    path('mri-files/<int:file_id>/preview/', views.mri_file_preview, name='mri_file_preview'),
+    path('patients/<int:patient_id>/segment/', views.launch_patient_segmentation, name='launch_patient_segmentation'),
+    path('segmentation-runs/', views.segmentation_runs_list, name='segmentation_runs_list'),
+    path('segmentation-runs/<int:run_id>/', views.segmentation_run_detail, name='segmentation_run_detail'),
+    path('segmentation-runs/<int:run_id>/modelisation-3d/', views.segmentation_run_modelisation_3d, name='segmentation_run_modelisation_3d'),
+    path('patients/<int:patient_id>/download-zip/', views.patient_files_download_zip, name='patient_files_download_zip'),
 
     # Reclamation routes
     path('reclamations/', views.reclamations_list_create, name='reclamations_list_create'),

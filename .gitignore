@@ -51,3 +51,5 @@ dist/
 
 # MAIS garder le README.md
 !README.md
+# Modeles ONNX
+*.onnx

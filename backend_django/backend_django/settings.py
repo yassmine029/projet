@@ -145,3 +145,16 @@ DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'noreply@visionmed.com')
 
 # Frontend URL (for password reset links)
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+
+# ONNX model configuration
+UNETPP_MODEL_PATH = os.getenv('UNETPP_MODEL_PATH', str(BASE_DIR / 'models' / 'unetpp.onnx'))
+SWINUNETR_MODEL_PATH = os.getenv('SWINUNETR_MODEL_PATH', str(BASE_DIR / 'models' / 'swinunetr_best_fold1.onnx'))
+_nnunet_final_default = str(BASE_DIR / 'models' / 'nnunet_fold0_final_2026-04-05.onnx')
+_nnunet_v2_default = str(BASE_DIR / 'models' / 'nnunet_fold0_v2.onnx')
+_nnunet_legacy_default = str(BASE_DIR / 'models' / 'model_fold0_2d.onnx')
+NNUNET_MODEL_PATH = (
+    os.getenv('NNUNET_MODEL_PATH')
+    or (_nnunet_final_default if os.path.exists(_nnunet_final_default) else None)
+    or (_nnunet_v2_default if os.path.exists(_nnunet_v2_default) else None)
+    or _nnunet_legacy_default
+)

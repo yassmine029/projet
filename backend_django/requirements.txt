@@ -10,3 +10,5 @@ torch
 torchvision
 scikit-image
 scipy
+onnxruntime
+trimesh

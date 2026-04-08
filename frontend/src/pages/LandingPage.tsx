@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   ArrowDown,
   Activity,
@@ -32,10 +33,21 @@ interface LandingPageProps {
 }
 
 export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
+  const navigate = useNavigate();
+
   const scrollToModules = () => {
     document.getElementById('modules-section')?.scrollIntoView({
       behavior: 'smooth'
     });
+  };
+
+  const handleModuleNavigation = (moduleId: string, modulePage: Page) => {
+    if (moduleId === 'segmentation') {
+      navigate('/segmentation/nouvelle');
+      return;
+    }
+
+    onNavigate(modulePage);
   };
 
   const modules = [
@@ -105,6 +117,13 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
             <span className="text-lg font-bold text-blue-900 tracking-tight">VisionMed</span>
           </div>
           <div className="flex items-center gap-4">
+            <button
+              onClick={() => onNavigate('dashboard')}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-blue-50 text-blue-800 font-medium rounded-lg border border-blue-200 hover:bg-blue-100 hover:border-blue-300 transition-all duration-300 shadow-sm"
+            >
+              <Target className="w-4 h-4" />
+              Accéder au Dashboard
+            </button>
             <div className="hidden md:flex flex-col items-end">
               <span className="text-sm font-medium text-blue-900">Dr. {user.fullName || user.full_name || user.username}</span>
               <span className="text-[10px] text-blue-500 uppercase tracking-wider">{user.speciality || user.specialty || 'Radiologie'}</span>
@@ -144,13 +163,6 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4">
-              <button
-                onClick={() => onNavigate('dashboard')}
-                className="inline-flex items-center justify-center gap-2 px-8 py-4 bg-emerald-600 text-white font-medium rounded-xl hover:bg-emerald-700 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 shadow-emerald-600/30"
-              >
-                <Target className="w-5 h-5" />
-                Accéder au Dashboard
-              </button>
               <button
                 onClick={scrollToModules}
                 className="inline-flex items-center justify-center gap-2 px-8 py-4 bg-blue-900 text-white font-medium rounded-xl hover:bg-blue-800 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 shadow-blue-900/20"
@@ -355,7 +367,7 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
                     <div className={`absolute inset-0 ${theme.light} translate-y-full group-hover:translate-y-0 transition-transform duration-500 ease-out opacity-40`}></div>
                     
                     <button
-                      onClick={() => onNavigate(module.page)}
+                      onClick={() => handleModuleNavigation(module.id, module.page)}
                       className={`relative z-10 w-full flex items-center justify-between font-bold text-slate-600 group-hover:${theme.text} transition-colors duration-300`}
                     >
                       <span className="uppercase tracking-wider text-[11px]">Accéder au module spatial</span>
@@ -365,7 +377,7 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
                       </span>
                     </button>
                     {/* Clickable zone covering the footer */}
-                    <div className="absolute inset-0 z-20" onClick={() => onNavigate(module.page)} style={{ cursor: 'pointer' }} />
+                    <div className="absolute inset-0 z-20" onClick={() => handleModuleNavigation(module.id, module.page)} style={{ cursor: 'pointer' }} />
                   </div>
                 </div>
               );

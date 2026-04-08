@@ -1,6 +1,8 @@
 import os
 import io
 import sys
+import mimetypes
+import posixpath
 import zipfile
 import tempfile
 import shutil
@@ -18,7 +20,9 @@ from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.decorators import login_required
 from django.core.validators import RegexValidator
-from rest_framework.decorators import api_view, permission_classes
+from django.core.files.storage import default_storage
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
+from rest_framework.authentication import SessionAuthentication
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from .models import Series
 from django.shortcuts import get_object_or_404, Http404
@@ -32,11 +36,22 @@ from django.utils import timezone
 from django.core.mail import send_mail
 # from django.core.paginator import Paginator # Not used, can be removed
 from django.db.models import Q
-from .models import Series, PasswordResetToken, EmergencyLoginAttempt, Patient, Reclamation, MRIFile
-from .serializers import ReclamationSerializer, PatientSerializer, MRIFileSerializer
+from .models import Series, PasswordResetToken, EmergencyLoginAttempt, Patient, Reclamation, MRIFile, UserSettings, default_user_settings
+from .serializers import (
+    ReclamationSerializer,
+    PatientSerializer,
+    MRIFileSerializer,
+    SegmentationRunSerializer,
+    ProfileSerializer,
+    ChangePasswordSerializer,
+    UserSettingsSerializer,
+)
+from .models import SegmentationRun, SegmentationMaskResult
 
 # auto_registration (ANTs) supprimé — MINE uniquement
 from .mine_registration import run_mine_registration
+from .segmentation_inference import run_segmentation_on_files
+from .modelisation_3d import run_modelisation_3d, parse_spacing, parse_reference_values
 
 # Setup logging - just flush stdout for real-time output
 sys.stdout.flush()
@@ -48,6 +63,11 @@ JOBS = {}
 UPLOAD_DIR = settings.MEDIA_ROOT
 MEDIA_ROOT = settings.MEDIA_ROOT
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+class CsrfExemptSessionAuthentication(SessionAuthentication):
+    def enforce_csrf(self, request):
+        return
 
 
 def send_email_async(subject, message, from_email, recipient_list, html_message=None):
@@ -353,6 +373,275 @@ def _flood_mask_gray(img_u8, seed_x, seed_y, tol):
     return (filled > 0).astype(np.uint8) * 255
 
 
+def _resolve_series_file_for_user(user, job_id, relpath):
+    try:
+        series = Series.objects.get(job_id=job_id, user=user)
+    except Series.DoesNotExist:
+        return None, None
+
+    if not relpath:
+        return series, None
+
+    relpath = relpath.replace('\\', '/').lstrip('/')
+    if series.files and relpath in series.files:
+        return series, os.path.join(UPLOAD_DIR, relpath)
+
+    candidate = os.path.normpath(os.path.join(UPLOAD_DIR, relpath))
+    upload_root = os.path.normpath(UPLOAD_DIR)
+    if candidate.startswith(upload_root + os.sep) and os.path.exists(candidate):
+        return series, candidate
+
+    return series, None
+
+
+def _encode_png_b64(img_u8):
+    ok, buf = cv2.imencode('.png', img_u8)
+    if not ok:
+        return None
+    return base64.b64encode(buf.tobytes()).decode('ascii')
+
+
+def _apply_preprocess_method(img_u8, method, intensity):
+    method = (method or 'none').strip().lower()
+    intensity = float(intensity) if intensity is not None else 1.0
+    intensity = max(0.1, min(5.0, intensity))
+
+    if method in ('none', ''):
+        return img_u8
+    if method in ('equalize',):
+        return cv2.equalizeHist(img_u8)
+    if method in ('normalize',):
+        return cv2.normalize(img_u8, None, 0, 255, cv2.NORM_MINMAX)
+    if method in ('blur', 'gaussian'):
+        sigma = max(0.2, intensity * 1.2)
+        out = cv2.GaussianBlur(img_u8, (0, 0), sigmaX=sigma, sigmaY=sigma)
+        return np.clip(out, 0, 255).astype(np.uint8)
+    if method in ('brightness',):
+        beta = (intensity - 1.0) * 60.0
+        return cv2.convertScaleAbs(img_u8, alpha=1.0, beta=beta)
+    if method in ('contrast',):
+        alpha = max(0.2, min(3.0, intensity))
+        return cv2.convertScaleAbs(img_u8, alpha=alpha, beta=0)
+    if method in ('sharpen',):
+        base = cv2.GaussianBlur(img_u8, (0, 0), sigmaX=1.0)
+        out = cv2.addWeighted(img_u8, 1.0 + intensity, base, -intensity, 0)
+        return np.clip(out, 0, 255).astype(np.uint8)
+    if method in ('edge',):
+        t1 = int(max(10, 40 * intensity))
+        t2 = int(max(t1 + 5, 120 * intensity))
+        return cv2.Canny(img_u8, t1, t2)
+    return img_u8
+
+
+def _segmentation_model_label(model_key):
+    key = str(model_key or '').strip().lower()
+    if key == 'nnunet':
+        return 'nnU-Net fold0 2D ONNX'
+    if key == 'unetpp':
+        return 'U-Net++ ONNX'
+    if key == 'swinunetr':
+        return 'SwinUNETR ONNX'
+    return key or 'Modele inconnu'
+
+
+def _safe_relative_path(raw_path, fallback_name):
+    path = (raw_path or fallback_name or '').replace('\\', '/').strip()
+    path = path.lstrip('/')
+    if not path:
+        return os.path.basename(fallback_name or 'file.bin')
+
+    normalized = posixpath.normpath(path)
+    if normalized in ('', '.'):
+        normalized = os.path.basename(fallback_name or 'file.bin')
+    if normalized.startswith('../') or normalized == '..':
+        normalized = os.path.basename(fallback_name or 'file.bin')
+    return normalized
+
+
+def _next_dossier_number():
+    year = timezone.now().year
+    prefix = f"DOS-{year}-"
+    seq = Patient.objects.filter(dossier_number__startswith=prefix).count() + 1
+    while True:
+        candidate = f"{prefix}{seq:04d}"
+        if not Patient.objects.filter(dossier_number=candidate).exists():
+            return candidate
+        seq += 1
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def preprocess_image(request):
+    if not request.user or not request.user.is_authenticated:
+        return JsonResponse({'error': 'login required'}, status=401)
+
+    try:
+        data = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'invalid JSON'}, status=400)
+
+    job_id = (data.get('jobId') or '').strip()
+    target = (data.get('target') or 'ref').strip().lower()
+    method = (data.get('method') or 'none').strip().lower()
+    intensity = data.get('intensity', 1.0)
+
+    if not job_id:
+        return JsonResponse({'error': 'missing jobId'}, status=400)
+
+    try:
+        series = Series.objects.get(job_id=job_id, user=request.user)
+    except Series.DoesNotExist:
+        return JsonResponse({'error': 'job not found'}, status=404)
+
+    if not series.files or len(series.files) < 2:
+        return JsonResponse({'error': 'job files not found'}, status=404)
+
+    index = 0 if target in ('ref', 'ct', 'atlas') else 1
+    src_path = os.path.join(UPLOAD_DIR, series.files[index])
+    src = read_gray_image(src_path)
+    if src is None:
+        return JsonResponse({'error': 'cannot read source image'}, status=500)
+
+    src_u8 = np.clip(src, 0, 255).astype(np.uint8)
+    out_u8 = _apply_preprocess_method(src_u8, method, intensity)
+    preview_b64 = _encode_png_b64(out_u8)
+    if not preview_b64:
+        return JsonResponse({'error': 'failed to encode preview'}, status=500)
+
+    return JsonResponse({
+        'ok': True,
+        'jobId': job_id,
+        'target': target,
+        'method': method,
+        'preview': preview_b64,
+    })
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def delete_series(request):
+    if not request.user or not request.user.is_authenticated:
+        return JsonResponse({'error': 'login required'}, status=401)
+
+    try:
+        data = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'invalid JSON'}, status=400)
+
+    series_id = data.get('series_id')
+    if not series_id:
+        return JsonResponse({'error': 'missing series_id'}, status=400)
+
+    try:
+        series = Series.objects.get(id=series_id, user=request.user)
+    except Series.DoesNotExist:
+        return JsonResponse({'error': 'series not found'}, status=404)
+
+    job_dir = os.path.join(UPLOAD_DIR, series.job_id)
+    if os.path.exists(job_dir):
+        shutil.rmtree(job_dir, ignore_errors=True)
+    series.delete()
+    return JsonResponse({'ok': True, 'message': 'series deleted successfully'})
+
+
+@api_view(['GET'])
+def patient_file(request):
+    if not request.user or not request.user.is_authenticated:
+        return JsonResponse({'error': 'login required'}, status=401)
+
+    job_id = (request.GET.get('jobId') or '').strip()
+    relpath = (request.GET.get('relpath') or '').strip()
+    if not job_id or not relpath:
+        return JsonResponse({'error': 'jobId and relpath required'}, status=400)
+
+    _, abs_path = _resolve_series_file_for_user(request.user, job_id, relpath)
+    if not abs_path or not os.path.exists(abs_path):
+        raise Http404('file not found')
+
+    mime_type, _ = mimetypes.guess_type(abs_path)
+    return FileResponse(open(abs_path, 'rb'), content_type=mime_type or 'application/octet-stream')
+
+
+@api_view(['GET'])
+def brain_transform(request):
+    if not request.user or not request.user.is_authenticated:
+        return JsonResponse({'error': 'login required'}, status=401)
+
+    job_id = (request.GET.get('jobId') or '').strip()
+    relpath = (request.GET.get('relpath') or '').strip()
+    if not job_id or not relpath:
+        return JsonResponse({'error': 'jobId and relpath required'}, status=400)
+
+    _, abs_path = _resolve_series_file_for_user(request.user, job_id, relpath)
+    if not abs_path or not os.path.exists(abs_path):
+        return JsonResponse({'error': 'file not found'}, status=404)
+
+    img = read_gray_image(abs_path)
+    if img is None:
+        return JsonResponse({'error': 'cannot read image'}, status=500)
+
+    norm_img, norm_mask, meta = brain_normalize(img)
+    preview = _encode_png_b64(np.clip(norm_img, 0, 255).astype(np.uint8)) if norm_img is not None else None
+    mask = _encode_png_b64(norm_mask.astype(np.uint8)) if norm_mask is not None else None
+
+    return JsonResponse({
+        'ok': True,
+        'preview': preview,
+        'mask': mask,
+        'meta': meta,
+    })
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def project_brodmann(request):
+    if not request.user or not request.user.is_authenticated:
+        return JsonResponse({'error': 'login required'}, status=401)
+
+    try:
+        data = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'invalid JSON'}, status=400)
+
+    atlas_job = (data.get('atlasJobId') or '').strip()
+    atlas_rel = (data.get('atlasRelpath') or '').strip()
+    patient_job = (data.get('patientJobId') or '').strip()
+    patient_rel = (data.get('patientRelpath') or '').strip()
+    x = data.get('x', None)
+    y = data.get('y', None)
+    tol = data.get('tolerance', 8)
+
+    if not atlas_job or not atlas_rel or not patient_job or not patient_rel:
+        return JsonResponse({'error': 'missing atlas/patient file parameters'}, status=400)
+    if x is None or y is None:
+        return JsonResponse({'error': 'x and y are required'}, status=400)
+
+    _, atlas_path = _resolve_series_file_for_user(request.user, atlas_job, atlas_rel)
+    _, patient_path = _resolve_series_file_for_user(request.user, patient_job, patient_rel)
+    if not atlas_path or not patient_path:
+        return JsonResponse({'error': 'file not found'}, status=404)
+
+    atlas = read_gray_image(atlas_path)
+    patient = read_gray_image(patient_path)
+    if atlas is None or patient is None:
+        return JsonResponse({'error': 'cannot read images'}, status=500)
+
+    atlas_u8 = np.clip(atlas, 0, 255).astype(np.uint8)
+    patient_u8 = np.clip(patient, 0, 255).astype(np.uint8)
+    if patient_u8.shape != atlas_u8.shape:
+        patient_u8 = cv2.resize(patient_u8, (atlas_u8.shape[1], atlas_u8.shape[0]), interpolation=cv2.INTER_LINEAR)
+
+    mask = _flood_mask_gray(atlas_u8, int(x), int(y), int(tol))
+    overlay = cv2.cvtColor(patient_u8, cv2.COLOR_GRAY2BGR)
+    overlay[mask > 0] = (50, 210, 70)
+    blended = cv2.addWeighted(cv2.cvtColor(patient_u8, cv2.COLOR_GRAY2BGR), 0.72, overlay, 0.28, 0)
+
+    ok, png = cv2.imencode('.png', blended)
+    if not ok:
+        return JsonResponse({'error': 'failed to encode projected image'}, status=500)
+    return HttpResponse(png.tobytes(), content_type='image/png')
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def register(request):
@@ -363,6 +652,8 @@ def register(request):
     print(f"Nadine Yassmine - register endpoint works - username: {data.get('username')}")
     username = (data.get('username') or '').strip()
     password = data.get('password') or ''
+    full_name = (data.get('fullName') or '').strip()
+    email_input = (data.get('email') or '').strip()
     if not username or not password:
         print("Nadine Yassmine - register validation FAILED - missing username or password")
         return JsonResponse({'ok': False, 'error': 'username and password required'}, status=400)
@@ -372,7 +663,20 @@ def register(request):
             if User.objects.filter(username=username).exists():
                 print(f"Nadine Yassmine - register FAILED - username exists: {username}")
                 return JsonResponse({'ok': False, 'error': 'username exists'}, status=400)
-            User.objects.create_user(username=username, password=password)
+            name_parts = [part for part in full_name.split() if part]
+            first_name = name_parts[0] if name_parts else ''
+            last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
+
+            username_is_email = '@' in username and '.' in username.split('@')[-1]
+            email = email_input or (username if username_is_email else '')
+
+            User.objects.create_user(
+                username=username,
+                password=password,
+                email=email,
+                first_name=first_name,
+                last_name=last_name,
+            )
             print(f"Nadine Yassmine - register SUCCESS for user: {username}")
             return JsonResponse({'ok': True, 'message': 'Compte créé avec succès'})
     except IntegrityError as e:
@@ -944,21 +1248,65 @@ def history(request):
 
 @csrf_exempt
 @api_view(['GET', 'POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
 def patients_list_create(request):
     print(f"Nadine Yassmine - patients_list_create endpoint - user: {request.user.username}", flush=True)
     if request.method == 'GET':
         patients = Patient.objects.filter(doctor=request.user)
-        serializer = PatientSerializer(patients, many=True)
+        serializer = PatientSerializer(patients, many=True, context={'request': request})
         return JsonResponse({'ok': True, 'patients': serializer.data})
     
     elif request.method == 'POST':
-        serializer = PatientSerializer(data=request.data)
+        files = request.FILES.getlist('files')
+        if not files:
+            return JsonResponse({'ok': False, 'error': 'Un dossier contenant au moins un fichier est obligatoire.'}, status=400)
+
+        dossier_number = (request.data.get('dossier_number') or request.data.get('num_dossier') or '').strip()
+        if not dossier_number:
+            return JsonResponse({'ok': False, 'error': 'Le numero de dossier est obligatoire.'}, status=400)
+
+        payload = {
+            'dossier_number': dossier_number,
+            # Keep backward compatibility with current model constraints.
+            # The creation UI now asks only for dossier number.
+            'nom': request.data.get('nom') or 'Patient',
+            'prenom': request.data.get('prenom') or dossier_number,
+            'date_naissance': request.data.get('date_naissance') or '1900-01-01',
+            'sexe': request.data.get('sexe') or 'M',
+            'telephone': request.data.get('telephone') or None,
+            'email': request.data.get('email') or None,
+            'pathologie': request.data.get('pathologie') or None,
+            'stade': request.data.get('stade') or None,
+            'antecedents': request.data.get('antecedents') or None,
+            'notes': request.data.get('notes') or None,
+            'autres_maladies': request.data.get('autres_maladies') or request.data.get('notes') or None,
+        }
+
+        serializer = PatientSerializer(data=payload, context={'request': request})
         if serializer.is_valid():
-            serializer.save(doctor=request.user)
+            relative_paths = request.data.getlist('relative_paths') if hasattr(request.data, 'getlist') else []
+            with transaction.atomic():
+                patient = serializer.save(doctor=request.user)
+
+                for index, uploaded_file in enumerate(files):
+                    rel_from_client = relative_paths[index] if index < len(relative_paths) else ''
+                    safe_rel = _safe_relative_path(rel_from_client, uploaded_file.name)
+                    storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
+                    saved_path = default_storage.save(storage_path, uploaded_file)
+
+                    MRIFile.objects.create(
+                        patient=patient,
+                        file=saved_path,
+                        original_filename=uploaded_file.name,
+                        relative_path=safe_rel,
+                        file_size=int(getattr(uploaded_file, 'size', 0) or 0)
+                    )
+
+            out_serializer = PatientSerializer(patient, context={'request': request})
             return JsonResponse({
                 'ok': True, 
-                'patient': serializer.data, 
+                'patient': out_serializer.data,
                 'message': 'Patient créé avec succès'
             }, status=201)
         return JsonResponse({'ok': False, 'errors': serializer.errors}, status=400)
@@ -966,17 +1314,18 @@ def patients_list_create(request):
 
 @csrf_exempt
 @api_view(['GET', 'PATCH', 'DELETE'])
+@authentication_classes([CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
 def patient_detail_update_delete(request, patient_id):
     print(f"Nadine Yassmine - patient_detail_update_delete - id: {patient_id}, user: {request.user.username}")
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
 
     if request.method == 'GET':
-        serializer = PatientSerializer(patient)
+        serializer = PatientSerializer(patient, context={'request': request})
         return JsonResponse({'ok': True, 'patient': serializer.data})
 
     elif request.method == 'PATCH':
-        serializer = PatientSerializer(patient, data=request.data, partial=True)
+        serializer = PatientSerializer(patient, data=request.data, partial=True, context={'request': request})
         if serializer.is_valid():
             serializer.save()
             return JsonResponse({'ok': True, 'patient': serializer.data, 'message': 'Patient mis à jour avec succès'})
@@ -997,6 +1346,7 @@ def patient_detail_update_delete(request, patient_id):
 
 @csrf_exempt
 @api_view(['GET', 'POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
 def mri_files_list_upload(request, patient_id):
     print(f"Nadine Yassmine - mri_files_list_upload - id: {patient_id}, user: {request.user.username}")
@@ -1004,28 +1354,28 @@ def mri_files_list_upload(request, patient_id):
 
     if request.method == 'GET':
         mri_files = MRIFile.objects.filter(patient=patient).order_by('-uploaded_at')
-        serializer = MRIFileSerializer(mri_files, many=True)
+        serializer = MRIFileSerializer(mri_files, many=True, context={'request': request})
         return JsonResponse({'ok': True, 'mri_files': serializer.data})
 
     elif request.method == 'POST':
         files = request.FILES.getlist('files')
         if not files:
             return JsonResponse({'ok': False, 'error': 'No files provided'}, status=400)
-
-        patient_mri_dir = os.path.join(settings.MEDIA_ROOT, 'patients', str(patient.id), 'mri_files')
-        os.makedirs(patient_mri_dir, exist_ok=True)
+        relative_paths = request.data.getlist('relative_paths') if hasattr(request.data, 'getlist') else []
 
         uploaded_count = 0
-        for f in files:
-            file_path = os.path.join(patient_mri_dir, f.name)
-            with open(file_path, 'wb+') as destination:
-                for chunk in f.chunks():
-                    destination.write(chunk)
+        for index, f in enumerate(files):
+            rel_from_client = relative_paths[index] if index < len(relative_paths) else ''
+            safe_rel = _safe_relative_path(rel_from_client, f.name)
+            storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
+            saved_path = default_storage.save(storage_path, f)
             
             MRIFile.objects.create(
                 patient=patient,
-                file=os.path.relpath(file_path, settings.MEDIA_ROOT),
-                original_filename=f.name
+                file=saved_path,
+                original_filename=f.name,
+                relative_path=safe_rel,
+                file_size=int(getattr(f, 'size', 0) or 0)
             )
             uploaded_count += 1
 
@@ -1033,6 +1383,283 @@ def mri_files_list_upload(request, patient_id):
             'ok': True, 
             'message': f'Successfully uploaded {uploaded_count} files'
         }, status=201)
+
+
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def mri_file_preview(request, file_id):
+    mri_file = get_object_or_404(
+        MRIFile.objects.select_related('patient'),
+        id=file_id,
+        patient__doctor=request.user,
+    )
+
+    abs_path = getattr(mri_file.file, 'path', None)
+    if not abs_path or not os.path.exists(abs_path):
+        return JsonResponse({'ok': False, 'error': 'Fichier introuvable.'}, status=404)
+
+    image = read_gray_image(abs_path)
+    if image is None:
+        return JsonResponse({'ok': False, 'error': 'Impossible de lire l\'image.'}, status=500)
+
+    image_u8 = np.clip(image, 0, 255).astype(np.uint8)
+    ok, encoded = cv2.imencode('.png', image_u8)
+    if not ok:
+        return JsonResponse({'ok': False, 'error': 'Echec encodage preview PNG.'}, status=500)
+
+    return HttpResponse(encoded.tobytes(), content_type='image/png')
+
+
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def launch_patient_segmentation(request, patient_id):
+    """
+    Launch synchronous ONNX segmentation for selected MRI files.
+    Request body:
+            {
+                "model": "unetpp" | "nnunet",
+                "file_ids": [1,2,3],
+                "threshold": 0.25
+            }
+    """
+    patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
+
+    model = (request.data.get('model') or 'unetpp').strip().lower()
+    threshold = request.data.get('threshold', 0.25)
+
+    try:
+        threshold = float(threshold)
+    except (TypeError, ValueError):
+        return JsonResponse({'ok': False, 'error': 'threshold invalide'}, status=400)
+
+    if threshold < 0.0 or threshold > 1.0:
+        return JsonResponse({'ok': False, 'error': 'threshold doit etre entre 0 et 1'}, status=400)
+
+    file_ids = request.data.get('file_ids') or []
+    if isinstance(file_ids, str):
+        try:
+            file_ids = json.loads(file_ids)
+        except Exception:
+            return JsonResponse({'ok': False, 'error': 'file_ids invalide'}, status=400)
+    if not isinstance(file_ids, list):
+        return JsonResponse({'ok': False, 'error': 'file_ids doit etre une liste'}, status=400)
+
+    queryset = MRIFile.objects.filter(patient=patient).order_by('uploaded_at')
+    if file_ids:
+        queryset = queryset.filter(id__in=file_ids)
+
+    mri_files = list(queryset)
+    if not mri_files:
+        return JsonResponse({'ok': False, 'error': 'Aucune coupe IRM selectionnee'}, status=400)
+
+    run = SegmentationRun.objects.create(
+        patient=patient,
+        doctor=request.user,
+        model_key=model,
+        threshold=threshold,
+        selected_count=len(mri_files),
+        status='running',
+    )
+
+    try:
+        results = run_segmentation_on_files(mri_files, model_key=model, threshold=threshold)
+
+        created_results = []
+        with transaction.atomic():
+            for item in results:
+                seg_row = SegmentationMaskResult.objects.create(
+                    run=run,
+                    patient=patient,
+                    mri_file_id=item['file_id'],
+                    slice_index=int(item.get('index') or 1),
+                    source_filename=item.get('source_filename') or '',
+                    source_file=item.get('source_file') or '',
+                    source_url=item.get('source_url') or '',
+                    mask_file=item.get('mask_file') or '',
+                    mask_url=item.get('mask_url') or '',
+                )
+                created_results.append(seg_row)
+
+            run.status = 'done'
+            run.processed_count = len(created_results)
+            run.completed_at = timezone.now()
+            run.error_message = ''
+            run.save(update_fields=['status', 'processed_count', 'completed_at', 'error_message'])
+
+    except FileNotFoundError as e:
+        run.status = 'failed'
+        run.error_message = str(e)
+        run.completed_at = timezone.now()
+        run.save(update_fields=['status', 'error_message', 'completed_at'])
+        return JsonResponse({'ok': False, 'error': str(e), 'run_id': run.id}, status=500)
+    except ValueError as e:
+        run.status = 'failed'
+        run.error_message = str(e)
+        run.completed_at = timezone.now()
+        run.save(update_fields=['status', 'error_message', 'completed_at'])
+        return JsonResponse({'ok': False, 'error': str(e), 'run_id': run.id}, status=400)
+    except RuntimeError as e:
+        run.status = 'failed'
+        run.error_message = str(e)
+        run.completed_at = timezone.now()
+        run.save(update_fields=['status', 'error_message', 'completed_at'])
+        return JsonResponse({'ok': False, 'error': str(e), 'run_id': run.id}, status=500)
+    except Exception as e:
+        run.status = 'failed'
+        run.error_message = f'Echec segmentation: {str(e)}'
+        run.completed_at = timezone.now()
+        run.save(update_fields=['status', 'error_message', 'completed_at'])
+        return JsonResponse({'ok': False, 'error': f'Echec segmentation: {str(e)}', 'run_id': run.id}, status=500)
+
+    return JsonResponse(
+        {
+            'ok': True,
+            'run_id': run.id,
+            'patient_id': patient.id,
+            'model': model,
+            'model_version': _segmentation_model_label(model),
+            'threshold': threshold,
+            'count': len(results),
+            'results': results,
+        },
+        status=200,
+    )
+
+
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def segmentation_runs_list(request):
+    limit_raw = request.GET.get('limit', 20)
+    try:
+        limit = int(limit_raw)
+    except (TypeError, ValueError):
+        limit = 20
+    limit = max(1, min(limit, 100))
+
+    runs_qs = (
+        SegmentationRun.objects
+        .filter(doctor=request.user)
+        .select_related('patient')
+        .order_by('-created_at')[:limit]
+    )
+
+    runs = []
+    for run in runs_qs:
+        patient = run.patient
+        full_name = f"{(patient.prenom or '').strip()} {(patient.nom or '').strip()}".strip()
+        runs.append({
+            'id': run.id,
+            'patient_id': patient.id,
+            'patient_name': full_name or f'Patient #{patient.id}',
+            'model_key': run.model_key,
+            'model_version': _segmentation_model_label(run.model_key),
+            'status': run.status,
+            'selected_count': run.selected_count,
+            'processed_count': run.processed_count,
+            'created_at': run.created_at.isoformat() if run.created_at else None,
+            'completed_at': run.completed_at.isoformat() if run.completed_at else None,
+            'error_message': run.error_message,
+        })
+
+    return JsonResponse({'ok': True, 'runs': runs}, status=200)
+
+
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def segmentation_run_detail(request, run_id):
+    run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
+    serializer = SegmentationRunSerializer(run)
+    return JsonResponse({'ok': True, 'run': serializer.data}, status=200)
+
+
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def segmentation_run_modelisation_3d(request, run_id):
+    run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
+
+    if run.status != 'done':
+        return JsonResponse({'ok': False, 'error': 'Le run doit etre termine avant la modelisation 3D.'}, status=400)
+
+    structure = str(request.data.get('structure') or 'both').strip().lower()
+    quality = str(request.data.get('quality') or 'standard').strip().lower()
+    smoothing = str(request.data.get('smoothing') or 'low').strip().lower()
+
+    spacing = parse_spacing(
+        {
+            'spacing_z': request.data.get('spacing_z'),
+            'spacing_y': request.data.get('spacing_y'),
+            'spacing_x': request.data.get('spacing_x'),
+        }
+    )
+    normative_total_mean_mm3, normative_total_std_mm3 = parse_reference_values(
+        {
+            'normative_total_mean_mm3': request.data.get('normative_total_mean_mm3'),
+            'normative_total_std_mm3': request.data.get('normative_total_std_mm3'),
+        }
+    )
+
+    try:
+        result = run_modelisation_3d(
+            run=run,
+            structure=structure,
+            quality=quality,
+            smoothing=smoothing,
+            spacing=spacing,
+            normative_total_mean_mm3=normative_total_mean_mm3,
+            normative_total_std_mm3=normative_total_std_mm3,
+        )
+        return JsonResponse({'ok': True, 'modelisation': result}, status=200)
+    except FileNotFoundError as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=404)
+    except ValueError as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=400)
+    except Exception as e:
+        return JsonResponse({'ok': False, 'error': f'Echec modelisation 3D: {str(e)}'}, status=500)
+
+
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def patient_files_download_zip(request, patient_id):
+    patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
+    mri_files = MRIFile.objects.filter(patient=patient).order_by('uploaded_at')
+
+    if not mri_files.exists():
+        return JsonResponse({'ok': False, 'error': 'Aucun fichier MRI disponible pour ce patient.'}, status=404)
+
+    zip_buffer = io.BytesIO()
+    written = 0
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for mri in mri_files:
+            stored_name = getattr(mri.file, 'name', '')
+            if not stored_name or not default_storage.exists(stored_name):
+                continue
+
+            fallback_name = os.path.basename(stored_name)
+            arcname = _safe_relative_path(mri.relative_path or mri.original_filename, fallback_name)
+            if not arcname:
+                arcname = fallback_name or f"file_{mri.id}"
+
+            with default_storage.open(stored_name, 'rb') as file_handle:
+                zip_file.writestr(arcname, file_handle.read())
+                written += 1
+
+    if written == 0:
+        return JsonResponse({'ok': False, 'error': 'Aucun fichier lisible n\'a ete trouve.'}, status=404)
+
+    zip_buffer.seek(0)
+    filename = f"{patient.dossier_number}_dossier.zip"
+    response = HttpResponse(zip_buffer.getvalue(), content_type='application/zip')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    response['Content-Length'] = str(len(response.content))
+    return response
 
 
 @csrf_exempt
@@ -1411,8 +2038,182 @@ def reset_password(request):
         return JsonResponse({'ok': False, 'error': 'Internal Server Error'}, status=500)
 
 
+PROFILE_DEFAULTS = {
+    'phone': '',
+    'birthDate': '',
+    'gender': 'Femme',
+    'nationality': 'Tunisienne',
+    'cin': 'MED-000000-TN',
+    'specialty': 'Neurologue',
+    'subSpecialty': 'Epileptologie',
+    'institution': 'CHU Monastir',
+    'department': 'Service de Neurologie',
+    'orderNumber': 'ONM-0000-00000',
+    'experienceYears': 0,
+    'languages': ['Francais', 'Arabe', 'Anglais'],
+    'bio': '',
+}
+
+
+def _derive_names_from_username(username):
+    raw = (username or '').strip()
+    if not raw:
+        return '', ''
+
+    local_part = raw.split('@', 1)[0]
+    cleaned = ''.join(ch if (ch.isalpha() or ch in '._- ') else ' ' for ch in local_part)
+    for sep in ['.', '_', '-']:
+        cleaned = cleaned.replace(sep, ' ')
+
+    parts = [p for p in cleaned.split() if p]
+    if not parts:
+        return '', ''
+
+    first_name = parts[0].capitalize()
+    last_name = ' '.join(p.capitalize() for p in parts[1:])
+    return first_name, last_name
+
+
+def _decode_bearer_payload(token):
+    parts = (token or '').split('.')
+    if len(parts) != 3:
+        return None
+    payload = parts[1]
+    padding = '=' * (-len(payload) % 4)
+    try:
+        raw = base64.urlsafe_b64decode((payload + padding).encode('utf-8'))
+        return json.loads(raw.decode('utf-8'))
+    except Exception:
+        return None
+
+
+def _get_request_user(request):
+    if request.user and request.user.is_authenticated:
+        return request.user
+
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        return None
+
+    token = auth_header.split(' ', 1)[1].strip()
+    payload = _decode_bearer_payload(token)
+    if not payload:
+        return None
+
+    user_id = payload.get('user_id') or payload.get('id') or payload.get('sub')
+    if user_id is None:
+        return None
+
+    try:
+        return User.objects.get(id=int(user_id))
+    except (ValueError, User.DoesNotExist):
+        return None
+
+
+def _profile_payload_for_user(user):
+    derived_first, derived_last = _derive_names_from_username(user.username)
+    first_name = (user.first_name or '').strip() or derived_first
+    last_name = (user.last_name or '').strip() or derived_last
+    return {
+        'firstName': first_name,
+        'lastName': last_name,
+        'email': user.email or user.username or '',
+        **PROFILE_DEFAULTS,
+    }
+
+
+def _deep_merge_settings(base, patch):
+    merged = dict(base)
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_settings(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+@api_view(['GET', 'PUT'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([AllowAny])
+def profile_view(request):
+    user = _get_request_user(request)
+    if not user:
+        return JsonResponse({'detail': 'Authentication credentials were not provided.'}, status=401)
+
+    if request.method == 'GET':
+        return JsonResponse(_profile_payload_for_user(user))
+
+    serializer = ProfileSerializer(data=request.data, partial=True)
+    if not serializer.is_valid():
+        return JsonResponse({'errors': serializer.errors}, status=400)
+
+    data = serializer.validated_data
+    if 'firstName' in data:
+        user.first_name = data['firstName']
+    if 'lastName' in data:
+        user.last_name = data['lastName']
+    if 'email' in data:
+        user.email = data['email']
+    user.save(update_fields=['first_name', 'last_name', 'email'])
+
+    response_data = _profile_payload_for_user(user)
+    response_data.update(data)
+    response_data['email'] = user.email or user.username or ''
+    return JsonResponse(response_data)
+
+
+@api_view(['GET', 'PUT'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([AllowAny])
+def user_settings_view(request):
+    user = _get_request_user(request)
+    if not user:
+        return JsonResponse({'detail': 'Authentication credentials were not provided.'}, status=401)
+
+    settings_obj, _ = UserSettings.objects.get_or_create(user=user)
+
+    if request.method == 'GET':
+        payload = settings_obj.settings or default_user_settings()
+        return JsonResponse(payload)
+
+    serializer = UserSettingsSerializer(data=request.data, partial=True)
+    if not serializer.is_valid():
+        return JsonResponse({'errors': serializer.errors}, status=400)
+
+    current = settings_obj.settings or default_user_settings()
+    merged = _deep_merge_settings(current, serializer.validated_data)
+    settings_obj.settings = merged
+    settings_obj.save(update_fields=['settings', 'updated_at'])
+    return JsonResponse(settings_obj.settings)
+
+
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([AllowAny])
+def change_password_view(request):
+    user = _get_request_user(request)
+    if not user:
+        return JsonResponse({'detail': 'Authentication credentials were not provided.'}, status=401)
+
+    serializer = ChangePasswordSerializer(data=request.data)
+    if not serializer.is_valid():
+        return JsonResponse({'errors': serializer.errors}, status=400)
+
+    data = serializer.validated_data
+    if data['newPassword'] != data['confirmPassword']:
+        return JsonResponse({'error': 'Les mots de passe ne correspondent pas.'}, status=400)
+
+    if not user.check_password(data['currentPassword']):
+        return JsonResponse({'error': 'Mot de passe actuel incorrect.'}, status=400)
+
+    user.set_password(data['newPassword'])
+    user.save()
+
+    return JsonResponse({'ok': True, 'message': 'Mot de passe mis a jour avec succes.'})
+
+
 @login_required
-def patient_detail_update_delete(request, patient_id: uuid.UUID):
+def patient_detail_update_delete_legacy(request, patient_id: uuid.UUID):
     print(f"Nadine Yassmine - patient_detail_update_delete endpoint works - patient_id: {patient_id}, method: {request.method}, user: {request.user.username}")
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
 
@@ -1517,7 +2318,7 @@ def list_mri_files(request, patient_id: uuid.UUID):
     print(f"Nadine Yassmine - list_mri_files endpoint works - patient_id: {patient_id}, user: {request.user.username}")
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
     mri_files = MRIFile.objects.filter(patient=patient).order_by('-uploaded_at')
-    serializer = MRIFileSerializer(mri_files, many=True)
+    serializer = MRIFileSerializer(mri_files, many=True, context={'request': request})
     return JsonResponse({'ok': True, 'mri_files': serializer.data})
 
 
@@ -1570,7 +2371,53 @@ def reclamation_detail(request, reclamation_id):
         reclamation = Reclamation.objects.get(id=reclamation_id, user=user)
     except Reclamation.DoesNotExist:
         return JsonResponse({'ok': False, 'error': 'Reclamation not found'}, status=404)
+
     if request.method == 'GET':
         rec_data = ReclamationSerializer(reclamation).data
         rec_data['fichier_url'] = reclamation.fichier.url if reclamation.fichier else None
         return JsonResponse({'ok': True, 'reclamation': rec_data})
+
+    if request.method in ['PATCH', 'PUT', 'POST']:
+        payload = {}
+        if request.method == 'POST':
+            payload = request.POST or {}
+        else:
+            try:
+                payload = json.loads(request.body.decode('utf-8') or '{}')
+            except Exception:
+                payload = {}
+
+        description = payload.get('description')
+        etat = payload.get('etat')
+        fichier = request.FILES.get('fichier') if hasattr(request, 'FILES') else None
+
+        if description is not None:
+            description = str(description).strip()
+            if not description:
+                return JsonResponse({'ok': False, 'error': 'description required'}, status=400)
+            reclamation.description = description
+
+        if etat is not None:
+            allowed = {'en_attente', 'payee', 'rejetee'}
+            if etat not in allowed:
+                return JsonResponse({'ok': False, 'error': 'etat invalide'}, status=400)
+            reclamation.etat = etat
+
+        if fichier is not None:
+            if reclamation.fichier:
+                try:
+                    reclamation.fichier.delete(save=False)
+                except Exception:
+                    pass
+            reclamation.fichier = fichier
+
+        reclamation.save()
+        rec_data = ReclamationSerializer(reclamation).data
+        rec_data['fichier_url'] = reclamation.fichier.url if reclamation.fichier else None
+        return JsonResponse({'ok': True, 'reclamation': rec_data, 'message': 'Reclamation modifiee avec succes'})
+
+    if request.method == 'DELETE':
+        reclamation.delete()
+        return JsonResponse({'ok': True, 'message': 'Reclamation supprimee avec succes'})
+
+    return JsonResponse({'ok': False, 'error': 'Method not allowed'}, status=405)

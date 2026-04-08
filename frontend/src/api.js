@@ -13,6 +13,8 @@ export const emergencyLogin = (email) => api.post("/emergency_login", { email })
 export const checkEmergencyLimit = (email) => api.post("/emergency_check", { email });
 export const logout = () => api.post("/logout");
 export const checkSession = () => api.get("/check_session");
+export const getUserSettings = () => api.get('/user-settings/');
+export const updateUserSettings = (data) => api.put('/user-settings/', data);
 
 // Uploads
 export const uploadTwo = (patientId, refFile, patFile) => {

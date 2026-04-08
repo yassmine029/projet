@@ -1,4 +1,4 @@
-# Environnements virtuels Python
+﻿# Environnements virtuels Python
 venv/
 env/
 ENV/
@@ -11,11 +11,11 @@ __pycache__/
 *.so
 .Python
 
-# Base de données
+# Base de donnees
 *.sqlite3
 db.sqlite3
 
-# Fichiers uploadés (IMPORTANT!)
+# Fichiers uploades
 uploads/
 media/
 staticfiles/
@@ -47,7 +47,9 @@ node_modules/
 build/
 dist/
 
+# Markdown
 *.md
-
-# MAIS garder le README.md
 !README.md
+
+# Modeles ONNX
+*.onnx

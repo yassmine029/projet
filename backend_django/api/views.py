@@ -10,6 +10,7 @@ import json
 import uuid
 import base64
 import threading
+import textwrap
 from datetime import datetime
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
@@ -30,6 +31,12 @@ from django.shortcuts import get_object_or_404, Http404
 import numpy as np
 import cv2
 from PIL import Image, ImageOps
+from PIL import ImageDraw
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import cm
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 
 from datetime import timedelta
 from django.utils import timezone
@@ -1622,6 +1629,278 @@ def segmentation_run_modelisation_3d(request, run_id):
         return JsonResponse({'ok': False, 'error': str(e)}, status=400)
     except Exception as e:
         return JsonResponse({'ok': False, 'error': f'Echec modelisation 3D: {str(e)}'}, status=500)
+
+
+def _compute_age(date_naissance):
+    if not date_naissance:
+        return None
+    today = timezone.now().date()
+    years = today.year - date_naissance.year
+    if (today.month, today.day) < (date_naissance.month, date_naissance.day):
+        years -= 1
+    return max(0, years)
+
+
+def _read_storage_gray(path):
+    if not path or not default_storage.exists(path):
+        return None
+    with default_storage.open(path, 'rb') as fp:
+        raw = fp.read()
+    arr = np.frombuffer(raw, dtype=np.uint8)
+    return cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
+
+
+def _make_slice_overlay_png(row, label):
+    src = _read_storage_gray(getattr(row, 'source_file', ''))
+    msk = _read_storage_gray(getattr(row, 'mask_file', ''))
+    if src is None:
+        return None
+
+    if msk is None:
+        vis = cv2.cvtColor(src, cv2.COLOR_GRAY2BGR)
+    else:
+        m = (msk > 127).astype(np.uint8) * 255
+        vis = cv2.cvtColor(src, cv2.COLOR_GRAY2BGR)
+        contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(vis, contours, -1, (40, 40, 255), 2)
+
+    cv2.putText(vis, label, (14, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(vis, label, (14, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (30, 60, 120), 1, cv2.LINE_AA)
+    ok, png_buf = cv2.imencode('.png', vis)
+    if not ok:
+        return None
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+    tmp.write(png_buf.tobytes())
+    tmp.close()
+    return tmp.name
+
+
+def _build_volume_projection_png(rows):
+    masks = []
+    for row in rows:
+        m = _read_storage_gray(getattr(row, 'mask_file', ''))
+        if m is not None:
+            masks.append((m > 127).astype(np.uint8))
+    if not masks:
+        return None
+
+    vol = np.stack(masks, axis=0)
+    ax = (np.max(vol, axis=0) * 255).astype(np.uint8)
+    cor = (np.max(vol, axis=1) * 255).astype(np.uint8)
+    sag = (np.max(vol, axis=2) * 255).astype(np.uint8)
+
+    h = 220
+    ax = cv2.resize(ax, (260, h), interpolation=cv2.INTER_NEAREST)
+    cor = cv2.resize(cor, (260, h), interpolation=cv2.INTER_NEAREST)
+    sag = cv2.resize(sag, (260, h), interpolation=cv2.INTER_NEAREST)
+
+    canvas = np.zeros((h + 40, 800, 3), dtype=np.uint8)
+    canvas[:] = (244, 248, 255)
+    for i, img in enumerate([ax, cor, sag]):
+        col = cv2.applyColorMap(img, cv2.COLORMAP_OCEAN)
+        x0 = 10 + i * 265
+        canvas[10:10 + h, x0:x0 + 260] = col
+
+    cv2.putText(canvas, 'Vue 3D (projections volumiques)', (12, h + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (38, 65, 112), 2, cv2.LINE_AA)
+    ok, png_buf = cv2.imencode('.png', canvas)
+    if not ok:
+        return None
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+    tmp.write(png_buf.tobytes())
+    tmp.close()
+    return tmp.name
+
+
+def _build_comparison_chart_png(volumes_mm3, ref_mean, ref_std):
+    w, h = 900, 340
+    im = Image.new('RGB', (w, h), (248, 251, 255))
+    draw = ImageDraw.Draw(im)
+
+    labels = ['Gauche', 'Droite', 'Total', 'Norme']
+    values = [
+        float(volumes_mm3.get('left') or 0.0),
+        float(volumes_mm3.get('right') or 0.0),
+        float(volumes_mm3.get('total') or 0.0),
+        float(ref_mean or 0.0),
+    ]
+    colors_bars = [(73, 128, 224), (89, 166, 242), (62, 194, 160), (155, 173, 204)]
+
+    maxv = max(max(values), 1.0)
+    x0, y0 = 70, 60
+    chart_w, chart_h = 760, 220
+    draw.rectangle([x0, y0, x0 + chart_w, y0 + chart_h], outline=(200, 212, 233), width=1)
+    for i in range(6):
+        yy = y0 + int((chart_h / 5) * i)
+        draw.line([x0, yy, x0 + chart_w, yy], fill=(230, 236, 247), width=1)
+
+    bar_w = 110
+    gap = 65
+    start_x = x0 + 75
+    for i, (label, val, c) in enumerate(zip(labels, values, colors_bars)):
+        bx = start_x + i * (bar_w + gap)
+        bh = int((val / maxv) * (chart_h - 16))
+        by = y0 + chart_h - bh
+        draw.rectangle([bx, by, bx + bar_w, y0 + chart_h], fill=c)
+        draw.text((bx, y0 + chart_h + 8), label, fill=(63, 89, 137))
+        draw.text((bx, by - 18), f'{val:.0f}', fill=(32, 58, 104))
+
+    draw.text((x0, 20), 'Graphique comparatif: volumes patient vs norme', fill=(31, 60, 110))
+    draw.text((x0, h - 28), f'Norme totale: {ref_mean:.2f} +/- {ref_std:.2f} mm3', fill=(90, 109, 143))
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+    im.save(tmp.name, format='PNG')
+    tmp.close()
+    return tmp.name
+
+
+def _build_report_pdf(run, modelisation):
+    cleanup_paths = []
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=1.3 * cm, rightMargin=1.3 * cm, topMargin=1.2 * cm, bottomMargin=1.2 * cm)
+    styles = getSampleStyleSheet()
+    story = []
+
+    patient = run.patient
+    age = _compute_age(getattr(patient, 'date_naissance', None))
+    sex = patient.get_sexe_display() if hasattr(patient, 'get_sexe_display') else (patient.sexe or '-')
+    exam_date = (run.completed_at or run.created_at or timezone.now()).date().isoformat()
+
+    story.append(Paragraph('Rapport Clinique - Segmentation Hippocampique', styles['Title']))
+    story.append(Spacer(1, 0.2 * cm))
+    story.append(Paragraph(f'Run #{run.id} | Date: {exam_date}', styles['Normal']))
+    story.append(Spacer(1, 0.2 * cm))
+
+    patient_table = Table([
+        ['Resume patient (anonyme)', 'Valeur'],
+        ['Age', str(age) if age is not None else '-'],
+        ['Sexe', str(sex or '-')],
+        ['Date examen', exam_date],
+    ], colWidths=[7.5 * cm, 8.5 * cm])
+    patient_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f3a63')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('GRID', (0, 0), (-1, -1), 0.6, colors.HexColor('#d2d9e6')),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+    ]))
+    story.append(patient_table)
+    story.append(Spacer(1, 0.35 * cm))
+
+    ci = modelisation.get('clinical_indices', {})
+    vols = modelisation.get('volumes_mm3', {})
+    measures_table = Table([
+        ['Mesure', 'Valeur'],
+        ['Volume gauche (mm3)', f"{float(vols.get('left') or 0.0):.2f}"],
+        ['Volume droit (mm3)', f"{float(vols.get('right') or 0.0):.2f}"],
+        ['Volume total (mm3)', f"{float(vols.get('total') or 0.0):.2f}"],
+        ['Asymetrie IA (%)', f"{float(ci.get('asymmetry_index_percent') or 0.0):.2f}"],
+        ['Indice IN (%)', f"{float(ci.get('normality_index_percent') or 0.0):.2f}"],
+        ['Z-score', f"{float(ci.get('z_score') or 0.0):.2f}"],
+    ], colWidths=[7.5 * cm, 8.5 * cm])
+    measures_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2e4f9e')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('GRID', (0, 0), (-1, -1), 0.6, colors.HexColor('#d2d9e6')),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+    ]))
+    story.append(measures_table)
+    story.append(Spacer(1, 0.35 * cm))
+
+    interp = modelisation.get('clinical_interpretation', {})
+    interp_text = interp.get('summary') or 'Interpretation indisponible.'
+    story.append(Paragraph('Interpretation textuelle automatique', styles['Heading3']))
+    story.append(Paragraph(interp_text, styles['BodyText']))
+    story.append(Spacer(1, 0.3 * cm))
+
+    rows = list(run.results.all().order_by('slice_index', 'id'))
+    if rows:
+        idxs = [0, len(rows) // 2, len(rows) - 1]
+        used = []
+        for i in idxs:
+            if i not in used and 0 <= i < len(rows):
+                used.append(i)
+        story.append(Paragraph('Images cles - Slices annotes', styles['Heading3']))
+        for i in used:
+            row = rows[i]
+            img_path = _make_slice_overlay_png(row, f'Slice {row.slice_index}')
+            if img_path:
+                cleanup_paths.append(img_path)
+                story.append(RLImage(img_path, width=16.8 * cm, height=5.0 * cm))
+                story.append(Spacer(1, 0.15 * cm))
+
+    projection_path = _build_volume_projection_png(rows)
+    if projection_path:
+        cleanup_paths.append(projection_path)
+        story.append(Spacer(1, 0.2 * cm))
+        story.append(Paragraph('Vue 3D', styles['Heading3']))
+        story.append(RLImage(projection_path, width=16.8 * cm, height=5.0 * cm))
+
+    ref = modelisation.get('reference_values_mm3', {})
+    chart_path = _build_comparison_chart_png(
+        volumes_mm3=vols,
+        ref_mean=float(ref.get('normative_total_mean') or 0.0),
+        ref_std=float(ref.get('normative_total_std') or 0.0),
+    )
+    if chart_path:
+        cleanup_paths.append(chart_path)
+        story.append(Spacer(1, 0.2 * cm))
+        story.append(RLImage(chart_path, width=16.8 * cm, height=6.0 * cm))
+
+    doc.build(story)
+    pdf = buffer.getvalue()
+    buffer.close()
+
+    for p in cleanup_paths:
+        try:
+            os.remove(p)
+        except Exception:
+            pass
+
+    return pdf
+
+
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def segmentation_run_report_pdf(request, run_id):
+    run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
+    if run.status != 'done':
+        return JsonResponse({'ok': False, 'error': 'Le run doit etre termine avant generation du rapport PDF.'}, status=400)
+
+    structure = str(request.data.get('structure') or 'both').strip().lower()
+    quality = str(request.data.get('quality') or 'standard').strip().lower()
+    smoothing = str(request.data.get('smoothing') or 'low').strip().lower()
+    spacing = parse_spacing(
+        {
+            'spacing_z': request.data.get('spacing_z'),
+            'spacing_y': request.data.get('spacing_y'),
+            'spacing_x': request.data.get('spacing_x'),
+        }
+    )
+    ref_mean, ref_std = parse_reference_values(
+        {
+            'normative_total_mean_mm3': request.data.get('normative_total_mean_mm3'),
+            'normative_total_std_mm3': request.data.get('normative_total_std_mm3'),
+        }
+    )
+
+    try:
+        modelisation = run_modelisation_3d(
+            run=run,
+            structure=structure,
+            quality=quality,
+            smoothing=smoothing,
+            spacing=spacing,
+            normative_total_mean_mm3=ref_mean,
+            normative_total_std_mm3=ref_std,
+        )
+        pdf_data = _build_report_pdf(run, modelisation)
+        filename = f"rapport_segmentation_run_{run.id}.pdf"
+        response = HttpResponse(pdf_data, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+    except Exception as e:
+        return JsonResponse({'ok': False, 'error': f'Echec generation rapport PDF: {str(e)}'}, status=500)
 
 
 @api_view(['GET'])

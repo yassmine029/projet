@@ -8,7 +8,7 @@ import uuid
 
 User = get_user_model()
 
-<<<<<<< HEAD
+
 
 def default_user_settings():
     return {
@@ -57,8 +57,8 @@ def default_user_settings():
     }
 
 
-=======
->>>>>>> origin/yesmine
+
+
 class Series(models.Model):
     job_id = models.CharField(max_length=64, unique=True)
     patient_id = models.CharField(max_length=256, db_index=True)
@@ -131,17 +131,17 @@ dossier_number_regex = RegexValidator(
 )
 
 class Patient(models.Model):
-<<<<<<< HEAD
+
     SEX_CHOICES = [
         ('M', 'Masculin'),
         ('F', 'Féminin'),
     ]
 
     id = models.BigAutoField(primary_key=True)
-=======
-    SEX_CHOICES = [('M', 'Masculin'), ('F', 'Féminin')]
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
->>>>>>> origin/yesmine
+
+    
+    
+
     dossier_number = models.CharField(max_length=50, unique=True, validators=[dossier_number_regex])
     nom = models.CharField(max_length=100)
     prenom = models.CharField(max_length=100)
@@ -237,7 +237,7 @@ class Reclamation(models.Model):
         return f"Réclamation {self.numero} - {self.user.username}"
 
 
-<<<<<<< HEAD
+
 class UserSettings(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='settings')
     settings = models.JSONField(default=default_user_settings)
@@ -246,7 +246,7 @@ class UserSettings(models.Model):
 
     def __str__(self):
         return f"Settings for {self.user.username}"
-=======
+
 class ContactRequest(models.Model):
     SUBJECT_CHOICES = [
         ('demonstration', 'Demonstration'),
@@ -265,4 +265,4 @@ class ContactRequest(models.Model):
 
     def __str__(self):
         return f"ContactRequest({self.full_name}, {self.email}, {self.subject})"
->>>>>>> origin/yesmine
+

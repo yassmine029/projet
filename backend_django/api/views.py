@@ -26,16 +26,12 @@ from rest_framework.permissions import AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework import status
-from .models import Series, PatientImageOrientation, PatientImage
-from .serializers import OrientationSerializer, PatientImageSerializer
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, Http404
 from django.core.validators import RegexValidator
 from django.core.files.storage import default_storage
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.authentication import SessionAuthentication
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from .models import Series
-from django.shortcuts import get_object_or_404, Http404
 
 import numpy as np
 import cv2
@@ -52,23 +48,26 @@ from django.utils import timezone
 from django.core.mail import send_mail
 # from django.core.paginator import Paginator # Not used, can be removed
 from django.db.models import Q
-<<<<<<< HEAD
-from .models import Series, PasswordResetToken, EmergencyLoginAttempt, Patient, Reclamation, MRIFile, UserSettings, default_user_settings
-from .serializers import (
-    ReclamationSerializer,
-    PatientSerializer,
-    MRIFileSerializer,
-    SegmentationRunSerializer,
-    ProfileSerializer,
-    ChangePasswordSerializer,
-    UserSettingsSerializer,
+from .models import (
+    Series,
+    PasswordResetToken,
+    EmergencyLoginAttempt,
+    Patient,
+    Reclamation,
+    MRIFile,
+    UserSettings,
+    default_user_settings,
+    ContactRequest,
+    PatientImage,
+    PatientImageOrientation,
+    SegmentationRun,
+    SegmentationMaskResult,
 )
-from .models import SegmentationRun, SegmentationMaskResult
-=======
-from .models import Series, PasswordResetToken, EmergencyLoginAttempt, Patient, Reclamation, MRIFile, ContactRequest
-from .serializers import ReclamationSerializer, PatientSerializer, MRIFileSerializer, ContactRequestSerializer
->>>>>>> origin/yesmine
-
+from .serializers import (
+    ReclamationSerializer, PatientSerializer, MRIFileSerializer, SegmentationRunSerializer,
+    ProfileSerializer, ChangePasswordSerializer, UserSettingsSerializer, ContactRequestSerializer,
+    PatientImageSerializer, OrientationSerializer
+)
 # auto_registration (ANTs) supprimé — MINE uniquement
 from .mine_registration import run_mine_registration
 from .segmentation_inference import run_segmentation_on_files
@@ -725,7 +724,6 @@ def register(request):
             if User.objects.filter(username=username).exists():
                 print(f"Yassmine now the register FAILED - username exists: {username}")
                 return JsonResponse({'ok': False, 'error': 'username exists'}, status=400)
-<<<<<<< HEAD
             name_parts = [part for part in full_name.split() if part]
             first_name = name_parts[0] if name_parts else ''
             last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
@@ -741,11 +739,6 @@ def register(request):
                 last_name=last_name,
             )
             print(f"Nadine Yassmine - register SUCCESS for user: {username}")
-=======
-            # Keep username=email convention and also persist email for robust lookup.
-            User.objects.create_user(username=username, email=username, password=password)
-            print(f"Yassmine now the register SUCCESS for user: {username}")
->>>>>>> origin/yesmine
             return JsonResponse({'ok': True, 'message': 'Compte créé avec succès'})
     except IntegrityError as e:
         print(f"Yassmine now the register FAILED - IntegrityError for username: {username}, error: {str(e)}")
@@ -1346,12 +1339,11 @@ def history(request):
     return JsonResponse(out, safe=False)
 
 
-<<<<<<< HEAD
 @csrf_exempt
 @api_view(['GET', 'POST'])
 @authentication_classes([CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
-def patients_list_create(request):
+def patients_list_create_legacy(request):
     print(f"Nadine Yassmine - patients_list_create endpoint - user: {request.user.username}", flush=True)
     if request.method == 'GET':
         patients = Patient.objects.filter(doctor=request.user)
@@ -1431,7 +1423,8 @@ def patient_detail_update_delete(request, patient_id):
             serializer.save()
             return JsonResponse({'ok': True, 'patient': serializer.data, 'message': 'Patient mis à jour avec succès'})
         return JsonResponse({'ok': False, 'errors': serializer.errors}, status=400)
-=======
+
+
 @api_view(['GET'])
 def list_patients(request):
     if not request.user or not request.user.is_authenticated:
@@ -1625,7 +1618,6 @@ def project_brodmann(request):
         return JsonResponse({'error': 'missing jobId/relpath'}, status=400)
     if seed_x is None or seed_y is None:
         return JsonResponse({'error': 'missing click coords'}, status=400)
->>>>>>> origin/yesmine
 
     try:
         atlas_series = Series.objects.get(job_id=atlas_job, user=request.user)
@@ -1742,11 +1734,10 @@ def delete_series(request):
 
 
 @csrf_exempt
-<<<<<<< HEAD
 @api_view(['GET', 'POST'])
 @authentication_classes([CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
-def mri_files_list_upload(request, patient_id):
+def mri_files_list_upload_legacy(request, patient_id):
     print(f"Nadine Yassmine - mri_files_list_upload - id: {patient_id}, user: {request.user.username}")
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
 
@@ -1776,7 +1767,8 @@ def mri_files_list_upload(request, patient_id):
                 file_size=int(getattr(f, 'size', 0) or 0)
             )
             uploaded_count += 1
-=======
+
+
 @require_http_methods(["POST"])
 def preprocess_image(request):
     if not request.user or not request.user.is_authenticated:
@@ -1799,7 +1791,6 @@ def preprocess_image(request):
     if not job_id or not target or not method:
         print(f"Yassmine now the preprocess FAILED - missing parameters")
         return JsonResponse({'error': 'missing jobId, target, or method'}, status=400)
->>>>>>> origin/yesmine
 
     try:
         series = Series.objects.get(job_id=job_id, user=request.user)
@@ -2824,7 +2815,6 @@ def reset_password(request):
         return JsonResponse({'ok': False, 'error': 'Internal Server Error'}, status=500)
 
 
-<<<<<<< HEAD
 PROFILE_DEFAULTS = {
     'phone': '',
     'birthDate': '',
@@ -2997,8 +2987,19 @@ def change_password_view(request):
     user.save()
 
     return JsonResponse({'ok': True, 'message': 'Mot de passe mis a jour avec succes.'})
-=======
+
+
 def _dashboard_patient_payload(patient):
+    mri_files = list(patient.mri_files.all())
+    slices_count = len(mri_files)
+    last_exam = None
+    if slices_count > 0:
+        # Use latest uploaded MRI file as last exam proxy for dashboard cards.
+        dated_rows = [row for row in mri_files if row.uploaded_at]
+        if dated_rows:
+            last_row = max(dated_rows, key=lambda row: row.uploaded_at)
+            last_exam = last_row.uploaded_at.isoformat()
+
     return {
         'id': str(patient.id),
         'num_dossier': patient.dossier_number,
@@ -3007,6 +3008,8 @@ def _dashboard_patient_payload(patient):
         'date_naissance': patient.date_naissance.isoformat() if patient.date_naissance else None,
         'sexe': patient.sexe,
         'autres_maladies': patient.autres_maladies,
+        'slices_count': slices_count,
+        'last_exam': last_exam,
         'created_at': patient.created_at.isoformat() if patient.created_at else None,
     }
 
@@ -3016,7 +3019,7 @@ def _dashboard_patient_payload(patient):
 @login_required
 def patients_list_create(request):
     if request.method == 'GET':
-        qs = Patient.objects.filter(doctor=request.user).order_by('-created_at')
+        qs = Patient.objects.filter(doctor=request.user).prefetch_related('mri_files').order_by('-created_at')
 
         # Dashboard filters from query params
         search = (request.GET.get('id') or '').strip()
@@ -3045,46 +3048,83 @@ def patients_list_create(request):
         return JsonResponse({'ok': True, 'patients': data})
 
     try:
-        if request.content_type and 'application/json' in request.content_type:
+        is_json = bool(request.content_type and 'application/json' in request.content_type)
+        if is_json:
             raw_data = json.loads(request.body or '{}')
+            files = []
+            relative_paths = []
         else:
-            raw_data = request.POST.dict()
+            raw_data = request.POST
+            files = request.FILES.getlist('files')
+            relative_paths = request.POST.getlist('relative_paths')
+
+        dossier_number = (raw_data.get('dossier_number') or raw_data.get('num_dossier') or '').strip()
+        if not dossier_number:
+            return JsonResponse({'ok': False, 'error': 'Le numero de dossier est obligatoire.'}, status=400)
 
         payload = {
-            'dossier_number': raw_data.get('dossier_number') or raw_data.get('num_dossier') or '',
-            'nom': raw_data.get('nom') or '',
-            'prenom': raw_data.get('prenom') or '',
-            'date_naissance': raw_data.get('date_naissance') or '',
-            'sexe': raw_data.get('sexe') or '',
-            'autres_maladies': raw_data.get('autres_maladies') or '',
+            'dossier_number': dossier_number,
+            # Keep compatibility with current creation UI that only asks for dossier/date/sexe.
+            'nom': (raw_data.get('nom') or 'Patient').strip(),
+            'prenom': (raw_data.get('prenom') or dossier_number).strip(),
+            'date_naissance': raw_data.get('date_naissance') or '1900-01-01',
+            'sexe': raw_data.get('sexe') or 'M',
+            'telephone': raw_data.get('telephone') or None,
+            'email': raw_data.get('email') or None,
+            'pathologie': raw_data.get('pathologie') or None,
+            'stade': raw_data.get('stade') or None,
+            'antecedents': raw_data.get('antecedents') or None,
+            'notes': raw_data.get('notes') or None,
+            'autres_maladies': raw_data.get('autres_maladies') or raw_data.get('notes') or None,
         }
 
-        serializer = PatientSerializer(data=payload)
-        if serializer.is_valid():
-            patient = serializer.save(doctor=request.user)
-            return JsonResponse(
-                {
-                    'ok': True,
-                    'message': 'Patient created successfully',
-                    'patient': _dashboard_patient_payload(patient),
-                },
-                status=201,
-            )
+        serializer = PatientSerializer(data=payload, context={'request': request})
+        if not serializer.is_valid():
+            first_error = 'Invalid patient data'
+            if serializer.errors:
+                first_key = next(iter(serializer.errors))
+                first_value = serializer.errors[first_key]
+                if isinstance(first_value, list) and first_value:
+                    first_error = str(first_value[0])
+                else:
+                    first_error = str(first_value)
+            return JsonResponse({'ok': False, 'error': first_error, 'errors': serializer.errors}, status=400)
 
-        first_error = 'Invalid patient data'
-        if serializer.errors:
-            first_key = next(iter(serializer.errors))
-            first_value = serializer.errors[first_key]
-            if isinstance(first_value, list) and first_value:
-                first_error = str(first_value[0])
-            else:
-                first_error = str(first_value)
-        return JsonResponse({'ok': False, 'error': first_error, 'errors': serializer.errors}, status=400)
+        with transaction.atomic():
+            patient = serializer.save(doctor=request.user)
+
+            # Optional in JSON mode, mandatory in multipart mode from NewPatient screen.
+            if not is_json and not files:
+                transaction.set_rollback(True)
+                return JsonResponse({'ok': False, 'error': 'Un dossier contenant au moins un fichier est obligatoire.'}, status=400)
+
+            for index, uploaded_file in enumerate(files):
+                rel_from_client = relative_paths[index] if index < len(relative_paths) else ''
+                safe_rel = _safe_relative_path(rel_from_client, uploaded_file.name)
+                storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
+                saved_path = default_storage.save(storage_path, uploaded_file)
+
+                MRIFile.objects.create(
+                    patient=patient,
+                    file=saved_path,
+                    original_filename=uploaded_file.name,
+                    relative_path=safe_rel,
+                    file_size=int(getattr(uploaded_file, 'size', 0) or 0),
+                )
+
+        out_serializer = PatientSerializer(patient, context={'request': request})
+        return JsonResponse(
+            {
+                'ok': True,
+                'message': 'Patient créé avec succès',
+                'patient': out_serializer.data,
+            },
+            status=201,
+        )
     except json.JSONDecodeError:
         return JsonResponse({'ok': False, 'error': 'Invalid JSON payload'}, status=400)
     except Exception as e:
         return JsonResponse({'ok': False, 'error': f'Internal Server Error: {str(e)}'}, status=500)
->>>>>>> origin/yesmine
 
 
 @login_required
@@ -3152,7 +3192,7 @@ def patient_detail_update_delete_legacy(request, patient_id: uuid.UUID):
 @csrf_exempt
 @require_http_methods(["POST"])
 @login_required
-def upload_mri_files(request, patient_id: uuid.UUID):
+def upload_mri_files(request, patient_id: int):
     print(f"Nadine Yassmine - upload_mri_files endpoint works - patient_id: {patient_id}, user: {request.user.username}")
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
 
@@ -3160,22 +3200,23 @@ def upload_mri_files(request, patient_id: uuid.UUID):
     if not files:
         return JsonResponse({'ok': False, 'error': 'No files provided'}, status=400)
 
-    patient_mri_dir = os.path.join(settings.MEDIA_ROOT, 'patients', str(patient.id), 'mri_files')
-    os.makedirs(patient_mri_dir, exist_ok=True)
-
     uploaded_count = 0
     errors = []
-    for f in files:
+    relative_paths = request.POST.getlist('relative_paths')
+
+    for index, f in enumerate(files):
         try:
-            file_path = os.path.join(patient_mri_dir, f.name)
-            with open(file_path, 'wb+') as destination:
-                for chunk in f.chunks():
-                    destination.write(chunk)
+            rel_from_client = relative_paths[index] if index < len(relative_paths) else ''
+            safe_rel = _safe_relative_path(rel_from_client, f.name)
+            storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
+            saved_path = default_storage.save(storage_path, f)
             
             MRIFile.objects.create(
                 patient=patient,
-                file=os.path.relpath(file_path, settings.MEDIA_ROOT),
-                original_filename=f.name
+                file=saved_path,
+                original_filename=f.name,
+                relative_path=safe_rel,
+                file_size=int(getattr(f, 'size', 0) or 0),
             )
             uploaded_count += 1
         except Exception as e:
@@ -3189,7 +3230,7 @@ def upload_mri_files(request, patient_id: uuid.UUID):
 
 @api_view(['GET'])
 @login_required
-def list_mri_files(request, patient_id: uuid.UUID):
+def list_mri_files(request, patient_id: int):
     print(f"Nadine Yassmine - list_mri_files endpoint works - patient_id: {patient_id}, user: {request.user.username}")
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
     mri_files = MRIFile.objects.filter(patient=patient).order_by('-uploaded_at')
@@ -3200,7 +3241,7 @@ def list_mri_files(request, patient_id: uuid.UUID):
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
 @login_required
-def mri_files_list_upload(request, patient_id: uuid.UUID):
+def mri_files_list_upload(request, patient_id: int):
     if request.method == 'GET':
         return list_mri_files(request, patient_id)
     return upload_mri_files(request, patient_id)
@@ -3261,7 +3302,6 @@ def reclamation_detail(request, reclamation_id):
         rec_data['fichier_url'] = reclamation.fichier.url if reclamation.fichier else None
         return JsonResponse({'ok': True, 'reclamation': rec_data})
 
-<<<<<<< HEAD
     if request.method in ['PATCH', 'PUT', 'POST']:
         payload = {}
         if request.method == 'POST':
@@ -3306,7 +3346,8 @@ def reclamation_detail(request, reclamation_id):
         return JsonResponse({'ok': True, 'message': 'Reclamation supprimee avec succes'})
 
     return JsonResponse({'ok': False, 'error': 'Method not allowed'}, status=405)
-=======
+
+
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -3512,4 +3553,3 @@ def admin_dashboard_settings(request):
             'date_format': 'DD/MM/YYYY',
         }
     })
->>>>>>> origin/yesmine

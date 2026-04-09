@@ -31,6 +31,12 @@ export default function PatientsList() {
   });
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState('');
+
+  const getSlicesCount = (patient) => {
+    if (typeof patient?.slices_count === 'number') return patient.slices_count;
+    if (Array.isArray(patient?.mri_files)) return patient.mri_files.length;
+    return null;
+  };
   
   // Filter states
   const [filters, setFilters] = useState({
@@ -235,6 +241,7 @@ export default function PatientsList() {
                 <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Prenom</th>
                 <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Date Naissance</th>
                 <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Sexe</th>
+                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Coupes MRI</th>
                 <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Diagnostics</th>
                 <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide text-right">Actions</th>
               </tr>
@@ -242,11 +249,11 @@ export default function PatientsList() {
             <tbody className="divide-y divide-surface-border">
               {loading ? (
                 <tr>
-                  <td colSpan="7" className="p-8 text-center text-gray-600">Chargement des patients...</td>
+                  <td colSpan="8" className="p-8 text-center text-gray-600">Chargement des patients...</td>
                 </tr>
               ) : patients.length === 0 ? (
                 <tr>
-                  <td colSpan="7" className="p-8 text-center text-gray-600">Aucun patient trouve.</td>
+                  <td colSpan="8" className="p-8 text-center text-gray-600">Aucun patient trouve.</td>
                 </tr>
               ) : (
                 patients.map(patient => (
@@ -258,6 +265,7 @@ export default function PatientsList() {
                     <td className="p-4">
                       <Badge variant="info">{patient.sexe === 'M' ? 'Homme' : 'Femme'}</Badge>
                     </td>
+                    <td className="p-4 text-sm text-gray-600">{getSlicesCount(patient) ?? '—'}</td>
                     <td className="p-4 text-sm text-gray-600 truncate max-w-[200px]">
                       {patient.autres_maladies || '-'}
                     </td>

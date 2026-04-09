@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
+<<<<<<< HEAD
 from .models import (
     Series,
     Average,
@@ -9,6 +10,9 @@ from .models import (
     SegmentationRun,
     SegmentationMaskResult,
 )
+=======
+from .models import Series, Average, PatientImageOrientation, PatientImage, Reclamation, Patient, MRIFile, ContactRequest
+>>>>>>> origin/yesmine
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -29,6 +33,34 @@ class AverageSerializer(serializers.ModelSerializer):
         fields = ('id', 'name', 'files', 'created_at')
 
 
+# ✅ Tes serializers (Yesmine)
+class OrientationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PatientImageOrientation
+        fields = ["id", "patient_id", "rotation", "flip_h", "flip_v", "updated_at"]
+        read_only_fields = ["id", "updated_at"]
+
+    def validate_rotation(self, value):
+        if not (-180 <= int(value) <= 180):
+            raise serializers.ValidationError("rotation doit etre entre -180 et 180.")
+        return int(value)
+
+
+class PatientImageSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PatientImage
+        fields = ["id", "patient_id", "image_url", "uploaded_at"]
+
+    def get_image_url(self, obj):
+        request = self.context.get("request")
+        if obj.image and request:
+            return request.build_absolute_uri(obj.image.url)
+        return None
+
+
+# ✅ Serializers de Nadine
 class PatientSerializer(serializers.ModelSerializer):
     patient_id = serializers.IntegerField(source='id', read_only=True)
     num_dossier = serializers.CharField(source='dossier_number', read_only=True)
@@ -36,12 +68,16 @@ class PatientSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Patient
+<<<<<<< HEAD
         fields = (
             'id', 'patient_id', 'dossier_number', 'num_dossier', 'nom', 'prenom', 'date_naissance', 'sexe',
             'telephone', 'email', 'pathologie', 'stade', 'antecedents', 'notes',
             'autres_maladies', 'doctor', 'created_at', 'mri_files'
         )
         # dossier_number is included by default as it is in fields
+=======
+        fields = ('id', 'dossier_number', 'nom', 'prenom', 'date_naissance', 'sexe', 'autres_maladies', 'doctor', 'created_at')
+>>>>>>> origin/yesmine
         read_only_fields = ('id', 'doctor', 'created_at')
 
     def get_mri_files(self, obj):
@@ -126,6 +162,7 @@ class ReclamationSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
+<<<<<<< HEAD
 class ProfileSerializer(serializers.Serializer):
     firstName = serializers.CharField(required=False, allow_blank=True)
     lastName = serializers.CharField(required=False, allow_blank=True)
@@ -160,3 +197,10 @@ class UserSettingsSerializer(serializers.Serializer):
     notifications = serializers.DictField(required=False)
     security = serializers.DictField(required=False)
     integrations = serializers.DictField(required=False)
+=======
+class ContactRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ContactRequest
+        fields = ('id', 'full_name', 'email', 'institution', 'subject', 'message', 'created_at')
+        read_only_fields = ('id', 'created_at')
+>>>>>>> origin/yesmine

@@ -1,0 +1,7 @@
+HEAD:
+
+        className="flex items-center gap-3 px-4 py-2.5 text-accent hover:bg-accent-light w-full text-left text-sm transition-colors"
+
+YESMINE:
+
+        className="group flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left font-semibold text-slate-500 transition-all hover:bg-slate-100 hover:text-slate-700"

@@ -1,0 +1,151 @@
+HEAD:
+
+  const navigate = useNavigate();
+
+  const scrollToModules = () => {
+    document.getElementById('modules-section')?.scrollIntoView({
+      behavior: 'smooth'
+    });
+  };
+
+  const handleModuleNavigation = (moduleId: string, modulePage: Page) => {
+    if (moduleId === 'segmentation') {
+      navigate('/segmentation/nouvelle');
+      return;
+    }
+
+    onNavigate(modulePage);
+  };
+
+  const modules = [
+
+YESMINE:
+
+  const [isMenuOpen, setIsMenuOpen] = React.useState(false);
+  const [isModalOpen, setIsModalOpen] = React.useState(false);
+  const [isContactModalOpen, setIsContactModalOpen] = React.useState(false);
+  const [contactSuccess, setContactSuccess] = React.useState('');
+  const [contactError, setContactError] = React.useState('');
+  const [isContactSending, setIsContactSending] = React.useState(false);
+  const [featureAccessHint, setFeatureAccessHint] = React.useState('');
+  const [formData, setFormData] = React.useState({ name: '', role: '', text: '' });
+  const [contactForm, setContactForm] = React.useState({
+    fullName: '',
+    email: '',
+    institution: '',
+    subject: 'Demande de démonstration',
+    message: ''
+  });
+  const [testimonials, setTestimonials] = React.useState([
+    {
+      name: "Dr. SM",
+      role: "Neuroradiologue — CHU de Sfax",
+      text: "La segmentation hippocampique est d'une précision remarquable. Cet outil a transformé notre protocole de suivi des patients Alzheimer. Le gain de temps est considérable.",
+      initials: "SM",
+      status: 'approved'
+    },
+    {
+      name: "Dr. KM",
+      role: "Médecin Nucléaire — Hôpital de Sahloul",
+      text: "Le recalage PET/IRM est enfin fiable et rapide. L'interface est intuitive, mes internes l'ont prise en main en moins d'une heure. Un vrai game-changer.",
+      initials: "KB",
+      status: 'approved'
+    },
+    {
+      name: "Dr. ER",
+      role: "Neurologue — Hopital Fatouma Bourguiba Monastir",
+      text: "Les rapports automatiques sont d'une clarté exemplaire. Ils nous aident à mieux communiquer les résultats aux patients et à objectiver nos décisions thérapeutiques.",
+      initials: "ER",
+      status: 'approved'
+    }
+  ]);
+
+  React.useEffect(() => {
+    const observerOptions = {
+      root: null,
+      rootMargin: '0px',
+      threshold: 0.15
+    };
+
+    const handleIntersect = (entries: IntersectionObserverEntry[]) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('is-visible');
+        }
+      });
+    };
+
+    const observer = new IntersectionObserver(handleIntersect, observerOptions);
+    const elements = document.querySelectorAll('.reveal');
+    elements.forEach(el => observer.observe(el));
+
+    return () => observer.disconnect();
+  }, []);
+
+  const handleSubmitTestimonial = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.name || !formData.role || !formData.text) return;
+
+    const newEntry = {
+      ...formData,
+      initials: formData.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2),
+      status: 'pending' as const
+    };
+
+    setTestimonials([...testimonials, newEntry]);
+    setFormData({ name: '', role: '', text: '' });
+    setIsModalOpen(false);
+  };
+
+  const scrollToSection = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
+    setIsMenuOpen(false);
+  };
+
+  const handleAccessRequest = () => {
+    if (!user) {
+      onNavigate('login');
+      return;
+    }
+    onNavigate('dashboard');
+  };
+
+  const handleContactSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!contactForm.fullName || !contactForm.email || !contactForm.subject || !contactForm.message) return;
+
+    setContactError('');
+    setContactSuccess('');
+    setIsContactSending(true);
+
+    try {
+      await createContactRequest({
+        full_name: contactForm.fullName,
+        email: contactForm.email,
+        institution: contactForm.institution,
+        subject: contactForm.subject,
+        message: contactForm.message,
+      });
+
+      setContactSuccess('Votre demande a été envoyée. Notre équipe vous contactera rapidement.');
+      setContactForm({
+        fullName: '',
+        email: '',
+        institution: '',
+        subject: 'Demande de démonstration',
+        message: ''
+      });
+
+      setTimeout(() => {
+        setIsContactModalOpen(false);
+        setContactSuccess('');
+      }, 1800);
+    } catch (err: any) {
+      const apiMessage = err?.response?.data?.error;
+      setContactError(apiMessage || 'Impossible d\'envoyer la demande pour le moment. Réessayez.');
+    } finally {
+      setIsContactSending(false);
+    }
+  };
+
+  const features = [

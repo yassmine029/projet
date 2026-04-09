@@ -1,540 +1,494 @@
-// frontend/src/pages/Brodmann.jsx
-import React, { useEffect, useRef, useState } from "react";
-import { getPatientSeries } from "../api";
-import { useNavigate } from "react-router-dom";
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import api from '../api';
+import BrodmannIdentificationView from '../components/BrodmannIdentificationView';
 
-/**
- * Brodmann.jsx - lecture du patientId depuis sessionStorage au chargement
- * - Attendu: Patients.jsx stocke sessionStorage.setItem("patientId", patientId) avant navigate("/brodmann")
- */
-
-const ATLAS_PATIENT_ID = "brodmann";
-const PLACEHOLDER = "/placeholder.png";
-
-function ThumbImage({ url, alt, width = 80, height = 80, onClick, selected, onNotFound }) {
-  const [src, setSrc] = useState(PLACEHOLDER);
-  const mountedRef = useRef(true);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    const ac = new AbortController();
-    async function check() {
-      if (!url) {
-        setSrc(PLACEHOLDER);
-        if (onNotFound) onNotFound(url);
-        return;
-      }
-      try {
-        const res = await fetch(url, { method: "HEAD", signal: ac.signal });
-        if (!mountedRef.current) return;
-        if (res.ok) setSrc(url);
-        else {
-          setSrc(PLACEHOLDER);
-          if (onNotFound) onNotFound(url);
-        }
-      } catch (e) {
-        if (e.name === "AbortError") return;
-        setSrc(PLACEHOLDER);
-        if (onNotFound) onNotFound(url);
-      }
-    }
-    check();
-    return () => {
-      mountedRef.current = false;
-      ac.abort();
-    };
-  }, [url, onNotFound]);
-
-  return (
-    <img
-      src={src}
-      alt={alt || ""}
-      style={{
-        width,
-        height,
-        objectFit: "cover",
-        border: selected ? "2px solid #3b82f6" : "1px solid #eee",
-        cursor: src === PLACEHOLDER ? "default" : "pointer",
-      }}
-      onClick={() => src !== PLACEHOLDER && onClick && onClick()}
-    />
-  );
-}
+const DEFAULT_AXIS = 'axial';
 
 export default function BrodmannPage() {
-  const [atlasSeries, setAtlasSeries] = useState([]);
-  const [patientSeries, setPatientSeries] = useState([]);
-  const [selectedAtlasRel, setSelectedAtlasRel] = useState(null);
-  const [selectedAtlasJob, setSelectedAtlasJob] = useState(null);
-  const [selectedPatientRel, setSelectedPatientRel] = useState(null);
-  const [selectedPatientJob, setSelectedPatientJob] = useState(null);
-  const [msg, setMsg] = useState("");
-  const [tolerance, setTolerance] = useState(8);
-  const navigate = useNavigate();
+  const [jobId, setJobId] = useState('');
+  const [axis, setAxis] = useState(DEFAULT_AXIS);
+  const [index, setIndex] = useState(0);
+  const [maxIndex, setMaxIndex] = useState(0);
 
-  const atlasImgRef = useRef(null);
-  const patientImgRef = useRef(null);
-  const atlasOverlayRef = useRef(null);
-  const patientOverlayRef = useRef(null);
-  const atlasOffRef = useRef(null);
-  const patientOffRef = useRef(null);
+  const [atlasImage, setAtlasImage] = useState('');
+  const [patientImage, setPatientImage] = useState('');
 
-  // NOTE: we DO NOT read sessionStorage here globally — we read it inside useEffect when loading
-  useEffect(() => {
-    async function load() {
-      setMsg("Chargement des séries...");
-      // read current value from sessionStorage at load time
-      const sessionPatientId = sessionStorage.getItem("patientId") || null;
-      console.debug("Brodmann: sessionPatientId =", sessionPatientId);
+  const [zone, setZone] = useState(null);
+  const [insideBrain, setInsideBrain] = useState(false);
+  const [selectedRatios, setSelectedRatios] = useState(null);
 
-      try {
-        // atlas
-        try {
-          const resAtlas = await getPatientSeries(ATLAS_PATIENT_ID);
-          console.debug("atlasSeries raw:", resAtlas.data);
-          setAtlasSeries(resAtlas.data || []);
-        } catch (e) {
-          console.warn("Impossible de charger la série atlas:", e);
-          setAtlasSeries([]);
-        }
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [autoAlignIters, setAutoAlignIters] = useState(120);
+  const [alignRuns, setAlignRuns] = useState([]);
 
-        // patient (from sessionStorage)
-        if (sessionPatientId) {
-          try {
-            const resPat = await getPatientSeries(sessionPatientId);
-            console.debug("patientSeries raw:", resPat.data);
-            setPatientSeries(resPat.data || []);
-          } catch (e) {
-            console.warn("Impossible de charger les séries du patient:", e);
-            setPatientSeries([]);
-            setMsg("Impossible de charger les coupes du patient (voir console).");
-          }
-        } else {
-          setPatientSeries([]);
-          setMsg("Patient non défini (définir via la page Patients).");
-        }
+  const [uploadFile, setUploadFile] = useState(null);
+  const viewerRef = useRef(null);
 
-      } catch (e) {
-        console.error(e);
-        setMsg("Erreur chargement séries (voir console).");
-      } finally {
-        // clear message if everything OK
-        if (!atlasSeries.length && !patientSeries.length && !msg) {
-          // keep any existing msg
-        } else {
-          setMsg("");
-        }
-      }
-    }
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // run once on mount
+  const canWork = useMemo(() => !!jobId, [jobId]);
 
-  const makeThumbUrl = (item) => {
-    const jobId = item.job_id || item.jobId || item.job;
-    const rel = item.relpath || item.filename || item.rel || "";
-    if (!jobId || !rel) return null;
-    return `/api/patient_file?jobId=${encodeURIComponent(jobId)}&relpath=${encodeURIComponent(rel)}`;
+  const refreshAtlasSlice = async (nextAxis = axis, nextIndex = index) => {
+    const res = await api.get('/volume/atlas_slice', {
+      params: { axis: nextAxis, index: nextIndex },
+    });
+    const data = res.data || {};
+    if (data.image) setAtlasImage(data.image);
+    if (typeof data.index === 'number') setIndex(data.index);
+    if (typeof data.max_index === 'number') setMaxIndex(data.max_index);
   };
 
-  function syncOverlayToImage(imgEl, overlayCanvas) {
-    if (!imgEl || !overlayCanvas) return;
-    const rect = imgEl.getBoundingClientRect();
-    const displayW = imgEl.clientWidth || rect.width || 1;
-    const displayH = imgEl.clientHeight || rect.height || 1;
-    overlayCanvas.style.position = "absolute";
-    overlayCanvas.style.left = "0px";
-    overlayCanvas.style.top = "0px";
-    overlayCanvas.style.width = `${displayW}px`;
-    overlayCanvas.style.height = `${displayH}px`;
-    overlayCanvas.width = Math.max(1, Math.round(displayW));
-    overlayCanvas.height = Math.max(1, Math.round(displayH));
-    overlayCanvas.style.pointerEvents = "none";
+  const refreshPatientSlice = async (nextJobId = jobId, nextAxis = axis, nextIndex = index) => {
+    const res = await api.get('/volume/patient_slice', {
+      params: { jobId: nextJobId, axis: nextAxis, index: nextIndex },
+    });
+    const data = res.data || {};
+    if (data.image) setPatientImage(data.image);
+    if (typeof data.index === 'number') setIndex(data.index);
+    if (typeof data.max_index === 'number') setMaxIndex(data.max_index);
+  };
+
+  const syncSlices = async (nextJobId = jobId, nextAxis = axis, nextIndex = index) => {
+    await refreshAtlasSlice(nextAxis, nextIndex);
+    if (nextJobId) {
+      await refreshPatientSlice(nextJobId, nextAxis, nextIndex);
+    }
+  };
+
+  const loadDemoPatient = async (options = {}) => {
+    const silent = !!options.silent;
+    if (!silent) {
+      setBusy(true);
+      setError('');
+      setMessage('Chargement du patient demo...');
+    }
     try {
-      const cs = window.getComputedStyle(imgEl);
-      overlayCanvas.style.transform = cs.transform || "none";
-      overlayCanvas.style.transformOrigin = cs.transformOrigin || "50% 50%";
-    } catch (e) { }
-    const ctx = overlayCanvas.getContext("2d");
-    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-  }
+      const res = await api.post('/volume/load-demo');
+      const data = res.data || {};
+      const nextJobId = data.jobId;
+      if (!nextJobId) throw new Error('jobId manquant');
+      setJobId(nextJobId);
+      sessionStorage.setItem('volumeJobId', nextJobId);
 
-  // When full image selected, prepare offscreen canvas
-  useEffect(() => {
-    if (!selectedAtlasRel || !selectedAtlasJob) {
-      atlasOffRef.current = null;
-      if (atlasOverlayRef.current) atlasOverlayRef.current.getContext("2d").clearRect(0, 0, atlasOverlayRef.current.width || 1, atlasOverlayRef.current.height || 1);
+      const nextIndex = typeof data.z === 'number' ? data.z : 0;
+      if (typeof data.max_z === 'number') setMaxIndex(data.max_z);
+      setIndex(nextIndex);
+      if (data.median_slice) setPatientImage(data.median_slice);
+
+      await refreshAtlasSlice(axis, nextIndex);
+      if (!silent) {
+        setMessage('Patient demo charge. Vous pouvez lancer le recalage atlas.');
+      }
+      return nextJobId;
+    } catch (e) {
+      if (!silent) {
+        setError('Impossible de charger le patient demo.');
+        setMessage('');
+      }
+      return '';
+    } finally {
+      if (!silent) {
+        setBusy(false);
+      }
+    }
+  };
+
+  const uploadPatientVolume = async () => {
+    if (!uploadFile) {
+      setError('Choisissez un fichier patient (.nii/.nii.gz ou image).');
       return;
     }
-    const img = atlasImgRef.current;
-    const off = atlasOffRef.current || document.createElement("canvas");
-    atlasOffRef.current = off;
-    const onLoad = () => {
-      const natW = img.naturalWidth || img.width || 1;
-      const natH = img.naturalHeight || img.height || 1;
-      off.width = natW;
-      off.height = natH;
-      const ctx = off.getContext("2d");
-      ctx.clearRect(0, 0, off.width, off.height);
-      ctx.drawImage(img, 0, 0, off.width, off.height);
-      if (atlasOverlayRef.current) syncOverlayToImage(img, atlasOverlayRef.current);
-    };
-    if (img) {
-      if (img.complete) onLoad();
-      else img.addEventListener("load", onLoad);
-      return () => img.removeEventListener("load", onLoad);
-    }
-  }, [selectedAtlasRel, selectedAtlasJob]);
+    setBusy(true);
+    setError('');
+    setMessage('Upload du volume patient...');
+    try {
+      const fd = new FormData();
+      fd.append('file', uploadFile);
+      const res = await api.post('/volume/upload', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      const data = res.data || {};
+      const nextJobId = data.jobId;
+      if (!nextJobId) throw new Error('jobId manquant');
 
-  useEffect(() => {
-    if (!selectedPatientRel || !selectedPatientJob) {
-      patientOffRef.current = null;
-      if (patientOverlayRef.current) patientOverlayRef.current.getContext("2d").clearRect(0, 0, patientOverlayRef.current.width || 1, patientOverlayRef.current.height || 1);
+      setJobId(nextJobId);
+      sessionStorage.setItem('volumeJobId', nextJobId);
+      const nextIndex = typeof data.z === 'number' ? data.z : 0;
+      if (typeof data.max_z === 'number') setMaxIndex(data.max_z);
+      setIndex(nextIndex);
+      if (data.median_slice) setPatientImage(data.median_slice);
+
+      await refreshAtlasSlice(axis, nextIndex);
+      setMessage('Volume patient charge. Lancez le recalage atlas.');
+    } catch (e) {
+      setError('Echec upload volume patient.');
+      setMessage('');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runAutoAlign = async () => {
+    if (!jobId) return;
+    setBusy(true);
+    setError('');
+    setMessage(`Recalage atlas automatique en cours (${autoAlignIters} iterations)...`);
+    try {
+      const res = await api.post('/volume/auto-align', { jobId, n_iters: autoAlignIters });
+      const data = res.data || {};
+      if (data.images?.atlas) setAtlasImage(data.images.atlas);
+      if (data.images?.patient) setPatientImage(data.images.patient);
+      if (!data.images?.atlas || !data.images?.patient) {
+        await syncSlices(jobId, axis, index);
+      }
+      const metrics = data.metrics || {};
+      const runSummary = {
+        n_iters: Number(data.n_iters || metrics.n_iters || autoAlignIters),
+        mutual_information: Number(metrics.mutual_information || 0),
+        ncc_after: Number(metrics.ncc_after || 0),
+        processing_time_ms: Number(metrics.processing_time_ms || 0),
+        mi_quality: metrics.mi_quality || 'N/A',
+      };
+      setAlignRuns((prev) => [runSummary, ...prev].slice(0, 5));
+      setMessage('Recalage atlas termine. Comparez les metriques et validez si correct.');
+    } catch (e) {
+      setError('Recalage atlas automatique echoue.');
+      setMessage('');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const validateRegistration = async () => {
+    if (!jobId) return;
+    setBusy(true);
+    setError('');
+    try {
+      const res = await api.post('/volume/validate-registration', { jobId });
+      const data = res.data || {};
+      if (data.images?.atlas) setAtlasImage(data.images.atlas);
+      if (data.images?.patient) setPatientImage(data.images.patient);
+      setMessage('Recalage valide et applique au volume complet.');
+      return true;
+    } catch (e) {
+      setError('Validation du recalage echouee.');
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const rejectRegistration = async () => {
+    if (!jobId) return;
+    setBusy(true);
+    setError('');
+    try {
+      await api.post('/volume/reject-registration', { jobId });
+      await syncSlices(jobId, axis, index);
+      setMessage('Resultat rejete. Vous pouvez relancer le recalage.');
+      return true;
+    } catch (e) {
+      setError('Rejet du recalage echoue.');
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const proceedToIdentification = async () => {
+    const ok = await validateRegistration();
+    if (ok && viewerRef.current) {
+      viewerRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  const handleAxisChange = async (nextAxis) => {
+    setAxis(nextAxis);
+    setZone(null);
+    setInsideBrain(false);
+    setSelectedRatios(null);
+    if (!jobId) {
+      await refreshAtlasSlice(nextAxis, 0);
       return;
     }
-    const img = patientImgRef.current;
-    const off = patientOffRef.current || document.createElement("canvas");
-    patientOffRef.current = off;
-    const onLoad = () => {
-      const natW = img.naturalWidth || img.width || 1;
-      const natH = img.naturalHeight || img.height || 1;
-      off.width = natW;
-      off.height = natH;
-      const ctx = off.getContext("2d");
-      ctx.clearRect(0, 0, off.width, off.height);
-      ctx.drawImage(img, 0, 0, off.width, off.height);
-      if (patientOverlayRef.current) syncOverlayToImage(img, patientOverlayRef.current);
-    };
-    if (img) {
-      if (img.complete) onLoad();
-      else img.addEventListener("load", onLoad);
-      return () => img.removeEventListener("load", onLoad);
+    await syncSlices(jobId, nextAxis, index);
+  };
+
+  const handleIndexChange = async (nextIndex) => {
+    setIndex(nextIndex);
+    setZone(null);
+    setInsideBrain(false);
+    setSelectedRatios(null);
+    if (!jobId) {
+      await refreshAtlasSlice(axis, nextIndex);
+      return;
     }
-  }, [selectedPatientRel, selectedPatientJob]);
+    await syncSlices(jobId, axis, nextIndex);
+  };
+
+  const identifyFromClick = async (event) => {
+    if (!jobId) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const xr = (event.clientX - rect.left) / Math.max(1, rect.width);
+    const yr = (event.clientY - rect.top) / Math.max(1, rect.height);
+    const xRatio = Math.max(0, Math.min(1, xr));
+    const yRatio = Math.max(0, Math.min(1, yr));
+
+    setBusy(true);
+    setError('');
+    try {
+      const res = await api.get('/volume/brodmann', {
+        params: { jobId, axis, index, xRatio, yRatio },
+      });
+      const data = res.data || {};
+      setZone(data.zone || null);
+      setInsideBrain(!!data.insideBrain);
+      setSelectedRatios({ xRatio, yRatio });
+      if (data.images?.atlas) setAtlasImage(data.images.atlas);
+      if (data.images?.patient) setPatientImage(data.images.patient);
+      setMessage(data.insideBrain ? 'Zone Brodmann identifiee.' : 'Point hors cerveau.');
+    } catch (e) {
+      setError('Identification de zone echouee.');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   useEffect(() => {
-    const onResize = () => {
-      if (atlasImgRef.current && atlasOverlayRef.current) syncOverlayToImage(atlasImgRef.current, atlasOverlayRef.current);
-      if (patientImgRef.current && patientOverlayRef.current) syncOverlayToImage(patientImgRef.current, patientOverlayRef.current);
+    const init = async () => {
+      const saved = sessionStorage.getItem('volumeJobId') || '';
+      try {
+        await refreshAtlasSlice(axis, index);
+        if (saved) {
+          try {
+            setJobId(saved);
+            await syncSlices(saved, axis, index);
+            setMessage('Session volume restauree automatiquement.');
+            return;
+          } catch (savedError) {
+            setJobId('');
+            sessionStorage.removeItem('volumeJobId');
+          }
+        }
+
+        const demoJobId = await loadDemoPatient({ silent: true });
+        if (demoJobId) {
+          setMessage('Atlas et patient test charges automatiquement.');
+        } else {
+          setMessage('Atlas charge. Chargez un volume patient ou utilisez le mode demo.');
+        }
+      } catch (e) {
+        setJobId('');
+        sessionStorage.removeItem('volumeJobId');
+        await refreshAtlasSlice(axis, index);
+        setMessage('Atlas charge. Chargez un volume patient ou utilisez le mode demo.');
+      }
     };
-    window.addEventListener("resize", onResize);
-    window.addEventListener("scroll", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-      window.removeEventListener("scroll", onResize);
-    };
+    init();
   }, []);
 
-  function clientToImageNaturalCoords(imgEl, clientX, clientY) {
-    if (!imgEl) return { x: 0, y: 0 };
-    const rect = imgEl.getBoundingClientRect();
-    const displayW = rect.width || 1;
-    const displayH = rect.height || 1;
-    const natW = imgEl.naturalWidth || imgEl.width || 1;
-    const natH = imgEl.naturalHeight || imgEl.height || 1;
-    const xRel = clientX - rect.left;
-    const yRel = clientY - rect.top;
-    const nx = Math.round(Math.max(0, Math.min(natW - 1, (xRel / displayW) * natW)));
-    const ny = Math.round(Math.max(0, Math.min(natH - 1, (yRel / displayH) * natH)));
-    return { x: nx, y: ny };
-  }
-
-  function computeMaskFromClick(offcanvas, clickX, clickY, tol) {
-    if (!offcanvas) return null;
-    const w = offcanvas.width;
-    const h = offcanvas.height;
-    if (clickX < 0 || clickX >= w || clickY < 0 || clickY >= h) return { width: w, height: h, data: new Uint8Array(w * h) };
-    const ctx = offcanvas.getContext("2d");
-    const imgd = ctx.getImageData(0, 0, w, h);
-    const data = imgd.data;
-    const idx0 = (clickY * w + clickX) * 4;
-    const target = Math.round((data[idx0] + data[idx0 + 1] + data[idx0 + 2]) / 3);
-    const mask = new Uint8Array(w * h);
-    const stack = [];
-    const push = (x, y) => {
-      mask[y * w + x] = 1;
-      stack.push((y << 16) | x);
-    };
-    push(clickX, clickY);
-    while (stack.length) {
-      const code = stack.pop();
-      const x = code & 0xffff;
-      const y = code >>> 16;
-      const nbs = [
-        [x - 1, y],
-        [x + 1, y],
-        [x, y - 1],
-        [x, y + 1],
-      ];
-      for (const [nx, ny] of nbs) {
-        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-        const pos = ny * w + nx;
-        if (mask[pos]) continue;
-        const di = pos * 4;
-        const gi = Math.round((data[di] + data[di + 1] + data[di + 2]) / 3);
-        if (Math.abs(gi - target) <= tol) {
-          mask[pos] = 1;
-          stack.push((ny << 16) | nx);
-        }
-      }
-    }
-    return { width: w, height: h, data: mask };
-  }
-
-  function drawMaskOnOverlay(mask, overlayCanvas, fillRGBA = "rgba(255,60,60,0.28)", strokeRGBA = "rgba(200,0,0,0.95)") {
-    if (!mask || !overlayCanvas) return;
-    const ctx = overlayCanvas.getContext("2d");
-    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-    const tmp = document.createElement("canvas");
-    tmp.width = mask.width;
-    tmp.height = mask.height;
-    const tctx = tmp.getContext("2d");
-    const id = tctx.createImageData(tmp.width, tmp.height);
-    for (let i = 0, p = 0; i < mask.data.length; ++i, p += 4) {
-      const m = mask.data[i] ? 255 : 0;
-      id.data[p] = 255;
-      id.data[p + 1] = 255;
-      id.data[p + 2] = 255;
-      id.data[p + 3] = m;
-    }
-    tctx.putImageData(id, 0, 0);
-    ctx.save();
-    ctx.globalCompositeOperation = "source-over";
-    ctx.drawImage(tmp, 0, 0, overlayCanvas.width, overlayCanvas.height);
-    ctx.globalCompositeOperation = "source-in";
-    ctx.fillStyle = fillRGBA;
-    ctx.fillRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-    ctx.globalCompositeOperation = "source-over";
-    try {
-      const small = document.createElement("canvas");
-      small.width = Math.max(64, Math.min(256, mask.width));
-      small.height = Math.max(64, Math.min(256, mask.height));
-      const sctx = small.getContext("2d");
-      sctx.clearRect(0, 0, small.width, small.height);
-      sctx.drawImage(tmp, 0, 0, small.width, small.height);
-      const sm = sctx.getImageData(0, 0, small.width, small.height);
-      ctx.strokeStyle = strokeRGBA;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      for (let y = 1; y < small.height - 1; y++) {
-        for (let x = 1; x < small.width - 1; x++) {
-          const alpha = sm.data[(y * small.width + x) * 4 + 3];
-          if (alpha > 10) {
-            const nIdx = (a, b) => sm.data[(a * small.width + b) * 4 + 3];
-            if (
-              nIdx(y - 1, x) <= 10 ||
-              nIdx(y + 1, x) <= 10 ||
-              nIdx(y, x - 1) <= 10 ||
-              nIdx(y, x + 1) <= 10
-            ) {
-              const ox = (x / small.width) * overlayCanvas.width;
-              const oy = (y / small.height) * overlayCanvas.height;
-              ctx.moveTo(ox, oy);
-              ctx.arc(ox, oy, 1.2, 0, Math.PI * 2);
-            }
-          }
-        }
-      }
-      ctx.stroke();
-    } catch (e) {
-      console.warn("stroke failed", e);
-    }
-    ctx.restore();
-  }
-
-  const onAtlasClick = (ev) => {
-    if (!atlasImgRef.current || !atlasOffRef.current) {
-      setMsg("Image atlas non prête.");
-      return;
-    }
-    const pt = clientToImageNaturalCoords(atlasImgRef.current, ev.clientX, ev.clientY);
-    const mask = computeMaskFromClick(atlasOffRef.current, pt.x, pt.y, parseInt(tolerance, 10));
-    if (atlasOverlayRef.current) syncOverlayToImage(atlasImgRef.current, atlasOverlayRef.current);
-    if (patientImgRef.current && patientOverlayRef.current) syncOverlayToImage(patientImgRef.current, patientOverlayRef.current);
-    drawMaskOnOverlay(mask, atlasOverlayRef.current, "rgba(255,60,60,0.28)", "rgba(200,0,0,0.95)");
-    if (patientOverlayRef.current) drawMaskOnOverlay(mask, patientOverlayRef.current, "rgba(60,255,120,0.26)", "rgba(0,160,0,0.9)");
-    setMsg("Sélection appliquée.");
-  };
-
-  const handleNotFound = (url) => {
-    if (!url) return;
-    console.warn("Resource not found (HEAD):", url);
-    setMsg(`Ressource introuvable: ${url} — vérifie le job_id / relpath côté serveur.`);
-  };
-
-  // markup (identique à ta version, on s'assure que les img src utilisent selectedJob + selectedRel)
   return (
-    <div style={{ padding: 20 }}>
-      <h1>Aperçu & sélection Brodmann</h1>
-      <button
-        onClick={() => {
-          const pid = sessionStorage.getItem("patientId");
-          if (!pid) { alert("Patient non défini."); return; }
-          if (!selectedAtlasRel || !selectedAtlasJob) { alert("Sélectionne d'abord une coupe atlas."); return; }
-          navigate("/brodmann3d", {
-            state: {
-              atlasId: ATLAS_PATIENT_ID,
-              atlasRel: selectedAtlasRel,
-              atlasJob: selectedAtlasJob,
-              patientId: pid,
-              patientRel: selectedPatientRel || null,
-              patientJob: selectedPatientJob || null
-            }
-          });
-        }}
-      >
-        Identifier sur 3D
-      </button>
+    <div className="relative min-h-screen overflow-x-hidden bg-slate-950 pb-36 text-slate-100">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(16,185,129,0.18),_transparent_45%),radial-gradient(circle_at_20%_20%,_rgba(59,130,246,0.2),_transparent_38%)]" />
 
+      <div className="relative mx-auto max-w-7xl space-y-5 p-4 md:p-6">
+        <header className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_10px_45px_rgba(2,6,23,0.6)] backdrop-blur">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.24em] text-emerald-300/80">VisionMed Workflow</p>
+              <h1 className="mt-2 text-2xl font-semibold text-white md:text-3xl">Recalage Atlas et Identification Brodmann</h1>
+              <p className="mt-2 max-w-3xl text-sm text-slate-300">
+                Pipeline clinique: chargez le volume, lancez le recalage automatique, puis confirmez ou rejetez le resultat avant l'identification precise des zones.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+              <p className="text-xs uppercase tracking-wider text-emerald-300/70">Session active</p>
+              <p className="mt-1 font-mono">{jobId || 'Aucun Job ID'}</p>
+            </div>
+          </div>
+        </header>
 
+        <section className="rounded-3xl border border-white/10 bg-slate-900/70 p-4 shadow-[0_10px_40px_rgba(15,23,42,0.55)] backdrop-blur md:p-5">
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-5">
+            <input
+              type="file"
+              accept=".nii,.nii.gz,image/*"
+              onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+              className="rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-blue-400"
+            />
+            <button
+              onClick={uploadPatientVolume}
+              disabled={busy}
+              className="rounded-xl bg-gradient-to-r from-blue-500 to-cyan-400 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Charger volume patient
+            </button>
+            <button
+              onClick={loadDemoPatient}
+              disabled={busy}
+              className="rounded-xl border border-cyan-300/30 bg-cyan-500/10 px-3 py-2 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Charger patient demo
+            </button>
+            <button
+              onClick={runAutoAlign}
+              disabled={busy || !canWork}
+              className="rounded-xl bg-gradient-to-r from-emerald-400 to-teal-300 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Lancer recalage auto
+            </button>
+            <label className="flex items-center gap-2 rounded-xl border border-emerald-300/25 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100">
+              <span className="whitespace-nowrap">Iterations</span>
+              <input
+                type="number"
+                min={30}
+                max={1000}
+                step={10}
+                value={autoAlignIters}
+                onChange={(e) => setAutoAlignIters(Number(e.target.value || 120))}
+                className="w-24 rounded-md border border-emerald-200/30 bg-slate-900/80 px-2 py-1 text-sm text-white outline-none focus:border-cyan-300"
+              />
+            </label>
+          </div>
 
-      <div style={{ marginBottom: 12, color: "#444" }}>
-        <strong>Atlas:</strong> {ATLAS_PATIENT_ID}
+          {(message || error) && (
+            <div className="mt-4 grid gap-2 md:grid-cols-2">
+              {message && <p className="rounded-xl border border-cyan-300/20 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100">{message}</p>}
+              {error && <p className="rounded-xl border border-rose-300/25 bg-rose-500/10 px-3 py-2 text-sm font-medium text-rose-200">{error}</p>}
+            </div>
+          )}
+
+          {alignRuns.length > 0 && (
+            <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/50 p-3">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-300">Comparaison des derniers recalages</p>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-left text-xs text-slate-200">
+                  <thead className="text-slate-400">
+                    <tr>
+                      <th className="px-2 py-1">Iterations</th>
+                      <th className="px-2 py-1">MI</th>
+                      <th className="px-2 py-1">Qualite MI</th>
+                      <th className="px-2 py-1">NCC apres</th>
+                      <th className="px-2 py-1">Temps (s)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {alignRuns.map((run, idxRun) => (
+                      <tr key={`${run.n_iters}-${idxRun}`} className={idxRun === 0 ? 'bg-emerald-500/10' : ''}>
+                        <td className="px-2 py-1 font-semibold text-emerald-200">{run.n_iters}</td>
+                        <td className="px-2 py-1">{run.mutual_information.toFixed(4)}</td>
+                        <td className="px-2 py-1">{run.mi_quality}</td>
+                        <td className="px-2 py-1">{run.ncc_after.toFixed(4)}</td>
+                        <td className="px-2 py-1">{(run.processing_time_ms / 1000).toFixed(1)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <div className="grid gap-4 lg:grid-cols-3">
+          <section ref={viewerRef} className="rounded-3xl border border-white/10 bg-slate-900/70 p-4 shadow-[0_10px_40px_rgba(15,23,42,0.55)] backdrop-blur lg:col-span-2 md:p-5">
+            <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/50 p-3">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-300">Axe</label>
+              <select
+                value={axis}
+                onChange={(e) => handleAxisChange(e.target.value)}
+                className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100 outline-none focus:border-cyan-400"
+              >
+                <option value="axial">axial</option>
+                <option value="coronal">coronal</option>
+                <option value="sagittal">sagittal</option>
+              </select>
+
+              <label className="ml-1 text-xs font-semibold uppercase tracking-wider text-slate-300">Coupe</label>
+              <input
+                type="range"
+                min={0}
+                max={maxIndex}
+                value={index}
+                onChange={(e) => handleIndexChange(Number(e.target.value))}
+                className="w-full max-w-xs accent-cyan-400"
+              />
+              <span className="rounded-md bg-slate-800 px-2 py-1 text-xs text-cyan-200">{index}/{maxIndex}</span>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Atlas (clic pour identifier)</p>
+                <div className="relative overflow-hidden rounded-2xl border border-slate-700 bg-black/80 shadow-inner shadow-cyan-500/5">
+                  {atlasImage ? (
+                    <img
+                      src={atlasImage}
+                      alt="atlas"
+                      className="block w-full cursor-crosshair"
+                      onClick={identifyFromClick}
+                    />
+                  ) : (
+                    <div className="flex h-64 items-center justify-center text-sm text-slate-500">Atlas indisponible</div>
+                  )}
+
+                  {selectedRatios && (
+                    <div
+                      className="pointer-events-none absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-amber-300 shadow-[0_0_18px_rgba(251,191,36,0.75)]"
+                      style={{ left: `${selectedRatios.xRatio * 100}%`, top: `${selectedRatios.yRatio * 100}%` }}
+                    />
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Patient</p>
+                <div className="overflow-hidden rounded-2xl border border-slate-700 bg-black/80 shadow-inner shadow-cyan-500/5">
+                  {patientImage ? (
+                    <img
+                      src={patientImage}
+                      alt="patient"
+                      className="block w-full cursor-crosshair"
+                      onClick={identifyFromClick}
+                    />
+                  ) : (
+                    <div className="flex h-64 items-center justify-center text-sm text-slate-500">Patient indisponible</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <BrodmannIdentificationView
+            zone={zone}
+            insideBrain={insideBrain}
+            axis={axis}
+            index={index}
+            maxIndex={maxIndex}
+            onAxisChange={handleAxisChange}
+            onIndexChange={handleIndexChange}
+          />
+        </div>
       </div>
 
-      <div style={{ display: "flex", gap: 20 }}>
-        <div style={{ width: 300 }}>
-          <h3>Coupe atlas</h3>
-          <div style={{ maxHeight: "60vh", overflowY: "auto" }}>
-            {atlasSeries.length === 0 ? (
-              <div style={{ color: "#666" }}>Aucune coupe atlas disponible.</div>
-            ) : (
-              atlasSeries.map((it, idx) => {
-                const url = makeThumbUrl(it);
-                const jobId = it.job_id || it.jobId || it.job || null;
-                const rel = it.relpath || it.filename || it.rel || "";
-                return (
-                  <div key={idx} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-                    <ThumbImage
-                      url={url}
-                      alt={rel}
-                      selected={selectedAtlasRel === rel && selectedAtlasJob === jobId}
-                      onClick={() => {
-                        if (!jobId || !rel) { setMsg("Atlas : job_id ou relpath manquant."); return; }
-                        setSelectedAtlasRel(rel);
-                        setSelectedAtlasJob(jobId);
-                        setMsg("");
-                        if (atlasOverlayRef.current) atlasOverlayRef.current.getContext("2d").clearRect(0, 0, atlasOverlayRef.current.width || 1, atlasOverlayRef.current.height || 1);
-                      }}
-                      onNotFound={handleNotFound}
-                    />
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      <div style={{ fontSize: 12, maxWidth: 160, wordBreak: "break-word" }}>{rel}</div>
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <button onClick={() => { if (!jobId || !rel) { setMsg("Atlas : job_id ou relpath manquant."); return; } setSelectedAtlasRel(rel); setSelectedAtlasJob(jobId); }}>Sélectionner</button>
-                        {url && <a href={url} target="_blank" rel="noreferrer"><button>Ouvrir</button></a>}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-
-        <div style={{ width: 300 }}>
-          <h3>Coupe patient</h3>
-          <div style={{ maxHeight: "60vh", overflowY: "auto" }}>
-            {patientSeries.length === 0 ? (
-              <div style={{ color: "#666" }}>Aucune coupe patient disponible (définis patient sur la page Patients).</div>
-            ) : (
-              patientSeries.map((it, idx) => {
-                const url = makeThumbUrl(it);
-                const jobId = it.job_id || it.jobId || it.job || null;
-                const rel = it.relpath || it.filename || it.rel || "";
-                return (
-                  <div key={idx} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-                    <ThumbImage
-                      url={url}
-                      alt={rel}
-                      selected={selectedPatientRel === rel && selectedPatientJob === jobId}
-                      onClick={() => {
-                        if (!jobId || !rel) { setMsg("Patient : job_id ou relpath manquant."); return; }
-                        setSelectedPatientRel(rel);
-                        setSelectedPatientJob(jobId);
-                        setMsg("");
-                        if (patientOverlayRef.current) patientOverlayRef.current.getContext("2d").clearRect(0, 0, patientOverlayRef.current.width || 1, patientOverlayRef.current.height || 1);
-                      }}
-                      onNotFound={handleNotFound}
-                    />
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      <div style={{ fontSize: 12, maxWidth: 160, wordBreak: "break-word" }}>{rel}</div>
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <button onClick={() => { if (!jobId || !rel) { setMsg("Patient : job_id ou relpath manquant."); return; } setSelectedPatientRel(rel); setSelectedPatientJob(jobId); }}>Sélectionner</button>
-                        {url && <a href={url} target="_blank" rel="noreferrer"><button>Ouvrir</button></a>}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-
-        <div style={{ flex: 1 }}>
-          <h3>Aperçu & action</h3>
-          <div style={{ marginBottom: 8, color: "#666" }}>{msg}</div>
-
-          <div style={{ display: "flex", gap: 16 }}>
-            <div style={{ width: "50%", position: "relative", border: "1px solid #ddd", padding: 8 }}>
-              <div style={{ fontSize: 13, marginBottom: 6 }}>Atlas (cliquez pour choisir une aire)</div>
-              <div style={{ position: "relative", width: "100%", paddingTop: "100%", background: "#fff" }}>
-                {selectedAtlasRel && selectedAtlasJob ? (
-                  <>
-                    <img
-                      ref={atlasImgRef}
-                      src={`/api/patient_file?jobId=${encodeURIComponent(selectedAtlasJob)}&relpath=${encodeURIComponent(selectedAtlasRel)}`}
-                      alt="atlas"
-                      onClick={onAtlasClick}
-                      onError={() => handleNotFound(`/api/patient_file?jobId=${encodeURIComponent(selectedAtlasJob)}&relpath=${encodeURIComponent(selectedAtlasRel)}`)}
-                      style={{ position: "absolute", left: 0, top: 0, width: "100%", height: "100%", objectFit: "contain", cursor: "crosshair" }}
-                    />
-                    <canvas ref={atlasOverlayRef} style={{ position: "absolute", left: 0, top: 0 }} />
-                  </>
-                ) : (
-                  <div style={{ position: "absolute", left: 8, top: 8, color: "#666" }}>Aucune coupe atlas sélectionnée</div>
-                )}
-              </div>
-            </div>
-
-            <div style={{ width: "50%", position: "relative", border: "1px solid #ddd", padding: 8 }}>
-              <div style={{ fontSize: 13, marginBottom: 6 }}>Patient (zone projetée)</div>
-              <div style={{ position: "relative", width: "100%", paddingTop: "100%", background: "#fff" }}>
-                {selectedPatientRel && selectedPatientJob ? (
-                  <>
-                    <img
-                      ref={patientImgRef}
-                      src={`/api/patient_file?jobId=${encodeURIComponent(selectedPatientJob)}&relpath=${encodeURIComponent(selectedPatientRel)}`}
-                      alt="patient"
-                      onError={() => handleNotFound(`/api/patient_file?jobId=${encodeURIComponent(selectedPatientJob)}&relpath=${encodeURIComponent(selectedPatientRel)}`)}
-                      style={{ position: "absolute", left: 0, top: 0, width: "100%", height: "100%", objectFit: "contain" }}
-                    />
-                    <canvas ref={patientOverlayRef} style={{ position: "absolute", left: 0, top: 0 }} />
-                  </>
-                ) : (
-                  <div style={{ position: "absolute", left: 8, top: 8, color: "#666" }}>
-                    Patient non défini ou aucune coupe sélectionnée.
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12 }}>
-            <label>Tolérance (gris) :</label>
-            <input type="range" min={0} max={60} value={tolerance} onChange={(e) => setTolerance(parseInt(e.target.value, 10))} />
-            <div style={{ width: 40, textAlign: "center" }}>{tolerance}</div>
-            <div style={{ marginLeft: "auto" }}>
-              <button onClick={() => {
-                if (atlasOverlayRef.current) atlasOverlayRef.current.getContext("2d").clearRect(0, 0, atlasOverlayRef.current.width || 1, atlasOverlayRef.current.height || 1);
-                if (patientOverlayRef.current) patientOverlayRef.current.getContext("2d").clearRect(0, 0, patientOverlayRef.current.width || 1, patientOverlayRef.current.height || 1);
-                setMsg("Overlays effacés");
-              }}>Effacer sélection</button>
-            </div>
-          </div>
-
-          <div style={{ marginTop: 8, color: "#666" }}>
-            Cliquez sur l'atlas pour choisir une aire — le même masque sera projeté sur l'image du patient si celui-ci est sélectionné.
+      <div className="fixed bottom-0 left-0 right-0 z-20 border-t border-white/15 bg-slate-950/90 px-4 py-3 backdrop-blur-lg">
+        <div className="mx-auto flex w-full max-w-7xl flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs uppercase tracking-[0.16em] text-slate-300">
+            Decision medicale finale: confirmer pour identifier les zones ou rejeter le recalage
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={rejectRegistration}
+              disabled={busy || !canWork}
+              className="rounded-xl border border-rose-300/35 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-200 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Rejeter le resultat
+            </button>
+            <button
+              onClick={proceedToIdentification}
+              disabled={busy || !canWork}
+              className="rounded-xl bg-gradient-to-r from-emerald-400 to-lime-300 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Passer a l'identification des zones
+            </button>
           </div>
         </div>
       </div>

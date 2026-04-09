@@ -1,19 +1,9 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-<<<<<<< HEAD
 from .models import (
-    Series,
-    Average,
-    Reclamation,
-    Patient,
-    MRIFile,
-    SegmentationRun,
-    SegmentationMaskResult,
+    Series, Average, Reclamation, Patient, MRIFile, SegmentationRun, SegmentationMaskResult,
+    ContactRequest, PatientImage, PatientImageOrientation
 )
-=======
-from .models import Series, Average, PatientImageOrientation, PatientImage, Reclamation, Patient, MRIFile, ContactRequest
->>>>>>> origin/yesmine
-
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -68,16 +58,12 @@ class PatientSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Patient
-<<<<<<< HEAD
         fields = (
             'id', 'patient_id', 'dossier_number', 'num_dossier', 'nom', 'prenom', 'date_naissance', 'sexe',
             'telephone', 'email', 'pathologie', 'stade', 'antecedents', 'notes',
             'autres_maladies', 'doctor', 'created_at', 'mri_files'
         )
         # dossier_number is included by default as it is in fields
-=======
-        fields = ('id', 'dossier_number', 'nom', 'prenom', 'date_naissance', 'sexe', 'autres_maladies', 'doctor', 'created_at')
->>>>>>> origin/yesmine
         read_only_fields = ('id', 'doctor', 'created_at')
 
     def get_mri_files(self, obj):
@@ -94,10 +80,16 @@ class MRIFileSerializer(serializers.ModelSerializer):
         fields = ('id', 'patient', 'file', 'file_url', 'preview_url', 'original_filename', 'relative_path', 'file_size', 'uploaded_at')
 
     def get_file_url(self, obj):
+        try:
+            file_url = obj.file.url
+        except Exception:
+            # Avoid crashing patient detail when a DB row points to a missing file.
+            return None
+
         request = self.context.get('request')
         if request:
-            return request.build_absolute_uri(obj.file.url)
-        return obj.file.url
+            return request.build_absolute_uri(file_url)
+        return file_url
 
     def get_preview_url(self, obj):
         request = self.context.get('request')
@@ -162,7 +154,6 @@ class ReclamationSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
-<<<<<<< HEAD
 class ProfileSerializer(serializers.Serializer):
     firstName = serializers.CharField(required=False, allow_blank=True)
     lastName = serializers.CharField(required=False, allow_blank=True)
@@ -197,10 +188,10 @@ class UserSettingsSerializer(serializers.Serializer):
     notifications = serializers.DictField(required=False)
     security = serializers.DictField(required=False)
     integrations = serializers.DictField(required=False)
-=======
+
+
 class ContactRequestSerializer(serializers.ModelSerializer):
     class Meta:
         model = ContactRequest
         fields = ('id', 'full_name', 'email', 'institution', 'subject', 'message', 'created_at')
         read_only_fields = ('id', 'created_at')
->>>>>>> origin/yesmine

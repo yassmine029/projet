@@ -13,3 +13,8 @@ scipy
 onnxruntime
 trimesh
 reportlab
+
+nibabel
+SimpleITK
+nilearn
+channels

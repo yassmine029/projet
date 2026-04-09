@@ -19,6 +19,8 @@ interface AutoAlignOverlayProps {
   isVisible: boolean;
   status: 'processing' | 'success' | 'error';
   metrics?: QualityMetrics;
+  progressOverride?: number;
+  stageMessage?: string;
   errorMessage?: string;
   onClose?: () => void;
   algorithm?: 'ANTs' | 'MINE';
@@ -28,6 +30,8 @@ const AutoAlignOverlay: React.FC<AutoAlignOverlayProps> = ({
   isVisible,
   status,
   metrics,
+  progressOverride,
+  stageMessage,
   errorMessage,
   onClose,
   algorithm = 'MINE',
@@ -38,6 +42,11 @@ const AutoAlignOverlay: React.FC<AutoAlignOverlayProps> = ({
   useEffect(() => {
     if (status === 'processing') {
       setElapsedTime(0);
+      if (typeof progressOverride === 'number') {
+        setProgress(Math.max(0, Math.min(100, progressOverride)));
+        return;
+      }
+
       setProgress(0);
       const timer = setInterval(() => {
         setElapsedTime((prev) => prev + 0.1);
@@ -47,7 +56,7 @@ const AutoAlignOverlay: React.FC<AutoAlignOverlayProps> = ({
     } else if (status === 'success') {
       setProgress(100);
     }
-  }, [status]);
+  }, [status, progressOverride]);
 
   if (!isVisible) return null;
 
@@ -86,6 +95,11 @@ const AutoAlignOverlay: React.FC<AutoAlignOverlayProps> = ({
                 ? "Le modèle Deep Learning MINE synchronise vos images"
                 : "L'algorithme ANTs SyN recalage vos données"}
             </p>
+            {stageMessage && (
+              <p className="overlay-subtitle" style={{ marginTop: '-1.25rem', marginBottom: '1.25rem', fontWeight: 600 }}>
+                Etape: {stageMessage}
+              </p>
+            )}
             <div className="progress-container">
               <div className="progress-bar-bg">
                 <div className="progress-fill" style={{ width: `${progress}%` }}>

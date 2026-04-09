@@ -7,6 +7,7 @@ import zipfile
 import tempfile
 import shutil
 import json
+import smtplib
 import uuid
 import base64
 import threading
@@ -20,6 +21,14 @@ from django.http import JsonResponse, HttpResponse, FileResponse
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.decorators import login_required
+from rest_framework.decorators import api_view, permission_classes, parser_classes
+from rest_framework.permissions import AllowAny
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.response import Response
+from rest_framework import status
+from .models import Series, PatientImageOrientation, PatientImage
+from .serializers import OrientationSerializer, PatientImageSerializer
+from django.shortcuts import get_object_or_404
 from django.core.validators import RegexValidator
 from django.core.files.storage import default_storage
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
@@ -43,6 +52,7 @@ from django.utils import timezone
 from django.core.mail import send_mail
 # from django.core.paginator import Paginator # Not used, can be removed
 from django.db.models import Q
+<<<<<<< HEAD
 from .models import Series, PasswordResetToken, EmergencyLoginAttempt, Patient, Reclamation, MRIFile, UserSettings, default_user_settings
 from .serializers import (
     ReclamationSerializer,
@@ -54,6 +64,10 @@ from .serializers import (
     UserSettingsSerializer,
 )
 from .models import SegmentationRun, SegmentationMaskResult
+=======
+from .models import Series, PasswordResetToken, EmergencyLoginAttempt, Patient, Reclamation, MRIFile, ContactRequest
+from .serializers import ReclamationSerializer, PatientSerializer, MRIFileSerializer, ContactRequestSerializer
+>>>>>>> origin/yesmine
 
 # auto_registration (ANTs) supprimé — MINE uniquement
 from .mine_registration import run_mine_registration
@@ -345,6 +359,47 @@ def brain_normalize(img, out_size=(512, 512)):
         'found': True,
     }
     return norm_img, norm_mask, meta
+
+
+@api_view(["POST"])
+def save_orientation(request):
+    patient_id = request.data.get("patient_id")
+    if not patient_id:
+        return Response({"error": "patient_id est requis."}, status=status.HTTP_400_BAD_REQUEST)
+
+    instance, _ = PatientImageOrientation.objects.get_or_create(patient_id=int(patient_id))
+    serializer = OrientationSerializer(instance, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET"])
+def load_orientation(request, patient_id):
+    try:
+        instance = PatientImageOrientation.objects.get(patient_id=patient_id)
+    except PatientImageOrientation.DoesNotExist:
+        return Response({"detail": "Aucune orientation trouvee."}, status=status.HTTP_404_NOT_FOUND)
+
+    serializer = OrientationSerializer(instance)
+    return Response(serializer.data)
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+def viewer_upload_image(request):
+    patient_id = request.data.get("patient_id")
+    image_file = request.FILES.get("image")
+
+    if not patient_id:
+        return Response({"error": "patient_id est requis."}, status=status.HTTP_400_BAD_REQUEST)
+    if not image_file:
+        return Response({"error": "Aucun fichier image fourni."}, status=status.HTTP_400_BAD_REQUEST)
+
+    obj = PatientImage.objects.create(patient_id=int(patient_id), image=image_file)
+    serializer = PatientImageSerializer(obj, context={"request": request})
+    return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 def _mask_sdf01(mask_u8):
@@ -656,20 +711,21 @@ def register(request):
         data = json.loads(request.body)
     except json.JSONDecodeError:
         return JsonResponse({'ok': False, 'error': 'invalid JSON'}, status=400)
-    print(f"Nadine Yassmine - register endpoint works - username: {data.get('username')}")
+    print(f"Yassmine now the register endpoint works - username: {data.get('username')}")
     username = (data.get('username') or '').strip()
     password = data.get('password') or ''
     full_name = (data.get('fullName') or '').strip()
     email_input = (data.get('email') or '').strip()
     if not username or not password:
-        print("Nadine Yassmine - register validation FAILED - missing username or password")
+        print("Yassmine now the register validation FAILED - missing username or password")
         return JsonResponse({'ok': False, 'error': 'username and password required'}, status=400)
 
     try:
         with transaction.atomic():
             if User.objects.filter(username=username).exists():
-                print(f"Nadine Yassmine - register FAILED - username exists: {username}")
+                print(f"Yassmine now the register FAILED - username exists: {username}")
                 return JsonResponse({'ok': False, 'error': 'username exists'}, status=400)
+<<<<<<< HEAD
             name_parts = [part for part in full_name.split() if part]
             first_name = name_parts[0] if name_parts else ''
             last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
@@ -685,9 +741,14 @@ def register(request):
                 last_name=last_name,
             )
             print(f"Nadine Yassmine - register SUCCESS for user: {username}")
+=======
+            # Keep username=email convention and also persist email for robust lookup.
+            User.objects.create_user(username=username, email=username, password=password)
+            print(f"Yassmine now the register SUCCESS for user: {username}")
+>>>>>>> origin/yesmine
             return JsonResponse({'ok': True, 'message': 'Compte créé avec succès'})
     except IntegrityError as e:
-        print(f"Nadine Yassmine - register FAILED - IntegrityError for username: {username}, error: {str(e)}")
+        print(f"Yassmine now the register FAILED - IntegrityError for username: {username}, error: {str(e)}")
         return JsonResponse({'ok': False, 'error': 'username already exists'}, status=400)
 
 
@@ -697,19 +758,28 @@ def login_view(request):
     try:
         print(f"Nadine Yassmine - login endpoint reached - body: {request.body}")
         data = json.loads(request.body)
-        username = (data.get('username') or '').strip()
+        username = (data.get('username') or '').strip().lower()
         password = data.get('password') or ''
         print(f"Nadine Yassmine - login attempt - username: {username}")
 
-        user = authenticate(request, username=username, password=password)
+        if not username or not password:
+            return JsonResponse({'ok': False, 'error': 'email et mot de passe requis'}, status=400)
+
+        # Accept either username or account email as login identifier.
+        account = User.objects.filter(Q(username=username) | Q(email__iexact=username)).first()
+        if account is None:
+            print(f"Nadine Yassmine - login failed - account not found: {username}")
+            return JsonResponse({'ok': False, 'error': 'Compte introuvable', 'error_type': 'user_not_found'}, status=401)
+
+        user = authenticate(request, username=account.username, password=password)
         if user is None:
-            print(f"Nadine Yassmine - login failed - user not found: {username}")
-            return JsonResponse({'ok': False, 'error': 'invalid credentials'}, status=401)
+            print(f"Nadine Yassmine - login failed - invalid password for: {account.username}")
+            return JsonResponse({'ok': False, 'error': 'Mot de passe incorrect', 'error_type': 'invalid_password'}, status=401)
 
         login(request, user)
-        request.session['username'] = username
-        print(f"Nadine Yassmine - login success - user: {username}")
-        return JsonResponse({'ok': True, 'message': 'Connexion réussie', 'user': username})
+        request.session['username'] = user.username
+        print(f"Nadine Yassmine - login success - user: {user.username}")
+        return JsonResponse({'ok': True, 'message': 'Connexion réussie', 'user': user.username})
     except Exception as e:
         import traceback
         print(f"Nadine Yassmine - Error in login: {e}")
@@ -720,35 +790,39 @@ def login_view(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def logout_view(request):
-    print(f"Nadine Yassmine - logout endpoint works")
+    print(f"Yassmine now the logout endpoint works")
     logout(request)
     request.session.flush()
-    print(f"Nadine Yassmine - logout SUCCESS")
+    print(f"Yassmine now the logout SUCCESS")
     return JsonResponse({'message': 'Déconnecté avec succès'})
 
 
 @api_view(['GET'])
 def check_session(request):
     if request.user and request.user.is_authenticated:
-        print(f"Nadine Yassmine - check_session works - user: {request.user.username}")
-        return JsonResponse({'logged_in': True, 'user': request.user.username})
-    print(f"Nadine Yassmine - check_session works - no authenticated user")
+        print(f"Yassmine now the check_session works - user: {request.user.username}")
+        return JsonResponse({
+            'logged_in': True, 
+            'user': request.user.username,
+            'is_staff': request.user.is_staff
+        })
+    print(f"Yassmine now the check_session works - no authenticated user")
     return JsonResponse({'logged_in': False})
 
 
 @csrf_exempt
 @require_http_methods(["POST"])
 def upload(request):
-    print(f"Nadine Yassmine - upload endpoint REACHED - authenticated: {request.user.is_authenticated}, user: {request.user.username if request.user.is_authenticated else 'anonymous'}")
+    print(f"Yassmine now the upload endpoint REACHED - authenticated: {request.user.is_authenticated}, user: {request.user.username if request.user.is_authenticated else 'anonymous'}")
     if not request.user or not request.user.is_authenticated:
-        print(f"Nadine Yassmine - upload endpoint FAILED - not authenticated")
+        print(f"Yassmine now the upload endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
     ref = request.FILES.get('ref_image')
     pat = request.FILES.get('patient_image')
     patient_id = (request.POST.get('patient_id') or '').strip() or 'Unknown'
-    print(f"Nadine Yassmine - upload endpoint works - patient_id: {patient_id}, user: {request.user.username}, has_ref: {ref is not None}, has_pat: {pat is not None}")
+    print(f"Yassmine now the upload endpoint works - patient_id: {patient_id}, user: {request.user.username}, has_ref: {ref is not None}, has_pat: {pat is not None}")
     if not ref or not pat:
-        print(f"Nadine Yassmine - upload FAILED - missing files for patient_id: {patient_id}")
+        print(f"Yassmine now the upload FAILED - missing files for patient_id: {patient_id}")
         return JsonResponse({'error': 'ref_image and patient_image required'}, status=400)
     job_id = str(uuid.uuid4())
     job_dir = os.path.join(UPLOAD_DIR, job_id)
@@ -765,7 +839,7 @@ def upload(request):
     pat_rel = os.path.relpath(pat_path, UPLOAD_DIR).replace('\\', '/')
     JOBS[job_id] = {'patient_id': patient_id, 'ref': ref_path, 'patient': pat_path, 'user': request.user.username}
     Series.objects.create(job_id=job_id, patient_id=patient_id, user=request.user, files=[ref_rel, pat_rel])
-    print(f"Nadine Yassmine - upload SUCCESS - job_id: {job_id}")
+    print(f"Yassmine now the upload SUCCESS - job_id: {job_id}")
     return JsonResponse({'jobId': job_id, 'refPreview': make_preview(ref_path), 'patPreview': make_preview(pat_path)})
 
 
@@ -773,32 +847,32 @@ def upload(request):
 @require_http_methods(["POST"])
 def align(request):
     if not request.user or not request.user.is_authenticated:
-        print(f"Nadine Yassmine - align endpoint FAILED - not authenticated")
+        print(f"Yassmine now the align endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
-        print(f"Nadine Yassmine - align FAILED - invalid JSON")
+        print(f"Yassmine now the align FAILED - invalid JSON")
         return JsonResponse({'error': 'invalid JSON'}, status=400)
     job_id = data.get('jobId')
     X = data.get('ct_points')
     Y = data.get('pat_points')
     use_warped = data.get('use_warped', False)  # ✅ mode hybride: utiliser image MINE recalée
-    print(f"Nadine Yassmine - align endpoint works - job_id: {job_id}, use_warped: {use_warped}, user: {request.user.username}")
+    print(f"Yassmine now the align endpoint works - job_id: {job_id}, use_warped: {use_warped}, user: {request.user.username}")
     if not job_id or X is None or Y is None:
-        print(f"Nadine Yassmine - align FAILED - missing data for job_id: {job_id}")
+        print(f"Yassmine now the align FAILED - missing data for job_id: {job_id}")
         return JsonResponse({'error': 'missing data'}, status=400)
 
     try:
         series = Series.objects.get(job_id=job_id, user=request.user)
         if not series.files or len(series.files) < 2:
-            print(f"Nadine Yassmine - align FAILED - job files not found in DB: {job_id}")
+            print(f"Yassmine now the align FAILED - job files not found in DB: {job_id}")
             return JsonResponse({'error': 'job files not found'}, status=404)
         ref_path = os.path.join(UPLOAD_DIR, series.files[0])
         pat_path = os.path.join(UPLOAD_DIR, series.files[1])
-        print(f"Nadine Yassmine - align LOADED job from DB - job_id: {job_id}")
+        print(f"Yassmine now the align LOADED job from DB - job_id: {job_id}")
     except Series.DoesNotExist:
-        print(f"Nadine Yassmine - align FAILED - job not found: {job_id}")
+        print(f"Yassmine now the align FAILED - job not found: {job_id}")
         return JsonResponse({'error': 'job not found'}, status=404)
 
     # ✅ Mode hybride: utiliser l'image déjà recalée par MINE comme point de départ
@@ -816,20 +890,39 @@ def align(request):
     X = np.array(X, dtype=np.float64)
     Y = np.array(Y, dtype=np.float64)
     if X.shape != Y.shape or X.shape[0] < 3:
-        print(f"Nadine Yassmine - align FAILED - invalid points shape for job_id: {job_id}")
+        print(f"Yassmine now the align FAILED - invalid points shape for job_id: {job_id}")
         return JsonResponse({'error': 'invalid points'}, status=400)
 
     ref = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
     pat = cv2.imread(pat_path, cv2.IMREAD_GRAYSCALE)
     if ref is None or pat is None:
-        print(f"Nadine Yassmine - align FAILED - cannot read images for job_id: {job_id}")
+        print(f"Yassmine now the align FAILED - cannot read images for job_id: {job_id}")
         return JsonResponse({'error': 'cannot read images'}, status=500)
-    ref = cv2.resize(ref, (512, 512))
-    pat = cv2.resize(pat, (512, 512))
+
+    # Keep a fixed working canvas but scale clicked landmarks accordingly.
+    # Frontend points are in original image pixel coordinates.
+    ref_h0, ref_w0 = ref.shape[:2]
+    pat_h0, pat_w0 = pat.shape[:2]
+    target_w, target_h = 512, 512
+
+    ref = cv2.resize(ref, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+    pat = cv2.resize(pat, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+
+    sx_ref = float(target_w) / float(max(ref_w0, 1))
+    sy_ref = float(target_h) / float(max(ref_h0, 1))
+    sx_pat = float(target_w) / float(max(pat_w0, 1))
+    sy_pat = float(target_h) / float(max(pat_h0, 1))
+
+    X_scaled = X.copy()
+    Y_scaled = Y.copy()
+    X_scaled[:, 0] *= sx_ref
+    X_scaled[:, 1] *= sy_ref
+    Y_scaled[:, 0] *= sx_pat
+    Y_scaled[:, 1] *= sy_pat
     # ✅ RANSAC estimateAffinePartial2D — plus robuste que procrustes
     # ignore automatiquement les points mal placés (outliers)
-    src_pts = Y.astype(np.float32)
-    dst_pts = X.astype(np.float32)
+    src_pts = Y_scaled.astype(np.float32)
+    dst_pts = X_scaled.astype(np.float32)
     M, inliers = cv2.estimateAffinePartial2D(
         src_pts, dst_pts,
         method=cv2.RANSAC,
@@ -839,7 +932,7 @@ def align(request):
     )
     if M is None:
         # fallback procrustes si RANSAC échoue
-        _, Z, tform = procrustes(X, Y)
+        _, Z, tform = procrustes(X_scaled, Y_scaled)
         M = affine_from_tform(tform)
         inliers = None
         print(f"Yassmine RANSAC failed, fallback to procrustes for job_id: {job_id}")
@@ -852,9 +945,9 @@ def align(request):
     try:
         series.tform = tform
         series.save()
-        print(f"Nadine Yassmine - align SAVED tform to DB for job_id: {job_id}")
+        print(f"Yassmine now the align SAVED tform to DB for job_id: {job_id}")
     except Exception as e:
-        print(f"Nadine Yassmine - align WARNING - failed to save tform: {str(e)}")
+        print(f"Yassmine now the align WARNING - failed to save tform: {str(e)}")
 
     fixed_float = ref.astype(np.float32)
     warped_float = warped.astype(np.float32)
@@ -908,7 +1001,7 @@ def align(request):
     img_b64 = base64.b64encode(buf).decode('utf-8')
     img_data = f"data:image/png;base64,{img_b64}"
 
-    print(f"Nadine Yassmine - align SUCCESS - job_id: {job_id}, RMSE: {metrics['rmse']}")
+    print(f"Yassmine now the align SUCCESS - job_id: {job_id}, RMSE: {metrics['rmse']}")
 
     return JsonResponse({
         'success': True,
@@ -924,37 +1017,37 @@ def auto_align(request):
     """Automatic image alignment using ANTs SyN algorithm or MINE"""
     try:
         if not request.user or not request.user.is_authenticated:
-            print(f"Nadine Yassmine - auto_align endpoint FAILED - not authenticated")
+            print(f"Yassmine now the auto_align endpoint FAILED - not authenticated")
             return JsonResponse({'error': 'login required'}, status=401)
 
         try:
             data = json.loads(request.body)
         except json.JSONDecodeError:
-            print(f"Nadine Yassmine - auto_align FAILED - invalid JSON")
+            print(f"Yassmine now the auto_align FAILED - invalid JSON")
             return JsonResponse({'error': 'invalid JSON'}, status=400)
 
         job_id = data.get('jobId')
         transform_type = data.get('transform', 'SyN')
-        print(f"Nadine Yassmine - auto_align endpoint works - job_id: {job_id}, transform: {transform_type}, user: {request.user.username}")
+        print(f"Yassmine now the auto_align endpoint works - job_id: {job_id}, transform: {transform_type}, user: {request.user.username}")
 
         if not job_id:
-            print(f"Nadine Yassmine - auto_align FAILED - missing jobId")
+            print(f"Yassmine now the auto_align FAILED - missing jobId")
             return JsonResponse({'error': 'missing jobId'}, status=400)
 
         try:
             series = Series.objects.get(job_id=job_id, user=request.user)
             if not series.files or len(series.files) < 2:
-                print(f"Nadine Yassmine - auto_align FAILED - job files not found in DB: {job_id}")
+                print(f"Yassmine now the auto_align FAILED - job files not found in DB: {job_id}")
                 return JsonResponse({'error': 'job files not found'}, status=404)
             ref_path = os.path.join(UPLOAD_DIR, series.files[0])
             pat_path = os.path.join(UPLOAD_DIR, series.files[1])
-            print(f"Nadine Yassmine - auto_align LOADED job from DB - job_id: {job_id}")
+            print(f"Yassmine now the auto_align LOADED job from DB - job_id: {job_id}")
         except Series.DoesNotExist:
-            print(f"Nadine Yassmine - auto_align FAILED - job not found: {job_id}")
+            print(f"Yassmine now the auto_align FAILED - job not found: {job_id}")
             return JsonResponse({'error': 'job not found'}, status=404)
 
         if not os.path.exists(ref_path) or not os.path.exists(pat_path):
-            print(f"Nadine Yassmine - auto_align FAILED - image files not found on disk")
+            print(f"Yassmine now the auto_align FAILED - image files not found on disk")
             return JsonResponse({'error': 'image files not found'}, status=404)
 
         job_dir = os.path.join(UPLOAD_DIR, job_id)
@@ -974,7 +1067,7 @@ def auto_align(request):
         )
 
         if not result.get('success', False):
-            print(f"Nadine Yassmine - auto_align FAILED - MINE failed")
+            print(f"Yassmine now the auto_align FAILED - MINE failed")
             return JsonResponse({
                 'error': 'alignment failed',
                 'message': 'Le recalage MINE a échoué',
@@ -1028,7 +1121,7 @@ def auto_align(request):
         # (ANTs supprimé)
 
         if not metrics.get('success', False):
-            print(f"Nadine Yassmine - auto_align FAILED - alignment failed: {metrics.get('error')}")
+            print(f"Yassmine now the auto_align FAILED - alignment failed: {metrics.get('error')}")
             return JsonResponse({
                 'error': metrics.get('error', 'alignment failed'),
                 'message': metrics.get('message', 'Le recalage automatique a échoué'),
@@ -1046,9 +1139,9 @@ def auto_align(request):
         try:
             series.tform = auto_tform
             series.save()
-            print(f"Nadine Yassmine - auto_align SAVED tform to DB for job_id: {job_id}")
+            print(f"Yassmine now the auto_align SAVED tform to DB for job_id: {job_id}")
         except Exception as e:
-            print(f"Nadine Yassmine - auto_align WARNING - failed to save tform: {str(e)}")
+            print(f"Yassmine now the auto_align WARNING - failed to save tform: {str(e)}")
 
         JOBS[job_id] = {
             'patient_id': series.patient_id,
@@ -1074,7 +1167,7 @@ def auto_align(request):
             img_data = f"data:image/png;base64,{img_b64}"
 
         except Exception as e:
-            print(f"Nadine Yassmine - auto_align WARNING - failed to read warped image: {str(e)}")
+            print(f"Yassmine now the auto_align WARNING - failed to read warped image: {str(e)}")
             return JsonResponse({
                 'success': True,
                 'message': 'Recalage automatique réussi',
@@ -1082,7 +1175,7 @@ def auto_align(request):
                 'warped_path': os.path.relpath(warped_path, UPLOAD_DIR)
             })
 
-        print(f"Nadine Yassmine - auto_align SUCCESS - job_id: {job_id}, RMSE: {metrics.get('rmse')}")
+        print(f"Yassmine now the auto_align SUCCESS - job_id: {job_id}, RMSE: {metrics.get('rmse')}")
 
         return JsonResponse({
             'success': True,
@@ -1092,7 +1185,7 @@ def auto_align(request):
         })
 
     except Exception as e:
-        print(f"Nadine Yassmine - auto_align CRITICAL ERROR: {str(e)}")
+        print(f"Yassmine now the auto_align CRITICAL ERROR: {str(e)}")
         import traceback
         traceback.print_exc()
         return JsonResponse({
@@ -1107,28 +1200,28 @@ def auto_align(request):
 def upload_series(request):
     """Upload a series of images and apply transformation"""
     if not request.user or not request.user.is_authenticated:
-        print(f"Nadine Yassmine - upload_series FAILED - not authenticated")
+        print(f"Yassmine now the upload_series FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
 
     job_id = request.POST.get('jobId')
     patient_id = (request.POST.get('patient_id') or '').strip() or None
     files = request.FILES.getlist('files')
 
-    print(f"Nadine Yassmine - upload_series endpoint works - job_id: {job_id}, patient_id: {patient_id}, files: {len(files)}")
+    print(f"Yassmine now the upload_series endpoint works - job_id: {job_id}, patient_id: {patient_id}, files: {len(files)}")
 
     if not job_id or not files:
-        print(f"Nadine Yassmine - upload_series FAILED - missing jobId or files")
+        print(f"Yassmine now the upload_series FAILED - missing jobId or files")
         return JsonResponse({'error': 'missing jobId or files'}, status=400)
 
     try:
         series = Series.objects.get(job_id=job_id, user=request.user)
     except Series.DoesNotExist:
-        print(f"Nadine Yassmine - upload_series FAILED - job not found: {job_id}")
+        print(f"Yassmine now the upload_series FAILED - job not found: {job_id}")
         return JsonResponse({'error': 'job not found'}, status=404)
 
     tform = series.tform
     if not tform:
-        print(f"Nadine Yassmine - upload_series FAILED - no tform for job_id: {job_id}")
+        print(f"Yassmine now the upload_series FAILED - no tform for job_id: {job_id}")
         return JsonResponse({
             'error': 'transformation not found',
             'message': "Tu dois faire l'alignement d'abord. Clique sur 'Aligner' pour calculer la transformation."
@@ -1138,11 +1231,11 @@ def upload_series(request):
 
     upload_dir = os.path.join(UPLOAD_DIR, job_id, 'series')
     if os.path.exists(upload_dir):
-        print(f"Nadine Yassmine - upload_series DELETING old series directory: {upload_dir}")
+        print(f"Yassmine now the upload_series DELETING old series directory: {upload_dir}")
         shutil.rmtree(upload_dir)
     os.makedirs(upload_dir, exist_ok=True)
 
-    print(f"Nadine Yassmine - upload_series saving to directory: {upload_dir}")
+    print(f"Yassmine now the upload_series saving to directory: {upload_dir}")
 
     saved_files = []
     skipped_files = 0
@@ -1152,24 +1245,24 @@ def upload_series(request):
             with open(file_path, 'wb') as f:
                 for chunk in file.chunks():
                     f.write(chunk)
-            print(f"Nadine Yassmine - upload_series SAVED file: {file.name}")
+            print(f"Yassmine now the upload_series SAVED file: {file.name}")
 
             transformed_ok = False
             try:
                 img = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)
                 if img is None:
-                    print(f"Nadine Yassmine - upload_series WARNING - not an image or unreadable: {file.name}")
+                    print(f"Yassmine now the upload_series WARNING - not an image or unreadable: {file.name}")
                 else:
                     img = cv2.resize(img, (512, 512))
                     warped = cv2.warpAffine(img, M, (512, 512))
                     ok = cv2.imwrite(file_path, warped)
                     if ok:
-                        print(f"Nadine Yassmine - upload_series TRANSFORMED file: {file.name}")
+                        print(f"Yassmine now the upload_series TRANSFORMED file: {file.name}")
                         transformed_ok = True
                     else:
-                        print(f"Nadine Yassmine - upload_series WARNING - failed to write transformed file: {file.name}")
+                        print(f"Yassmine now the upload_series WARNING - failed to write transformed file: {file.name}")
             except Exception as cv_err:
-                print(f"Nadine Yassmine - upload_series WARNING - transformation failed for {file.name}: {str(cv_err)}")
+                print(f"Yassmine now the upload_series WARNING - transformation failed for {file.name}: {str(cv_err)}")
 
             if transformed_ok and os.path.exists(file_path):
                 rel_path = os.path.relpath(file_path, UPLOAD_DIR).replace('\\', '/')
@@ -1180,9 +1273,9 @@ def upload_series(request):
                     if os.path.exists(file_path):
                         os.remove(file_path)
                 except Exception as rm_err:
-                    print(f"Nadine Yassmine - upload_series WARNING - cleanup failed for {file.name}: {str(rm_err)}")
+                    print(f"Yassmine now the upload_series WARNING - cleanup failed for {file.name}: {str(rm_err)}")
         except Exception as e:
-            print(f"Nadine Yassmine - upload_series FAILED processing file {file.name}: {str(e)}")
+            print(f"Yassmine now the upload_series FAILED processing file {file.name}: {str(e)}")
             skipped_files += 1
 
     series.files = saved_files
@@ -1190,7 +1283,7 @@ def upload_series(request):
         series.patient_id = patient_id
     series.save()
 
-    print(f"Nadine Yassmine - upload_series SUCCESS - processed {len(saved_files)} files for job_id: {job_id}")
+    print(f"Yassmine now the upload_series SUCCESS - processed {len(saved_files)} files for job_id: {job_id}")
     return JsonResponse({
         'jobId': job_id,
         'series_id': series.id,
@@ -1206,34 +1299,34 @@ def upload_series(request):
 @api_view(['GET'])
 def get_job_tform(request, job_id):
     if not request.user or not request.user.is_authenticated:
-        print(f"Nadine Yassmine - get_job_tform FAILED - not authenticated")
+        print(f"Yassmine now the get_job_tform FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
-    print(f"Nadine Yassmine - get_job_tform endpoint works - job_id: {job_id}")
+    print(f"Yassmine now the get_job_tform endpoint works - job_id: {job_id}")
 
     try:
         series = Series.objects.get(job_id=job_id, user=request.user)
     except Series.DoesNotExist:
-        print(f"Nadine Yassmine - get_job_tform FAILED - job not found: {job_id}")
+        print(f"Yassmine now the get_job_tform FAILED - job not found: {job_id}")
         return JsonResponse({'error': 'job not found'}, status=404)
 
     tform = series.tform
     if not tform:
-        print(f"Nadine Yassmine - get_job_tform FAILED - no tform for job_id: {job_id}")
+        print(f"Yassmine now the get_job_tform FAILED - no tform for job_id: {job_id}")
         return JsonResponse({
             'error': 'transformation not found',
             'message': "Tu dois faire l'alignement d'abord. Clique sur 'Aligner' pour calculer la transformation."
         }, status=404)
 
-    print(f"Nadine Yassmine - get_job_tform SUCCESS - job_id: {job_id}")
+    print(f"Yassmine now the get_job_tform SUCCESS - job_id: {job_id}")
     return JsonResponse({'tform': tform})
 
 
 @api_view(['GET'])
 def history(request):
     if not request.user or not request.user.is_authenticated:
-        print(f"Nadine Yassmine - history endpoint FAILED - not authenticated")
+        print(f"Yassmine now the history endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
-    print(f"Nadine Yassmine - history endpoint works - user: {request.user.username}")
+    print(f"Yassmine now the history endpoint works - user: {request.user.username}")
     out = []
     qs = Series.objects.filter(user=request.user).order_by('-created_at')
     for s in qs:
@@ -1249,10 +1342,11 @@ def history(request):
             'patient': pat_name,
             'user': s.user.username if s.user else 'unknown'
         })
-    print(f"Nadine Yassmine - history SUCCESS - returned {len(out)} jobs")
+    print(f"Yassmine now the history SUCCESS - returned {len(out)} jobs")
     return JsonResponse(out, safe=False)
 
 
+<<<<<<< HEAD
 @csrf_exempt
 @api_view(['GET', 'POST'])
 @authentication_classes([CsrfExemptSessionAuthentication])
@@ -1337,21 +1431,318 @@ def patient_detail_update_delete(request, patient_id):
             serializer.save()
             return JsonResponse({'ok': True, 'patient': serializer.data, 'message': 'Patient mis à jour avec succès'})
         return JsonResponse({'ok': False, 'errors': serializer.errors}, status=400)
+=======
+@api_view(['GET'])
+def list_patients(request):
+    if not request.user or not request.user.is_authenticated:
+        print(f"Yassmine now the list_patients endpoint FAILED - not authenticated")
+        return JsonResponse({'error': 'login required'}, status=401)
+    print(f"Yassmine now the list_patients endpoint works - user: {request.user.username}")
+    qs = Series.objects.filter(user=request.user).values_list('patient_id', flat=True).distinct()
+    if qs.exists():
+        patients = {}
+        for pid in qs:
+            patients[pid] = {'_id': pid, 'patient_id': pid, 'meta': {'series_count': 0}}
+        for s in Series.objects.filter(user=request.user):
+            pid = s.patient_id
+            if pid in patients:
+                patients[pid]['meta']['series_count'] += 1
+        print(f"Yassmine now the list_patients SUCCESS - found {len(patients)} patients from DB")
+        return JsonResponse(list(patients.values()), safe=False)
 
-    elif request.method == 'DELETE':
-        # Clean up related files/series if necessary before deletion
-        series_to_delete = Series.objects.filter(patient_id=patient.dossier_number, user=request.user)
-        for s in series_to_delete:
-            job_dir = os.path.join(UPLOAD_DIR, s.job_id)
-            if os.path.exists(job_dir):
-                shutil.rmtree(job_dir)
-            s.delete()
-        
-        patient.delete()
-        return JsonResponse({'ok': True, 'message': 'Patient supprimé avec succès'})
+    print(f"Yassmine now the list_patients SUCCESS - found 0 patients")
+    return JsonResponse([], safe=False)
+
+
+@api_view(['GET'])
+def get_patient_series(request, patient_id):
+    if not request.user or not request.user.is_authenticated:
+        print(f"Yassmine now the get_patient_series endpoint FAILED - not authenticated")
+        return JsonResponse({'error': 'login required'}, status=401)
+    print(f"Yassmine now the get_patient_series endpoint works - patient_id: {patient_id}, user: {request.user.username}")
+    out = []
+    qs = Series.objects.filter(patient_id=patient_id, user=request.user).order_by('-created_at')
+    skip_names = {'ref.png', 'patient.png', 'preview_ref.png', 'preview_patient.png'}
+    for s in qs:
+        for rel in (s.files or []):
+            rel_norm = rel.replace('\\', '/')
+            name = os.path.basename(rel_norm)
+            if name in skip_names:
+                continue
+            out.append({
+                'series_id': s.id,
+                'job_id': s.job_id,
+                'relpath': rel_norm,
+                'filename': name,
+                'created_at': s.created_at.isoformat(),
+                'user': s.user.username if s.user else None
+            })
+    print(f"Yassmine now the get_patient_series SUCCESS - patient_id: {patient_id}, returned {len(out)} series")
+    return JsonResponse(out, safe=False)
+
+
+@require_http_methods(["GET", "HEAD"])
+def patient_file(request):
+    if not request.user or not request.user.is_authenticated:
+        print(f"Yassmine now the patient_file endpoint FAILED - not authenticated")
+        return JsonResponse({'error': 'login required'}, status=401)
+    job_id = request.GET.get('jobId')
+    relpath = request.GET.get('relpath', '')
+    print(f"Yassmine now the patient_file endpoint works - job_id: {job_id}, relpath: {relpath}, user: {request.user.username}")
+    if not job_id:
+        print(f"Yassmine now the patient_file FAILED - missing jobId")
+        return JsonResponse({'error': 'missing jobId'}, status=400)
+
+    series = Series.objects.filter(job_id=job_id, user=request.user).first()
+    series_patient_id = series.patient_id if series else None
+
+    job_dir = os.path.join(UPLOAD_DIR, job_id)
+    if not os.path.isdir(job_dir):
+        print(f"Yassmine now the patient_file FAILED - job not found: {job_id}")
+        return JsonResponse({'error': 'job not found'}, status=404)
+
+    if not relpath or relpath in ('.', ''):
+        for name in ('ref.png', 'patient.png', 'preview_ref.png', 'preview_patient.png'):
+            candidate = os.path.join(job_dir, name)
+            if os.path.exists(candidate):
+                print(f"Yassmine now the patient_file SUCCESS - job_id: {job_id}, file: {name}")
+                img = read_gray_image(candidate)
+                # ✅ FIX 3: Ne pas normaliser les images recalées MINE
+                # normalize_brain_image croppe différemment fixe et mobile → faux décalage visuel
+                if series_patient_id != 'brodmann' and 'auto_registration' not in candidate:
+                    norm = normalize_brain_image(img)
+                    if norm is not None:
+                        ok, buf = cv2.imencode('.png', norm)
+                        if ok:
+                            return HttpResponse(buf.tobytes(), content_type='image/png')
+                return FileResponse(open(candidate, 'rb'), content_type='image/png')
+        print(f"Yassmine now the patient_file FAILED - file not found for job_id: {job_id}")
+        return JsonResponse({'error': 'file not found'}, status=404)
+
+    safe_rel = os.path.normpath(relpath).replace('\\', '/')
+    if safe_rel.startswith('..'):
+        print(f"Yassmine now the patient_file FAILED - invalid relpath: {relpath}")
+        return JsonResponse({'error': 'invalid relpath'}, status=400)
+
+    candidate = os.path.join(UPLOAD_DIR, safe_rel)
+
+    if not os.path.exists(candidate):
+        print(f"Yassmine now the patient_file FAILED - file not found: job_id: {job_id}, relpath: {relpath}, path: {candidate}")
+        return JsonResponse({'error': 'file not found'}, status=404)
+
+    img = read_gray_image(candidate)
+    # ✅ FIX 3: Ne pas normaliser les images recalées MINE
+    # normalize_brain_image croppe différemment fixe et mobile → faux décalage visuel
+    if series_patient_id != 'brodmann' and 'auto_registration' not in candidate:
+        norm = normalize_brain_image(img)
+        if norm is not None:
+            ok, buf = cv2.imencode('.png', norm)
+            if ok:
+                print(f"Yassmine now the patient_file SUCCESS (normalized) - job_id: {job_id}, relpath: {relpath}")
+                return HttpResponse(buf.tobytes(), content_type='image/png')
+
+    print(f"Yassmine now the patient_file SUCCESS - job_id: {job_id}, relpath: {relpath}")
+    return FileResponse(open(candidate, 'rb'), content_type='application/octet-stream')
+
+
+@require_http_methods(["GET"])
+def brain_transform(request):
+    if not request.user or not request.user.is_authenticated:
+        return JsonResponse({'error': 'login required'}, status=401)
+    job_id = request.GET.get('jobId')
+    relpath = request.GET.get('relpath', '')
+    if not job_id:
+        return JsonResponse({'error': 'missing jobId'}, status=400)
+    job_dir = os.path.join(UPLOAD_DIR, job_id)
+    if not os.path.isdir(job_dir):
+        return JsonResponse({'error': 'job not found'}, status=404)
+
+    if not relpath or relpath in ('.', ''):
+        return JsonResponse({'error': 'missing relpath'}, status=400)
+
+    safe_rel = os.path.normpath(relpath).replace('\\', '/')
+    if safe_rel.startswith('..'):
+        return JsonResponse({'error': 'invalid relpath'}, status=400)
+
+    candidate = os.path.join(UPLOAD_DIR, safe_rel)
+    if not os.path.exists(candidate):
+        return JsonResponse({'error': 'file not found'}, status=404)
+
+    img = read_gray_image(candidate)
+    if img is None:
+        return JsonResponse({'error': 'cannot read image'}, status=500)
+
+    cand = select_brain_candidate(img)
+    if not cand:
+        return JsonResponse({'error': 'brain not found'}, status=404)
+
+    mask = cand["mask"]
+    ys, xs = np.where(mask > 0)
+    if len(xs) > 50:
+        pts = np.stack([xs, ys], axis=1).astype(np.float32)
+        mean = pts.mean(axis=0)
+        pts0 = pts - mean
+        cov = np.cov(pts0.T)
+        vals, vecs = np.linalg.eigh(cov)
+        order = np.argsort(vals)[::-1]
+        vecs = vecs[:, order]
+        vx, vy = vecs[:, 0]
+        angle = float(np.degrees(np.arctan2(vy, vx)))
+    else:
+        mean = np.array(cand["center"], dtype=np.float32)
+        angle = 0.0
+
+    x, y, w, h = cand["bbox"]
+    ih, iw = img.shape[:2]
+    return JsonResponse({
+        'center': {'x': float(mean[0]), 'y': float(mean[1])},
+        'angle': angle,
+        'bbox': {'x': int(x), 'y': int(y), 'w': int(w), 'h': int(h)},
+        'size': {'w': int(iw), 'h': int(ih)},
+        'normalized': False
+    })
 
 
 @csrf_exempt
+@require_http_methods(["POST"])
+def project_brodmann(request):
+    if not request.user or not request.user.is_authenticated:
+        return JsonResponse({'error': 'login required'}, status=401)
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+    except Exception:
+        return JsonResponse({'error': 'invalid JSON'}, status=400)
+
+    atlas_job = data.get('atlasJobId') or data.get('atlas_jobId') or data.get('atlas_job')
+    atlas_rel = data.get('atlasRelpath') or data.get('atlas_relpath')
+    patient_job = data.get('patientJobId') or data.get('patient_jobId') or data.get('patient_job')
+    patient_rel = data.get('patientRelpath') or data.get('patient_relpath')
+    seed_x = data.get('x')
+    seed_y = data.get('y')
+    tol = data.get('tolerance', 8)
+
+    if not atlas_job or not atlas_rel or not patient_job or not patient_rel:
+        return JsonResponse({'error': 'missing jobId/relpath'}, status=400)
+    if seed_x is None or seed_y is None:
+        return JsonResponse({'error': 'missing click coords'}, status=400)
+>>>>>>> origin/yesmine
+
+    try:
+        atlas_series = Series.objects.get(job_id=atlas_job, user=request.user)
+    except Series.DoesNotExist:
+        return JsonResponse({'error': 'atlas job not found'}, status=404)
+
+    try:
+        patient_series = Series.objects.get(job_id=patient_job, user=request.user)
+    except Series.DoesNotExist:
+        return JsonResponse({'error': 'patient job not found'}, status=404)
+
+    def safe_abs_path(job_id, relpath):
+        job_dir = os.path.join(UPLOAD_DIR, job_id)
+        if not os.path.isdir(job_dir):
+            return None
+        safe_rel = os.path.normpath(relpath).replace('\\', '/')
+        if safe_rel.startswith('..'):
+            return None
+        p = os.path.join(UPLOAD_DIR, safe_rel)
+        if not os.path.exists(p):
+            return None
+        return p
+
+    atlas_path = safe_abs_path(atlas_job, atlas_rel)
+    patient_path = safe_abs_path(patient_job, patient_rel)
+    if not atlas_path or not patient_path:
+        return JsonResponse({'error': 'file not found'}, status=404)
+
+    atlas_img = read_gray_image(atlas_path)
+    patient_img = read_gray_image(patient_path)
+    if atlas_img is None or patient_img is None:
+        return JsonResponse({'error': 'cannot read images'}, status=500)
+
+    h_orig, w_orig = atlas_img.shape[:2]
+    atlas_512 = cv2.resize(atlas_img, (512, 512), interpolation=cv2.INTER_LINEAR)
+    patient_512 = cv2.resize(patient_img, (512, 512), interpolation=cv2.INTER_LINEAR)
+
+    scale_x = 512.0 / w_orig
+    scale_y = 512.0 / h_orig
+    seed_x_512 = int(seed_x * scale_x)
+    seed_y_512 = int(seed_y * scale_y)
+    seed_x_512 = max(0, min(511, seed_x_512))
+    seed_y_512 = max(0, min(511, seed_y_512))
+
+    sel_mask_512 = _flood_mask_gray(atlas_512, seed_x_512, seed_y_512, tol)
+
+    atlas_eq = cv2.equalizeHist(atlas_512)
+    patient_eq = cv2.equalizeHist(patient_512)
+    atlas_norm = atlas_eq.astype(np.float32) / 255.0
+    patient_norm = patient_eq.astype(np.float32) / 255.0
+
+    warp_matrix = _ecc_affine(patient_norm, atlas_norm, max_iter=200, eps=1e-5)
+
+    if warp_matrix is None:
+        warped_sel = sel_mask_512
+    else:
+        warped_sel_float = cv2.warpAffine(
+            sel_mask_512.astype(np.float32),
+            warp_matrix,
+            (512, 512),
+            flags=cv2.INTER_LINEAR,
+            borderValue=0
+        )
+        warped_sel = (warped_sel_float > 127).astype(np.uint8) * 255
+
+    ok, buf = cv2.imencode('.png', warped_sel)
+    if not ok:
+        return JsonResponse({'error': 'encode failed'}, status=500)
+    return HttpResponse(buf.tobytes(), content_type='image/png')
+
+
+@require_http_methods(["POST"])
+def delete_series(request):
+    if not request.user or not request.user.is_authenticated:
+        print(f"Yassmine now the delete_series endpoint FAILED - not authenticated")
+        return JsonResponse({'error': 'login required'}, status=401)
+
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+        series_id = data.get('series_id')
+    except:
+        print(f"Yassmine now the delete_series endpoint FAILED - invalid JSON")
+        return JsonResponse({'error': 'invalid request'}, status=400)
+
+    if not series_id:
+        print(f"Yassmine now the delete_series endpoint FAILED - missing series_id")
+        return JsonResponse({'error': 'missing series_id'}, status=400)
+
+    try:
+        series = Series.objects.get(id=series_id)
+    except Series.DoesNotExist:
+        print(f"Yassmine now the delete_series endpoint FAILED - series not found: {series_id}")
+        return JsonResponse({'error': 'series not found'}, status=404)
+
+    if series.user != request.user:
+        print(f"Yassmine now the delete_series endpoint FAILED - user {request.user.username} does not own series {series_id}")
+        return JsonResponse({'error': 'permission denied'}, status=403)
+
+    job_id = series.job_id
+    print(f"Yassmine now the delete_series endpoint works - deleting series_id: {series_id}, job_id: {job_id}, user: {request.user.username}")
+
+    try:
+        series_dir = os.path.join(UPLOAD_DIR, job_id, 'series')
+        if os.path.exists(series_dir):
+            shutil.rmtree(series_dir)
+            print(f"Yassmine now the delete_series - deleted directory: {series_dir}")
+    except Exception as e:
+        print(f"Yassmine now the delete_series WARNING - failed to delete files: {str(e)}")
+
+    series.delete()
+    print(f"Yassmine now the delete_series SUCCESS - series_id: {series_id} deleted from DB")
+
+    return JsonResponse({'message': 'series deleted successfully'})
+
+
+@csrf_exempt
+<<<<<<< HEAD
 @api_view(['GET', 'POST'])
 @authentication_classes([CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
@@ -1385,11 +1776,82 @@ def mri_files_list_upload(request, patient_id):
                 file_size=int(getattr(f, 'size', 0) or 0)
             )
             uploaded_count += 1
+=======
+@require_http_methods(["POST"])
+def preprocess_image(request):
+    if not request.user or not request.user.is_authenticated:
+        print(f"Yassmine now the preprocess endpoint FAILED - not authenticated")
+        return JsonResponse({'error': 'login required'}, status=401)
 
-        return JsonResponse({
-            'ok': True, 
-            'message': f'Successfully uploaded {uploaded_count} files'
-        }, status=201)
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        print(f"Yassmine now the preprocess FAILED - invalid JSON")
+        return JsonResponse({'error': 'invalid JSON'}, status=400)
+
+    job_id = data.get('jobId')
+    target = data.get('target')
+    method = data.get('method')
+    intensity = float(data.get('intensity', 1.0))
+
+    print(f"Yassmine now the preprocess endpoint works - job_id: {job_id}, target: {target}, method: {method}, intensity: {intensity}")
+
+    if not job_id or not target or not method:
+        print(f"Yassmine now the preprocess FAILED - missing parameters")
+        return JsonResponse({'error': 'missing jobId, target, or method'}, status=400)
+>>>>>>> origin/yesmine
+
+    try:
+        series = Series.objects.get(job_id=job_id, user=request.user)
+        if not series.files or len(series.files) < 2:
+            print(f"Yassmine now the preprocess FAILED - job files not found in DB: {job_id}")
+            return JsonResponse({'error': 'job files not found'}, status=404)
+
+        if target == 'ref':
+            img_path = os.path.join(UPLOAD_DIR, series.files[0])
+        elif target == 'patient':
+            img_path = os.path.join(UPLOAD_DIR, series.files[1])
+        else:
+            return JsonResponse({'error': 'invalid target (must be ref or patient)'}, status=400)
+
+    except Series.DoesNotExist:
+        print(f"Yassmine now the preprocess FAILED - job not found: {job_id}")
+        return JsonResponse({'error': 'job not found'}, status=404)
+
+    img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        print(f"Yassmine now the preprocess FAILED - cannot read image: {img_path}")
+        return JsonResponse({'error': 'cannot read image'}, status=500)
+
+    img = cv2.resize(img, (512, 512))
+
+    try:
+        if method == 'equalize':
+            processed = cv2.equalizeHist(img)
+        elif method == 'contrast':
+            clahe = cv2.createCLAHE(clipLimit=intensity * 2.0, tileGridSize=(8, 8))
+            processed = clahe.apply(img)
+        elif method == 'brightness':
+            processed = cv2.convertScaleAbs(img, alpha=1.0, beta=intensity * 50)
+        elif method == 'blur':
+            ksize = int(intensity * 5)
+            if ksize % 2 == 0:
+                ksize += 1
+            ksize = max(3, ksize)
+            processed = cv2.GaussianBlur(img, (ksize, ksize), 0)
+        elif method == 'sharpen':
+            blurred = cv2.GaussianBlur(img, (5, 5), 0)
+            processed = cv2.addWeighted(img, 1.0 + intensity, blurred, -intensity, 0)
+        else:
+            return JsonResponse({'error': f'unknown method: {method}'}, status=400)
+
+        _, buf = cv2.imencode('.png', processed)
+        print(f"Yassmine now the preprocess SUCCESS - job_id: {job_id}, method: {method}")
+        return HttpResponse(buf.tobytes(), content_type='image/png')
+
+    except Exception as e:
+        print(f"Yassmine now the preprocess FAILED - error: {str(e)}")
+        return JsonResponse({'error': f'preprocessing failed: {str(e)}'}, status=500)
 
 
 @api_view(['GET'])
@@ -1945,33 +2407,33 @@ def patient_files_download_zip(request, patient_id):
 @require_http_methods(["POST"])
 def apply_tform_to_series(request):
     if not request.user or not request.user.is_authenticated:
-        print(f"Nadine Yassmine - apply_tform endpoint FAILED - not authenticated")
+        print(f"Yassmine now the apply_tform endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
 
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
-        print(f"Nadine Yassmine - apply_tform FAILED - invalid JSON")
+        print(f"Yassmine now the apply_tform FAILED - invalid JSON")
         return JsonResponse({'error': 'invalid JSON'}, status=400)
 
     job_id = data.get('jobId')
     source_dir = data.get('source_dir', '')
     pattern = data.get('pattern', '*.*')
 
-    print(f"Nadine Yassmine - apply_tform endpoint works - job_id: {job_id}, source_dir: {source_dir}")
+    print(f"Yassmine now the apply_tform endpoint works - job_id: {job_id}, source_dir: {source_dir}")
 
     if not job_id:
-        print(f"Nadine Yassmine - apply_tform FAILED - missing jobId")
+        print(f"Yassmine now the apply_tform FAILED - missing jobId")
         return JsonResponse({'error': 'missing jobId'}, status=400)
 
     try:
         series = Series.objects.get(job_id=job_id, user=request.user)
         tform = series.tform
         if not tform:
-            print(f"Nadine Yassmine - apply_tform FAILED - no tform for job_id: {job_id}")
+            print(f"Yassmine now the apply_tform FAILED - no tform for job_id: {job_id}")
             return JsonResponse({'error': 'transformation not found'}, status=404)
     except Series.DoesNotExist:
-        print(f"Nadine Yassmine - apply_tform FAILED - job not found: {job_id}")
+        print(f"Yassmine now the apply_tform FAILED - job not found: {job_id}")
         return JsonResponse({'error': 'job not found'}, status=404)
 
     M = affine_from_tform(tform)
@@ -2007,10 +2469,10 @@ def apply_tform_to_series(request):
                     os.remove(temp_img_path)
                     count += 1
                 except Exception as e:
-                    print(f"Nadine Yassmine - apply_tform WARNING - failed to process {filename}: {str(e)}")
+                    print(f"Yassmine now the apply_tform WARNING - failed to process {filename}: {str(e)}")
                     continue
 
-        print(f"Nadine Yassmine - apply_tform SUCCESS - job_id: {job_id}, processed {count} files")
+        print(f"Yassmine now the apply_tform SUCCESS - job_id: {job_id}, processed {count} files")
 
         with open(zip_path, 'rb') as f:
             response = HttpResponse(f.read(), content_type='application/zip')
@@ -2018,7 +2480,7 @@ def apply_tform_to_series(request):
             return response
 
     except Exception as e:
-        print(f"Nadine Yassmine - apply_tform FAILED - error: {str(e)}")
+        print(f"Yassmine now the apply_tform FAILED - error: {str(e)}")
         return JsonResponse({'error': f'transformation failed: {str(e)}'}, status=500)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -2027,19 +2489,19 @@ def apply_tform_to_series(request):
 @api_view(['GET'])
 def download_series(request, series_id):
     if not request.user or not request.user.is_authenticated:
-        print(f"Nadine Yassmine - download_series endpoint FAILED - not authenticated")
+        print(f"Yassmine now the download_series endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
 
-    print(f"Nadine Yassmine - download_series endpoint works - series_id: {series_id}, user: {request.user.username}")
+    print(f"Yassmine now the download_series endpoint works - series_id: {series_id}, user: {request.user.username}")
 
     try:
         series = Series.objects.get(id=series_id, user=request.user)
     except Series.DoesNotExist:
-        print(f"Nadine Yassmine - download_series FAILED - series not found: {series_id}")
+        print(f"Yassmine now the download_series FAILED - series not found: {series_id}")
         return JsonResponse({'error': 'series not found'}, status=404)
 
     if not series.files:
-        print(f"Nadine Yassmine - download_series FAILED - no files in series: {series_id}")
+        print(f"Yassmine now the download_series FAILED - no files in series: {series_id}")
         return JsonResponse({'error': 'no files in series'}, status=404)
 
     temp_dir = tempfile.mkdtemp()
@@ -2053,7 +2515,7 @@ def download_series(request, series_id):
                     filename = os.path.basename(rel_path)
                     zipf.write(abs_path, filename)
 
-        print(f"Nadine Yassmine - download_series SUCCESS - series_id: {series_id}, files: {len(series.files)}")
+        print(f"Yassmine now the download_series SUCCESS - series_id: {series_id}, files: {len(series.files)}")
 
         with open(zip_path, 'rb') as f:
             response = HttpResponse(f.read(), content_type='application/zip')
@@ -2061,7 +2523,7 @@ def download_series(request, series_id):
             return response
 
     except Exception as e:
-        print(f"Nadine Yassmine - download_series FAILED - error: {str(e)}")
+        print(f"Yassmine now the download_series FAILED - error: {str(e)}")
         return JsonResponse({'error': f'download failed: {str(e)}'}, status=500)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -2070,15 +2532,15 @@ def download_series(request, series_id):
 @api_view(['GET'])
 def download_patient(request, patient_id):
     if not request.user or not request.user.is_authenticated:
-        print(f"Nadine Yassmine - download_patient endpoint FAILED - not authenticated")
+        print(f"Yassmine now the download_patient endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
 
-    print(f"Nadine Yassmine - download_patient endpoint works - patient_id: {patient_id}, user: {request.user.username}")
+    print(f"Yassmine now the download_patient endpoint works - patient_id: {patient_id}, user: {request.user.username}")
 
     series_list = Series.objects.filter(patient_id=patient_id, user=request.user)
 
     if not series_list.exists():
-        print(f"Nadine Yassmine - download_patient FAILED - no series found for patient: {patient_id}")
+        print(f"Yassmine now the download_patient FAILED - no series found for patient: {patient_id}")
         return JsonResponse({'error': 'no series found for patient'}, status=404)
 
     temp_dir = tempfile.mkdtemp()
@@ -2094,7 +2556,7 @@ def download_patient(request, patient_id):
                         filename = os.path.basename(rel_path)
                         zipf.write(abs_path, os.path.join(series_folder, filename))
 
-        print(f"Nadine Yassmine - download_patient SUCCESS - patient_id: {patient_id}, series: {series_list.count()}")
+        print(f"Yassmine now the download_patient SUCCESS - patient_id: {patient_id}, series: {series_list.count()}")
 
         with open(zip_path, 'rb') as f:
             response = HttpResponse(f.read(), content_type='application/zip')
@@ -2102,7 +2564,7 @@ def download_patient(request, patient_id):
             return response
 
     except Exception as e:
-        print(f"Nadine Yassmine - download_patient FAILED - error: {str(e)}")
+        print(f"Yassmine now the download_patient FAILED - error: {str(e)}")
         return JsonResponse({'error': f'download failed: {str(e)}'}, status=500)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -2112,15 +2574,15 @@ def download_patient(request, patient_id):
 @api_view(['DELETE'])
 def delete_patient(request, patient_id):
     if not request.user or not request.user.is_authenticated:
-        print(f"Nadine Yassmine - delete_patient endpoint FAILED - not authenticated")
+        print(f"Yassmine now the delete_patient endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
 
-    print(f"Nadine Yassmine - delete_patient endpoint works - patient_id: {patient_id}, user: {request.user.username}")
+    print(f"Yassmine now the delete_patient endpoint works - patient_id: {patient_id}, user: {request.user.username}")
 
     series_list = Series.objects.filter(patient_id=patient_id, user=request.user)
 
     if not series_list.exists():
-        print(f"Nadine Yassmine - delete_patient FAILED - no series found for patient: {patient_id}")
+        print(f"Yassmine now the delete_patient FAILED - no series found for patient: {patient_id}")
         return JsonResponse({'error': 'no series found for patient'}, status=404)
 
     deleted_count = 0
@@ -2130,9 +2592,9 @@ def delete_patient(request, patient_id):
             job_dir = os.path.join(UPLOAD_DIR, job_id)
             if os.path.exists(job_dir):
                 shutil.rmtree(job_dir)
-                print(f"Nadine Yassmine - delete_patient - deleted directory: {job_dir}")
+                print(f"Yassmine now the delete_patient - deleted directory: {job_dir}")
         except Exception as e:
-            print(f"Nadine Yassmine - delete_patient WARNING - failed to delete files for series {series.id}: {str(e)}")
+            print(f"Yassmine now the delete_patient WARNING - failed to delete files for series {series.id}: {str(e)}")
 
         series.delete()
         deleted_count += 1
@@ -2150,7 +2612,9 @@ def emergency_login(request):
         if not email:
             return JsonResponse({'ok': False, 'error': 'Email requis'}, status=400)
         try:
-            user = User.objects.get(username=email)
+            user = User.objects.filter(Q(username=email) | Q(email__iexact=email)).first()
+            if not user:
+                raise User.DoesNotExist
         except User.DoesNotExist:
             return JsonResponse({'ok': False, 'error': 'Aucun compte trouvé avec cet email professionnel.'}, status=404)
         attempt, created = EmergencyLoginAttempt.objects.get_or_create(email=email)
@@ -2199,7 +2663,9 @@ def forgot_password(request):
         try:
             print(f"Nadine Yassmine - forgot_password: searching for user with email: {email}", flush=True)
             sys.stdout.flush()
-            user = User.objects.get(username=email)
+            user = User.objects.filter(Q(username=email) | Q(email=email)).first()
+            if not user:
+                raise User.DoesNotExist
             print(f"Nadine Yassmine - forgot_password: user FOUND: {user.username}", flush=True)
             sys.stdout.flush()
         except User.DoesNotExist:
@@ -2213,18 +2679,17 @@ def forgot_password(request):
             expires_at=timezone.now() + timedelta(minutes=15)
         )
 
-        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
-        reset_link = f"{frontend_url}/reset-password?token={reset_token.token}"
+        reset_link = f"{settings.FRONTEND_URL}/reset-password?token={reset_token.token}"
 
-        subject = "VisionMed - Lien de réinitialisation de mot de passe"
+        subject = "NeuroScan - Lien de réinitialisation de mot de passe"
         html_message = f"""
         <html><body style="font-family: Arial, sans-serif;">
             <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                <h1 style="color: #2563eb;">VisionMed</h1>
+                <h1 style="color: #4f46e5;">NeuroScan</h1>
                 <h2>Réinitialisation de votre mot de passe</h2>
-                <p>Vous avez demandé la réinitialisation de votre mot de passe VisionMed.</p>
+                <p>Vous avez demandé la réinitialisation de votre mot de passe NeuroScan.</p>
                 <p style="margin: 30px 0;">
-                    <a href="{reset_link}" style="padding: 12px 30px; background-color: #2563eb; color: white; text-decoration: none; border-radius: 6px;">
+                    <a href="{reset_link}" style="padding: 12px 30px; background-color: #4f46e5; color: white; text-decoration: none; border-radius: 6px;">
                         Réinitialiser mon mot de passe
                     </a>
                 </p>
@@ -2232,36 +2697,78 @@ def forgot_password(request):
             </div>
         </body></html>
         """
-        plain_message = f"Réinitialisez votre mot de passe VisionMed:\n\n{reset_link}\n\nCe lien est valide 15 minutes."
+        plain_message = f"Réinitialisez votre mot de passe NeuroScan:\n\n{reset_link}\n\nCe lien est valide 15 minutes."
+
+        using_smtp = settings.EMAIL_BACKEND == 'django.core.mail.backends.smtp.EmailBackend'
+        sender_email = settings.EMAIL_HOST_USER or settings.DEFAULT_FROM_EMAIL
+
+        if using_smtp and (not settings.EMAIL_HOST_USER or not settings.EMAIL_HOST_PASSWORD):
+            return JsonResponse(
+                {
+                    'ok': False,
+                    'error': 'Configuration email incomplète: renseignez EMAIL_HOST_USER et EMAIL_HOST_PASSWORD dans .env puis redémarrez le serveur.'
+                },
+                status=500,
+            )
 
         try:
             print(f"Nadine Yassmine - forgot_password: Attempting to send email to {email}", flush=True)
             print(f"Nadine Yassmine - EMAIL_BACKEND: {settings.EMAIL_BACKEND}", flush=True)
-            print(f"Nadine Yassmine - DEFAULT_FROM_EMAIL: {settings.DEFAULT_FROM_EMAIL}", flush=True)
+            print(f"Nadine Yassmine - DEFAULT_FROM_EMAIL: {sender_email}", flush=True)
             print(f"Nadine Yassmine - reset_link: {reset_link}", flush=True)
             sys.stdout.flush()
-            
-            # Send email asynchronously to avoid blocking HTTP response
-            send_email_async(
-                subject=subject,
-                message=plain_message,
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[email],
-                html_message=html_message
-            )
+
+            # In DEBUG, send synchronously so configuration errors are visible immediately.
+            if settings.DEBUG:
+                send_mail(
+                    subject=subject,
+                    message=plain_message,
+                    from_email=sender_email,
+                    recipient_list=[email],
+                    html_message=html_message,
+                    fail_silently=False,
+                )
+            else:
+                # In production keep async behavior to reduce request latency.
+                send_email_async(
+                    subject=subject,
+                    message=plain_message,
+                    from_email=sender_email,
+                    recipient_list=[email],
+                    html_message=html_message
+                )
             print(f"Nadine Yassmine - forgot_password: Email request queued for {email}", flush=True)
             sys.stdout.flush()
+        except (smtplib.SMTPAuthenticationError, smtplib.SMTPSenderRefused):
+            print("Nadine Yassmine - Email auth error: check EMAIL_HOST_USER/EMAIL_HOST_PASSWORD and sender address", flush=True)
+            return JsonResponse(
+                {
+                    'ok': False,
+                    'error': 'Authentification SMTP échouée. Vérifiez EMAIL_HOST_USER, EMAIL_HOST_PASSWORD (App Password) et DEFAULT_FROM_EMAIL.'
+                },
+                status=500,
+            )
         except Exception as e:
             print(f"Nadine Yassmine - Error queuing email: {str(e)}", flush=True)
             import traceback
             print(f"Nadine Yassmine - traceback: {traceback.format_exc()}", flush=True)
             sys.stdout.flush()
+            if settings.DEBUG:
+                return JsonResponse({'ok': False, 'error': f'Email send failed: {str(e)}'}, status=500)
 
-        return JsonResponse({'ok': True, 'message': 'Si cet email existe, un lien de réinitialisation sera envoyé.'})
+        resp = {'ok': True, 'message': 'Si cet email existe, un lien de réinitialisation sera envoyé.'}
+        if settings.DEBUG and settings.EMAIL_BACKEND == 'django.core.mail.backends.console.EmailBackend':
+            resp['debug_warning'] = 'EMAIL_BACKEND=console: le mail est affiche dans le terminal, pas envoye vers une boite mail.'
+        return JsonResponse(resp)
 
     except json.JSONDecodeError:
         return JsonResponse({'ok': False, 'error': 'invalid JSON'}, status=400)
     except Exception as e:
+        import traceback
+        print(f"Nadine Yassmine - forgot_password OUTER exception: {str(e)}", flush=True)
+        print(f"Nadine Yassmine - forgot_password OUTER traceback: {traceback.format_exc()}", flush=True)
+        if settings.DEBUG:
+            return JsonResponse({'ok': False, 'error': f'Internal Server Error: {str(e)}'}, status=500)
         return JsonResponse({'ok': False, 'error': 'Internal Server Error'}, status=500)
 
 
@@ -2317,6 +2824,7 @@ def reset_password(request):
         return JsonResponse({'ok': False, 'error': 'Internal Server Error'}, status=500)
 
 
+<<<<<<< HEAD
 PROFILE_DEFAULTS = {
     'phone': '',
     'birthDate': '',
@@ -2489,6 +2997,94 @@ def change_password_view(request):
     user.save()
 
     return JsonResponse({'ok': True, 'message': 'Mot de passe mis a jour avec succes.'})
+=======
+def _dashboard_patient_payload(patient):
+    return {
+        'id': str(patient.id),
+        'num_dossier': patient.dossier_number,
+        'nom': patient.nom,
+        'prenom': patient.prenom,
+        'date_naissance': patient.date_naissance.isoformat() if patient.date_naissance else None,
+        'sexe': patient.sexe,
+        'autres_maladies': patient.autres_maladies,
+        'created_at': patient.created_at.isoformat() if patient.created_at else None,
+    }
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+@login_required
+def patients_list_create(request):
+    if request.method == 'GET':
+        qs = Patient.objects.filter(doctor=request.user).order_by('-created_at')
+
+        # Dashboard filters from query params
+        search = (request.GET.get('id') or '').strip()
+        num_dossier = (request.GET.get('num_dossier') or '').strip()
+        date_naissance = (request.GET.get('date_naissance') or '').strip()
+        sexe = (request.GET.get('sexe') or '').strip()
+        autres_maladies = (request.GET.get('autres_maladies') or '').strip()
+
+        if search:
+            qs = qs.filter(
+                Q(nom__icontains=search)
+                | Q(prenom__icontains=search)
+                | Q(dossier_number__icontains=search)
+                | Q(id__icontains=search)
+            )
+        if num_dossier:
+            qs = qs.filter(dossier_number__icontains=num_dossier)
+        if date_naissance:
+            qs = qs.filter(date_naissance=date_naissance)
+        if sexe:
+            qs = qs.filter(sexe=sexe)
+        if autres_maladies:
+            qs = qs.filter(autres_maladies__icontains=autres_maladies)
+
+        data = [_dashboard_patient_payload(p) for p in qs]
+        return JsonResponse({'ok': True, 'patients': data})
+
+    try:
+        if request.content_type and 'application/json' in request.content_type:
+            raw_data = json.loads(request.body or '{}')
+        else:
+            raw_data = request.POST.dict()
+
+        payload = {
+            'dossier_number': raw_data.get('dossier_number') or raw_data.get('num_dossier') or '',
+            'nom': raw_data.get('nom') or '',
+            'prenom': raw_data.get('prenom') or '',
+            'date_naissance': raw_data.get('date_naissance') or '',
+            'sexe': raw_data.get('sexe') or '',
+            'autres_maladies': raw_data.get('autres_maladies') or '',
+        }
+
+        serializer = PatientSerializer(data=payload)
+        if serializer.is_valid():
+            patient = serializer.save(doctor=request.user)
+            return JsonResponse(
+                {
+                    'ok': True,
+                    'message': 'Patient created successfully',
+                    'patient': _dashboard_patient_payload(patient),
+                },
+                status=201,
+            )
+
+        first_error = 'Invalid patient data'
+        if serializer.errors:
+            first_key = next(iter(serializer.errors))
+            first_value = serializer.errors[first_key]
+            if isinstance(first_value, list) and first_value:
+                first_error = str(first_value[0])
+            else:
+                first_error = str(first_value)
+        return JsonResponse({'ok': False, 'error': first_error, 'errors': serializer.errors}, status=400)
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'Invalid JSON payload'}, status=400)
+    except Exception as e:
+        return JsonResponse({'ok': False, 'error': f'Internal Server Error: {str(e)}'}, status=500)
+>>>>>>> origin/yesmine
 
 
 @login_required
@@ -2601,6 +3197,15 @@ def list_mri_files(request, patient_id: uuid.UUID):
     return JsonResponse({'ok': True, 'mri_files': serializer.data})
 
 
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+@login_required
+def mri_files_list_upload(request, patient_id: uuid.UUID):
+    if request.method == 'GET':
+        return list_mri_files(request, patient_id)
+    return upload_mri_files(request, patient_id)
+
+
 # The original get_patient_series and patient_file views remain, as they deal with Series objects
 # which are still linked by CharField patient_id and job_id.
 # If the intention was to replace Series with MRIFile for all image handling,
@@ -2656,6 +3261,7 @@ def reclamation_detail(request, reclamation_id):
         rec_data['fichier_url'] = reclamation.fichier.url if reclamation.fichier else None
         return JsonResponse({'ok': True, 'reclamation': rec_data})
 
+<<<<<<< HEAD
     if request.method in ['PATCH', 'PUT', 'POST']:
         payload = {}
         if request.method == 'POST':
@@ -2700,3 +3306,210 @@ def reclamation_detail(request, reclamation_id):
         return JsonResponse({'ok': True, 'message': 'Reclamation supprimee avec succes'})
 
     return JsonResponse({'ok': False, 'error': 'Method not allowed'}, status=405)
+=======
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def create_contact_request(request):
+    data = request.data if hasattr(request, 'data') else {}
+
+    subject_map = {
+        'Demande de démonstration': 'demonstration',
+        'Intégration clinique': 'integration',
+        'Support technique': 'support',
+        'Partenariat': 'partnership',
+        'Autre': 'other',
+    }
+
+    normalized_subject = subject_map.get(str(data.get('subject', '')).strip(), str(data.get('subject', 'demonstration')).strip().lower())
+    if normalized_subject not in {'demonstration', 'integration', 'support', 'partnership', 'other'}:
+        normalized_subject = 'other'
+
+    payload = {
+        'full_name': data.get('full_name') or data.get('fullName') or '',
+        'email': data.get('email') or '',
+        'institution': data.get('institution') or '',
+        'subject': normalized_subject,
+        'message': data.get('message') or '',
+    }
+
+    serializer = ContactRequestSerializer(data=payload)
+    if serializer.is_valid():
+        contact = serializer.save()
+        return Response(
+            {
+                'ok': True,
+                'message': 'Contact request created successfully',
+                'contact_request_id': contact.id,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    return Response(
+        {
+            'ok': False,
+            'error': 'Invalid contact request data',
+            'errors': serializer.errors,
+        },
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
+def _admin_scope_users(request):
+    if request.user.is_staff:
+        return User.objects.all()
+    return User.objects.filter(id=request.user.id)
+
+
+def _admin_scope_patients(request):
+    if request.user.is_staff:
+        return Patient.objects.all()
+    return Patient.objects.filter(doctor=request.user)
+
+
+def _admin_scope_series(request):
+    if request.user.is_staff:
+        return Series.objects.all()
+    return Series.objects.filter(user=request.user)
+
+
+def _admin_scope_reclamations(request):
+    if request.user.is_staff:
+        return Reclamation.objects.all()
+    return Reclamation.objects.filter(user=request.user)
+
+
+@api_view(['GET'])
+@login_required
+def admin_dashboard_overview(request):
+    series_qs = _admin_scope_series(request)
+    patients_qs = _admin_scope_patients(request)
+    reclamations_qs = _admin_scope_reclamations(request)
+
+    analyses_totales = int(series_qs.count())
+    patients_actifs = int(patients_qs.count())
+    rapports_generes = int(reclamations_qs.count())
+
+    recent = []
+    for s in series_qs.order_by('-created_at')[:6]:
+        recent.append({
+            'action': 'Analyse IRM cérébrale',
+            'user': (s.user.username if s.user else 'Utilisateur inconnu'),
+            'type': 'Segmentation',
+            'status': 'segmentation',
+            'date': s.created_at.isoformat() if s.created_at else None,
+        })
+    for r in reclamations_qs.order_by('-date')[:6]:
+        recent.append({
+            'action': f'Réclamation {r.numero}',
+            'user': r.user.username,
+            'type': 'Rapport',
+            'status': 'rapport',
+            'date': r.date.isoformat() if r.date else None,
+        })
+    recent.sort(key=lambda x: x.get('date') or '', reverse=True)
+
+    return JsonResponse({
+        'ok': True,
+        'stats': {
+            'analyses_totales': analyses_totales,
+            'patients_actifs': patients_actifs,
+            'rapports_generes': rapports_generes,
+            'taux_precision': 99.2,
+            'deltas': {
+                'analyses_totales': 12.5,
+                'patients_actifs': 8.2,
+                'rapports_generes': 23.1,
+                'taux_precision': 0.3,
+            }
+        },
+        'activity': recent[:8],
+        'repartition': [
+            {'label': 'Segmentation IRM', 'percent': 42},
+            {'label': 'PET-Scan', 'percent': 28},
+            {'label': 'SPECT', 'percent': 18},
+            {'label': 'Rapports', 'percent': 12},
+        ]
+    })
+
+
+@api_view(['GET'])
+@login_required
+def admin_dashboard_accounts(request):
+    users_qs = _admin_scope_users(request).order_by('-date_joined')
+    accounts = []
+    for i, u in enumerate(users_qs[:100], start=1):
+        if not u.last_login:
+            status_label = 'En attente'
+        else:
+            status_label = 'Actif' if u.is_active else 'Inactif'
+        accounts.append({
+            'id': f'USR-{i:03d}',
+            'username': u.username,
+            'full_name': (u.get_full_name() or u.username),
+            'email': u.email or '-',
+            'role': 'Super Admin' if u.is_superuser else ('Admin' if u.is_staff else 'Clinicien'),
+            'status': status_label,
+            'last_login': u.last_login.isoformat() if u.last_login else None,
+        })
+
+    return JsonResponse({'ok': True, 'count': len(accounts), 'accounts': accounts})
+
+
+@api_view(['GET'])
+@login_required
+def admin_dashboard_history(request):
+    series_qs = _admin_scope_series(request)
+    reclamations_qs = _admin_scope_reclamations(request)
+
+    items = []
+    for s in series_qs.order_by('-created_at')[:20]:
+        items.append({
+            'title': 'Analyse IRM cérébrale',
+            'subtitle': f"{s.user.username if s.user else 'Utilisateur'} · Série {s.job_id[:8]}",
+            'type': 'Segmentation',
+            'status': 'segmentation',
+            'date': s.created_at.isoformat() if s.created_at else None,
+        })
+    for r in reclamations_qs.order_by('-date')[:20]:
+        items.append({
+            'title': f'Réclamation {r.numero}',
+            'subtitle': f'{r.user.username} · Ticket support',
+            'type': 'Rapport',
+            'status': 'rapport',
+            'date': r.date.isoformat() if r.date else None,
+        })
+
+    items.sort(key=lambda x: x.get('date') or '', reverse=True)
+    return JsonResponse({'ok': True, 'items': items[:20]})
+
+
+@api_view(['GET'])
+@login_required
+def admin_dashboard_settings(request):
+    user = request.user
+    return JsonResponse({
+        'ok': True,
+        'profile': {
+            'full_name': user.get_full_name() or user.username,
+            'email': user.email or '-',
+            'role': 'Super Admin' if user.is_superuser else ('Admin' if user.is_staff else 'Clinicien'),
+        },
+        'security': {
+            'two_factor': True,
+            'session_expiration': '30 min',
+            'password_rotation': '90 jours',
+        },
+        'notifications': {
+            'email': True,
+            'push': True,
+            'auto_reports': False,
+            'security_alerts': True,
+        },
+        'platform': {
+            'language': 'Français',
+            'timezone': 'Europe/Paris (UTC+2)',
+            'date_format': 'DD/MM/YYYY',
+        }
+    })
+>>>>>>> origin/yesmine

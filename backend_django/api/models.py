@@ -8,6 +8,7 @@ import uuid
 
 User = get_user_model()
 
+<<<<<<< HEAD
 
 def default_user_settings():
     return {
@@ -56,12 +57,14 @@ def default_user_settings():
     }
 
 
+=======
+>>>>>>> origin/yesmine
 class Series(models.Model):
     job_id = models.CharField(max_length=64, unique=True)
     patient_id = models.CharField(max_length=256, db_index=True)
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     files = ArrayField(models.CharField(max_length=512), default=list, blank=True)
-    tform = models.JSONField(null=True, blank=True)
+    tform = models.JSONField(null=True, blank=True)  # Store transformation data
     created_at = models.DateTimeField(default=timezone.now)
 
     def __str__(self):
@@ -77,6 +80,28 @@ class Average(models.Model):
         return self.name
 
 
+# ✅ Tes modèles (Yesmine)
+class PatientImageOrientation(models.Model):
+    patient_id = models.IntegerField(unique=True, db_index=True)
+    rotation = models.IntegerField(default=0)
+    flip_h = models.BooleanField(default=False)
+    flip_v = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Orientation patient {self.patient_id}"
+
+
+class PatientImage(models.Model):
+    patient_id = models.IntegerField(db_index=True)
+    image = models.ImageField(upload_to='patient_images/%Y/%m/%d')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"PatientImage {self.id} (patient {self.patient_id})"
+
+
+# ✅ Modèles de Nadine
 class PasswordResetToken(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='reset_token')
     token = models.CharField(max_length=64, unique=True, default=secrets.token_urlsafe)
@@ -106,12 +131,17 @@ dossier_number_regex = RegexValidator(
 )
 
 class Patient(models.Model):
+<<<<<<< HEAD
     SEX_CHOICES = [
         ('M', 'Masculin'),
         ('F', 'Féminin'),
     ]
 
     id = models.BigAutoField(primary_key=True)
+=======
+    SEX_CHOICES = [('M', 'Masculin'), ('F', 'Féminin')]
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+>>>>>>> origin/yesmine
     dossier_number = models.CharField(max_length=50, unique=True, validators=[dossier_number_regex])
     nom = models.CharField(max_length=100)
     prenom = models.CharField(max_length=100)
@@ -129,6 +159,7 @@ class Patient(models.Model):
 
     def __str__(self):
         return f"{self.nom} {self.prenom} - {self.dossier_number}"
+
 
 class MRIFile(models.Model):
     patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='mri_files')
@@ -189,7 +220,6 @@ class Reclamation(models.Model):
         ('payee', 'Payée'),
         ('rejetee', 'Rejetée'),
     ]
-
     id = models.BigAutoField(primary_key=True)
     numero = models.CharField(max_length=50, unique=True, blank=True)
     description = models.TextField()
@@ -207,6 +237,7 @@ class Reclamation(models.Model):
         return f"Réclamation {self.numero} - {self.user.username}"
 
 
+<<<<<<< HEAD
 class UserSettings(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='settings')
     settings = models.JSONField(default=default_user_settings)
@@ -215,3 +246,23 @@ class UserSettings(models.Model):
 
     def __str__(self):
         return f"Settings for {self.user.username}"
+=======
+class ContactRequest(models.Model):
+    SUBJECT_CHOICES = [
+        ('demonstration', 'Demonstration'),
+        ('integration', 'Integration clinique'),
+        ('support', 'Support technique'),
+        ('partnership', 'Partenariat'),
+        ('other', 'Autre'),
+    ]
+
+    full_name = models.CharField(max_length=150)
+    email = models.EmailField()
+    institution = models.CharField(max_length=180, blank=True)
+    subject = models.CharField(max_length=30, choices=SUBJECT_CHOICES, default='demonstration')
+    message = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"ContactRequest({self.full_name}, {self.email}, {self.subject})"
+>>>>>>> origin/yesmine

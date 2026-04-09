@@ -1,0 +1,72 @@
+HEAD:
+
+    <Routes>
+      <Route path="/" element={<LandingPage user={user} onNavigate={handleNavigate} onLogout={doLogout} />} />
+      <Route path="/registration" element={<RegistrationPage user={user} accessToken={null} onNavigate={handleNavigate} />} />
+      <Route path="/upload" element={<Upload />} />
+      <Route path="/history" element={<History />} />
+      <Route path="/patients" element={<Patients />} />
+      <Route path="/prediction" element={<PredictionPage />} />
+      <Route path="/brodmann" element={<BrodmannPage />} />
+      <Route path="/brodmann3D" element={<Brodmann3DPage />} />
+      <Route path="/exploration" element={<ExplorationPage />} />
+      <Route path="/privacy" element={<PrivacyPage />} />
+      <Route path="/terms" element={<TermsPage />} />
+      <Route path="/dashboard" element={<Dashboard />}>
+        <Route path="patients" element={<PatientsList />} />
+        <Route path="patients/:id" element={<PatientDetail />} />
+        <Route path="analysesMRI" element={<AnalysesMRI />} />
+        <Route path="mri" element={<Navigate to="/dashboard/analysesMRI" replace />} />
+        <Route path="reclamations" element={<ReclamationsList />} />
+        <Route path="profile" element={<MonProfil />} />
+        <Route path="settings" element={<Parametres />} />
+      </Route>
+      <Route path="/profil" element={<MonProfil />} />
+      <Route path="/new-patient" element={<NewPatient />} />
+      <Route path="/segmentation/nouvelle" element={<NouvelleSegmentation />} />
+      <Route path="/segmentation/modelisation" element={<Modelisation3D />} />
+      <Route path="*" element={<Navigate to="/" />} />
+    </Routes>
+
+YESMINE:
+
+    <>
+      <button
+        type="button"
+        onClick={() => setIsDarkMode((v) => !v)}
+        className="theme-toggle-btn"
+        aria-label={isDarkMode ? 'Activer le mode clair' : 'Activer le mode sombre'}
+        title={isDarkMode ? 'Mode clair' : 'Mode sombre'}
+      >
+        {isDarkMode ? <Sun size={16} /> : <Moon size={16} />}
+        <span>{isDarkMode ? 'Clair' : 'Sombre'}</span>
+      </button>
+
+      <Routes>
+        <Route
+          path="/"
+          element={<LandingPage user={user} onNavigate={handleNavigate} onLogout={handleLogout} />}
+        />
+        <Route
+          path="/login"
+          element={user ? <Navigate to="/" replace /> : <Login onLogin={setUser} />}
+        />
+        <Route
+          path="/dashboard/*"
+          element={user ? <Dashboard /> : <Navigate to="/login" replace />}
+        />
+        <Route
+          path="/admin/*"
+          element={user ? <Dashboard /> : <Navigate to="/login" replace />}
+        />
+        <Route
+          path="/registration"
+          element={
+            user
+              ? <RegistrationPage user={user} accessToken={null} onNavigate={handleNavigate} />
+              : <Navigate to="/login" replace />
+          }
+        />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </>

@@ -1,0 +1,10 @@
+HEAD:
+
+export const getUserSettings = () => api.get('/user-settings/');
+export const updateUserSettings = (data) => api.put('/user-settings/', data);
+
+YESMINE:
+
+export const forgotPassword = (email) => api.post("/forgot_password", { email });
+export const validateResetToken = (token) => api.post("/validate_reset_token", { token });
+export const resetPassword = (token, newPassword) => api.post("/reset_password", { token, new_password: newPassword });

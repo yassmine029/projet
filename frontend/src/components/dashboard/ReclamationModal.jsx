@@ -69,7 +69,7 @@ export default function ReclamationModal({ isOpen, onClose, onReclamationCreated
             <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
               <FilePlus className="w-5 h-5" />
             </div>
-            <h2 className="text-xl font-bold text-[#1a1f3c]">Nouvelle Réclamation</h2>
+            <h2 className="text-xl font-bold text-slate-900">Nouvelle Réclamation</h2>
           </div>
           <button 
             onClick={onClose}
@@ -93,7 +93,7 @@ export default function ReclamationModal({ isOpen, onClose, onReclamationCreated
 
               {/* Description */}
               <div>
-                <label className="block text-sm font-bold text-[#1a1f3c] mb-2">Description <span className="text-red-500">*</span></label>
+                <label className="block text-sm font-bold text-slate-900 mb-2">Description <span className="text-red-500">*</span></label>
                 <textarea 
                   name="description" 
                   required
@@ -106,7 +106,7 @@ export default function ReclamationModal({ isOpen, onClose, onReclamationCreated
 
               {/* Fichier */}
               <div>
-                <label className="block text-sm font-bold text-[#1a1f3c] mb-2">Fichier joint (optionnel)</label>
+                <label className="block text-sm font-bold text-slate-900 mb-2">Fichier joint (optionnel)</label>
                 <input 
                   type="file" 
                   name="fichier" 

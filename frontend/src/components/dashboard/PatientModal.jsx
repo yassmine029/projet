@@ -62,7 +62,7 @@ export default function PatientModal({ isOpen, onClose, onPatientCreated }) {
             <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
               <UserPlus className="w-5 h-5" />
             </div>
-            <h2 className="text-xl font-bold text-[#1a1f3c]">Nouveau Patient</h2>
+            <h2 className="text-xl font-bold text-slate-900">Nouveau Patient</h2>
           </div>
           <button 
             onClick={onClose}
@@ -84,7 +84,7 @@ export default function PatientModal({ isOpen, onClose, onPatientCreated }) {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* N° Dossier */}
               <div>
-                <label className="block text-sm font-bold text-[#1a1f3c] mb-2">N° Dossier <span className="text-red-500">*</span></label>
+                <label className="block text-sm font-bold text-slate-900 mb-2">N° Dossier <span className="text-red-500">*</span></label>
                 <input 
                   type="text" 
                   name="num_dossier" 
@@ -98,7 +98,7 @@ export default function PatientModal({ isOpen, onClose, onPatientCreated }) {
 
               {/* Sexe */}
               <div>
-                <label className="block text-sm font-bold text-[#1a1f3c] mb-2">Sexe <span className="text-red-500">*</span></label>
+                <label className="block text-sm font-bold text-slate-900 mb-2">Sexe <span className="text-red-500">*</span></label>
                 <select 
                   name="sexe" 
                   required 
@@ -113,7 +113,7 @@ export default function PatientModal({ isOpen, onClose, onPatientCreated }) {
 
               {/* Nom */}
               <div>
-                <label className="block text-sm font-bold text-[#1a1f3c] mb-2">Nom <span className="text-red-500">*</span></label>
+                <label className="block text-sm font-bold text-slate-900 mb-2">Nom <span className="text-red-500">*</span></label>
                 <input 
                   type="text" 
                   name="nom" 
@@ -127,7 +127,7 @@ export default function PatientModal({ isOpen, onClose, onPatientCreated }) {
 
               {/* Prénom */}
               <div>
-                <label className="block text-sm font-bold text-[#1a1f3c] mb-2">Prénom <span className="text-red-500">*</span></label>
+                <label className="block text-sm font-bold text-slate-900 mb-2">Prénom <span className="text-red-500">*</span></label>
                 <input 
                   type="text" 
                   name="prenom" 
@@ -141,7 +141,7 @@ export default function PatientModal({ isOpen, onClose, onPatientCreated }) {
 
               {/* Date Naissance */}
               <div className="md:col-span-2">
-                <label className="block text-sm font-bold text-[#1a1f3c] mb-2">Date de naissance <span className="text-red-500">*</span></label>
+                <label className="block text-sm font-bold text-slate-900 mb-2">Date de naissance <span className="text-red-500">*</span></label>
                 <input 
                   type="date" 
                   name="date_naissance" 
@@ -154,7 +154,7 @@ export default function PatientModal({ isOpen, onClose, onPatientCreated }) {
 
               {/* Autres Maladies */}
               <div className="md:col-span-2">
-                <label className="block text-sm font-bold text-[#1a1f3c] mb-2">Autres Maladies / Diagnostics</label>
+                <label className="block text-sm font-bold text-slate-900 mb-2">Autres Maladies / Diagnostics</label>
                 <textarea 
                   name="autres_maladies" 
                   value={formData.autres_maladies} 

@@ -276,8 +276,8 @@ export default function PatientDetail() {
     <div className="space-y-2">
       {(node?.folders || []).map((folder) => (
         <div key={`${parentKey}/${folder.name}`} className="rounded-lg border border-slate-200 bg-white/70">
-          <div className="px-3 py-2 text-sm font-semibold text-[#1a1f3c] flex items-center gap-2" style={{ paddingLeft: `${12 + depth * 12}px` }}>
-            <FolderOpen className="w-4 h-4 text-[#4f6ef7]" />
+          <div className="px-3 py-2 text-sm font-semibold text-slate-900 flex items-center gap-2" style={{ paddingLeft: `${12 + depth * 12}px` }}>
+            <FolderOpen className="w-4 h-4 text-blue-600" />
             {folder.name}
           </div>
           <div className="px-2 pb-2">
@@ -286,12 +286,12 @@ export default function PatientDetail() {
               return (
                 <div
                   key={`file-${file.id}`}
-                  className="mx-2 mb-2 rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-[#334155] flex items-center justify-between gap-3"
+                  className="mx-2 mb-2 rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-700 flex items-center justify-between gap-3"
                   style={{ marginLeft: `${depth * 12}px` }}
                 >
                   <span className="truncate">{file.treeLabel}</span>
                   {fileUrl && (
-                    <a href={fileUrl} target="_blank" rel="noreferrer" className="text-[#4f6ef7] font-semibold hover:underline shrink-0">
+                    <a href={fileUrl} target="_blank" rel="noreferrer" className="text-blue-600 font-semibold hover:underline shrink-0">
                       Ouvrir
                     </a>
                   )}
@@ -308,12 +308,12 @@ export default function PatientDetail() {
         return (
           <div
             key={`root-file-${file.id}`}
-            className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-[#334155] flex items-center justify-between gap-3"
+            className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-700 flex items-center justify-between gap-3"
             style={{ marginLeft: `${depth * 12}px` }}
           >
             <span className="truncate">{file.treeLabel}</span>
             {fileUrl && (
-              <a href={fileUrl} target="_blank" rel="noreferrer" className="text-[#4f6ef7] font-semibold hover:underline shrink-0">
+              <a href={fileUrl} target="_blank" rel="noreferrer" className="text-blue-600 font-semibold hover:underline shrink-0">
                 Ouvrir
               </a>
             )}
@@ -331,14 +331,14 @@ export default function PatientDetail() {
   ];
 
   return (
-    <div className="max-w-[1200px] space-y-6 pb-8">
+    <div className="max-w-[1200px] space-y-6 pb-8 animate-fade-in">
       {loading ? (
-        <div className="p-10 text-center text-[#6b7280]">Chargement du profil patient...</div>
+        <div className="p-10 text-center text-slate-500">Chargement du profil patient...</div>
       ) : (error || !patient) ? (
         <div className="p-10">
           <button
             onClick={() => navigate('/dashboard/patients')}
-            className="flex items-center gap-2 text-[#4f6ef7] font-bold mb-6 hover:underline"
+            className="flex items-center gap-2 text-blue-600 font-bold mb-6 hover:underline"
           >
             <ArrowLeft className="w-4 h-4" />
             Retour aux patients
@@ -351,23 +351,23 @@ export default function PatientDetail() {
         <>
       <button 
         onClick={() => navigate('/dashboard/patients')}
-        className="flex items-center gap-2 text-[#6b7280] font-bold mb-2 hover:text-[#4f6ef7] transition-colors"
+        className="flex items-center gap-2 text-slate-500 font-bold mb-2 hover:text-blue-600 transition-colors"
       >
         <ArrowLeft className="w-4 h-4" />
         Retour à la liste
       </button>
 
-      <div className="rounded-3xl bg-gradient-to-r from-[#edf2ff] via-[#f8faff] to-[#eef8ff] border border-[#dbe6ff] p-8 shadow-[0_10px_40px_rgba(79,110,247,0.10)]">
+      <div className="rounded-2xl bg-white border border-slate-200/60 p-8 shadow-card">
         <div className="flex flex-col md:flex-row gap-8 items-start">
-          <div className="w-24 h-24 bg-white text-[#4f6ef7] rounded-3xl flex items-center justify-center border border-blue-100 shadow-sm shrink-0">
-          <User className="w-10 h-10" />
+          <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-blue-700 text-white rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/20 shrink-0">
+          <User className="w-9 h-9" />
         </div>
         
         <div className="flex-1">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
             <div>
-              <h1 className="text-3xl font-extrabold text-[#1a1f3c] tracking-tight">{patient.nom} {patient.prenom}</h1>
-              <div className="flex items-center gap-2 mt-2 text-[#6b7280] text-sm font-medium">
+              <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">{patient.nom} {patient.prenom}</h1>
+              <div className="flex items-center gap-2 mt-2 text-slate-500 text-sm font-medium">
                 <Hash className="w-4 h-4" />
                 Dossier {patient.num_dossier}
                 <span className="mx-2 text-slate-300">•</span>
@@ -376,38 +376,38 @@ export default function PatientDetail() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-6 border-t border-[#dbe6ff]">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-6 border-t border-slate-100">
             <div className="flex items-start gap-3">
-              <div className="p-2 bg-white rounded-lg text-[#4f6ef7]">
+              <div className="p-2 bg-white rounded-lg text-blue-600">
                 <User className="w-5 h-5" />
               </div>
               <div>
-                <p className="text-xs font-bold uppercase text-[#9ca3af] mb-1">Identité</p>
-                <p className="text-sm font-semibold text-[#1a1f3c]">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Identité</p>
+                <p className="text-sm font-semibold text-slate-900">
                   {patient.sexe === 'M' ? 'Homme' : 'Femme'}, {calcAge(patient.date_naissance)} ans
                 </p>
               </div>
             </div>
 
             <div className="flex items-start gap-3">
-              <div className="p-2 bg-white rounded-lg text-[#4f6ef7]">
+              <div className="p-2 bg-white rounded-lg text-blue-600">
                 <Calendar className="w-5 h-5" />
               </div>
               <div>
-                <p className="text-xs font-bold uppercase text-[#9ca3af] mb-1">Date de naissance</p>
-                <p className="text-sm font-semibold text-[#1a1f3c]">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Date de naissance</p>
+                <p className="text-sm font-semibold text-slate-900">
                   {formatDate(patient.date_naissance)}
                 </p>
               </div>
             </div>
 
             <div className="flex items-start gap-3">
-              <div className="p-2 bg-white rounded-lg text-[#4f6ef7]">
+              <div className="p-2 bg-white rounded-lg text-blue-600">
                 <Stethoscope className="w-5 h-5" />
               </div>
               <div>
-                <p className="text-xs font-bold uppercase text-[#9ca3af] mb-1">Diagnostics associés</p>
-                <p className="text-sm font-semibold text-[#1a1f3c] line-clamp-2">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Diagnostics associés</p>
+                <p className="text-sm font-semibold text-slate-900 line-clamp-2">
                   {patient.pathologie || patient.autres_maladies || 'Aucun diagnostic renseigné'}
                 </p>
               </div>
@@ -421,14 +421,14 @@ export default function PatientDetail() {
         {detailRows.map((row) => {
           const Icon = row.icon;
           return (
-            <div key={row.label} className="bg-white rounded-2xl border border-slate-100 p-4 shadow-[0_4px_18px_rgba(15,23,42,0.04)]">
+            <div key={row.label} className="bg-white rounded-2xl border border-slate-200/60 p-4 shadow-card">
               <div className="flex items-center gap-3 mb-2">
-                <div className="w-9 h-9 rounded-xl bg-[#eef2ff] flex items-center justify-center text-[#4f6ef7]">
+                <div className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600">
                   <Icon className="w-4 h-4" />
                 </div>
-                <p className="text-xs font-bold uppercase tracking-wide text-[#9ca3af]">{row.label}</p>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{row.label}</p>
               </div>
-              <p className="text-sm text-[#1a1f3c] font-semibold break-words">{row.value}</p>
+              <p className="text-sm text-slate-900 font-semibold break-words">{row.value}</p>
             </div>
           );
         })}
@@ -436,15 +436,15 @@ export default function PatientDetail() {
 
       {(patient.antecedents || patient.notes) && (
         <div className="bg-white rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.04)] border border-slate-50 p-6">
-          <h2 className="text-lg font-bold text-[#1a1f3c] mb-4">Contexte clinique</h2>
+          <h2 className="text-lg font-bold text-slate-900 mb-4">Contexte clinique</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="rounded-xl bg-slate-50 border border-slate-100 p-4">
-              <p className="text-xs font-bold uppercase text-[#9ca3af] mb-2">Antécédents</p>
-              <p className="text-sm text-[#1a1f3c] font-medium">{patient.antecedents || '-'}</p>
+              <p className="text-xs font-bold uppercase text-slate-400 mb-2">Antécédents</p>
+              <p className="text-sm text-slate-900 font-medium">{patient.antecedents || '-'}</p>
             </div>
             <div className="rounded-xl bg-slate-50 border border-slate-100 p-4">
-              <p className="text-xs font-bold uppercase text-[#9ca3af] mb-2">Notes cliniques</p>
-              <p className="text-sm text-[#1a1f3c] whitespace-pre-wrap">{patient.notes || '-'}</p>
+              <p className="text-xs font-bold uppercase text-slate-400 mb-2">Notes cliniques</p>
+              <p className="text-sm text-slate-900 whitespace-pre-wrap">{patient.notes || '-'}</p>
             </div>
           </div>
         </div>
@@ -454,29 +454,29 @@ export default function PatientDetail() {
         <div className="px-6 py-5 border-b border-slate-100 bg-gradient-to-r from-[#f8faff] to-[#f5f9ff]">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
-              <h2 className="text-xl font-bold text-[#1a1f3c]">Contenu du dossier uploadé</h2>
-              <p className="text-sm text-[#6b7280] mt-1">Fichiers enregistrés lors de la création du patient</p>
+              <h2 className="text-xl font-bold text-slate-900">Contenu du dossier uploadé</h2>
+              <p className="text-sm text-slate-500 mt-1">Fichiers enregistrés lors de la création du patient</p>
             </div>
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={downloadPatientZip}
                 disabled={zipDownloading || files.length === 0}
-                className="px-3 py-1.5 rounded-lg bg-[#4f6ef7] text-white text-xs font-bold hover:bg-[#3e5dd8] disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2 transition-colors"
+                className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2 transition-colors"
               >
                 <Download className="w-3.5 h-3.5" />
                 {zipDownloading ? 'Preparation ZIP...' : 'Telecharger le dossier'}
               </button>
-              <div className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-[#334155] flex items-center gap-2">
-                <FolderOpen className="w-4 h-4 text-[#4f6ef7]" />
+              <div className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-700 flex items-center gap-2">
+                <FolderOpen className="w-4 h-4 text-blue-600" />
                 {folderCount} dossier{folderCount > 1 ? 's' : ''}
               </div>
-              <div className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-[#334155] flex items-center gap-2">
-                <FileText className="w-4 h-4 text-[#4f6ef7]" />
+              <div className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-700 flex items-center gap-2">
+                <FileText className="w-4 h-4 text-blue-600" />
                 {files.length} fichier{files.length > 1 ? 's' : ''}
               </div>
-              <div className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-[#334155] flex items-center gap-2">
-                <HardDrive className="w-4 h-4 text-[#4f6ef7]" />
+              <div className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-700 flex items-center gap-2">
+                <HardDrive className="w-4 h-4 text-blue-600" />
                 {formatSize(totalBytes)}
               </div>
             </div>
@@ -489,13 +489,13 @@ export default function PatientDetail() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Rechercher un fichier ou un chemin..."
-                className="w-full h-11 rounded-xl border border-slate-200 px-3 text-sm text-[#1a1f3c] bg-white focus:outline-none focus:ring-2 focus:ring-[#4f6ef7]/20 focus:border-[#4f6ef7]"
+                className="w-full h-11 rounded-xl border border-slate-200 px-3 text-sm text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500"
               />
 
               <select
                 value={typeFilter}
                 onChange={(e) => setTypeFilter(e.target.value)}
-                className="w-full h-11 rounded-xl border border-slate-200 px-3 text-sm text-[#1a1f3c] bg-white focus:outline-none focus:ring-2 focus:ring-[#4f6ef7]/20 focus:border-[#4f6ef7]"
+                className="w-full h-11 rounded-xl border border-slate-200 px-3 text-sm text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500"
               >
                 <option value="all">Tous les types</option>
                 {fileTypes.map((type) => (
@@ -508,7 +508,7 @@ export default function PatientDetail() {
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
-                className="w-full h-11 rounded-xl border border-slate-200 px-3 text-sm text-[#1a1f3c] bg-white focus:outline-none focus:ring-2 focus:ring-[#4f6ef7]/20 focus:border-[#4f6ef7]"
+                className="w-full h-11 rounded-xl border border-slate-200 px-3 text-sm text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500"
               >
                 <option value="recent">Tri: plus récents</option>
                 <option value="name">Tri: nom (A-Z)</option>
@@ -518,7 +518,7 @@ export default function PatientDetail() {
               <button
                 type="button"
                 onClick={resetFilters}
-                className="w-full h-11 rounded-xl border border-slate-200 px-3 text-sm font-semibold text-[#334155] bg-white hover:bg-slate-50 transition-colors inline-flex items-center justify-center gap-2"
+                className="w-full h-11 rounded-xl border border-slate-200 px-3 text-sm font-semibold text-slate-700 bg-white hover:bg-slate-50 transition-colors inline-flex items-center justify-center gap-2"
               >
                 <RotateCcw className="w-4 h-4" />
                 Reinitialiser les filtres
@@ -527,14 +527,14 @@ export default function PatientDetail() {
           )}
 
           {zipDownloading && (
-            <div className="mt-4 rounded-xl border border-[#dbe6ff] bg-white px-4 py-3">
-              <div className="flex items-center justify-between text-xs font-semibold text-[#334155] mb-2">
+            <div className="mt-4 rounded-xl border border-blue-200 bg-white px-4 py-3">
+              <div className="flex items-center justify-between text-xs font-semibold text-slate-700 mb-2">
                 <span>Preparation du dossier ZIP...</span>
                 <span>{Number.isFinite(zipProgress) ? `${zipProgress}%` : ''}</span>
               </div>
               <div className="h-2 rounded-full bg-[#eaf0ff] overflow-hidden">
                 <div
-                  className="h-full bg-gradient-to-r from-[#4f6ef7] to-[#6ea3ff] transition-all duration-300"
+                  className="h-full bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-300"
                   style={{ width: `${Math.max(8, Number(zipProgress || 0))}%` }}
                 />
               </div>
@@ -555,13 +555,13 @@ export default function PatientDetail() {
         </div>
 
         {files.length === 0 ? (
-          <div className="p-8 text-center text-[#6b7280]">
+          <div className="p-8 text-center text-slate-500">
             <AlertCircle className="w-8 h-8 mx-auto mb-3 text-amber-500" />
             Aucun fichier MRI trouvé pour ce patient.
           </div>
         ) : filteredFiles.length === 0 ? (
-          <div className="p-8 text-center text-[#6b7280]">
-            <AlertCircle className="w-8 h-8 mx-auto mb-3 text-[#4f6ef7]" />
+          <div className="p-8 text-center text-slate-500">
+            <AlertCircle className="w-8 h-8 mx-auto mb-3 text-blue-600" />
             Aucun fichier ne correspond à vos filtres.
           </div>
         ) : (
@@ -575,15 +575,15 @@ export default function PatientDetail() {
                   <div key={file.id} className="rounded-xl border border-slate-200 bg-white p-4 hover:border-[#cdd9ff] hover:shadow-[0_6px_20px_rgba(79,110,247,0.08)] transition-all">
                     <div className="flex items-start justify-between gap-3 mb-3">
                       <div className="min-w-0">
-                        <p className="text-sm font-bold text-[#1a1f3c] truncate">{file.original_filename || 'Fichier MRI'}</p>
-                        <p className="text-xs text-[#6b7280] mt-1 break-all">{relPath}</p>
+                        <p className="text-sm font-bold text-slate-900 truncate">{file.original_filename || 'Fichier MRI'}</p>
+                        <p className="text-xs text-slate-500 mt-1 break-all">{relPath}</p>
                       </div>
                       {fileUrl && (
                         <a
                           href={fileUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold text-[#4f6ef7] bg-[#eef2ff] hover:bg-[#dfe7ff] transition-colors"
+                          className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 transition-colors"
                         >
                           <Download className="w-3.5 h-3.5" />
                           Ouvrir
@@ -593,12 +593,12 @@ export default function PatientDetail() {
 
                     <div className="grid grid-cols-2 gap-3 text-xs mb-3">
                       <div className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
-                        <p className="text-[#9ca3af] uppercase font-bold">Taille</p>
-                        <p className="text-[#1a1f3c] font-semibold mt-1">{formatSize(file.file_size)}</p>
+                        <p className="text-slate-400 uppercase font-bold">Taille</p>
+                        <p className="text-slate-900 font-semibold mt-1">{formatSize(file.file_size)}</p>
                       </div>
                       <div className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
-                        <p className="text-[#9ca3af] uppercase font-bold flex items-center gap-1"><Clock3 className="w-3 h-3" /> Ajoute le</p>
-                        <p className="text-[#1a1f3c] font-semibold mt-1">{formatDateTime(file.uploaded_at)}</p>
+                        <p className="text-slate-400 uppercase font-bold flex items-center gap-1"><Clock3 className="w-3 h-3" /> Ajoute le</p>
+                        <p className="text-slate-900 font-semibold mt-1">{formatDateTime(file.uploaded_at)}</p>
                       </div>
                     </div>
 
@@ -619,8 +619,8 @@ export default function PatientDetail() {
 
             <aside className="rounded-xl border border-slate-200 bg-[#fbfdff] p-4 h-fit xl:sticky xl:top-4">
               <div className="flex items-center gap-2 mb-3">
-                <FolderTree className="w-4 h-4 text-[#4f6ef7]" />
-                <h3 className="text-sm font-bold text-[#1a1f3c]">Arborescence du dossier</h3>
+                <FolderTree className="w-4 h-4 text-blue-600" />
+                <h3 className="text-sm font-bold text-slate-900">Arborescence du dossier</h3>
               </div>
               <div className="max-h-[620px] overflow-auto pr-1 space-y-2">
                 {renderTreeNode(folderTree)}
@@ -630,9 +630,9 @@ export default function PatientDetail() {
         )}
       </div>
 
-      <h2 className="text-xl font-bold text-[#1a1f3c] mt-10">Analyses du patient</h2>
+      <h2 className="text-xl font-bold text-slate-900 mt-10">Analyses du patient</h2>
       <div className="bg-white rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.04)] border border-slate-50 min-h-[200px] flex items-center justify-center">
-        <p className="text-[#9ca3af] italic text-sm">Les analyses seront affichées ici prochainement.</p>
+        <p className="text-slate-400 italic text-sm">Les analyses seront affichées ici prochainement.</p>
       </div>
         </>
       )}

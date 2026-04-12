@@ -74,7 +74,7 @@ def run_auto_registration_3d_nifti(
     levels_used: int = 3,
     max_samples: int = 32768,
     lambda_reg: float = 1e-4,
-    device_name: str = 'auto',
+    device_name: str = 'cuda',
     save_extended_outputs: bool = True,
 ) -> dict:
     del n_iters, max_levels, levels_used, max_samples, lambda_reg, device_name, save_extended_outputs

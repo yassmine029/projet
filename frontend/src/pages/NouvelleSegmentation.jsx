@@ -11,7 +11,7 @@ const CHECKLIST_STEPS = [
   'Génération du rapport',
 ];
 
-const AVATAR_COLORS = ['#185FA5', '#534AB7', '#0F6E56', '#854F0B'];
+const AVATAR_COLORS = ['#2563eb', '#7c3aed', '#059669', '#d97706'];
 
 function getDoctorName() {
   try {
@@ -88,9 +88,9 @@ function formatIpp(patient) {
 
 function getPathologyBadge(patient) {
   const source = String(patient?.pathology || patient?.pathologie || patient?.diagnosis || patient?.motif || '').toLowerCase();
-  if (source.includes('alz')) return { label: 'Alzheimer', classes: 'bg-[#FCEBEB] text-[#791F1F]' };
-  if (source.includes('épil') || source.includes('epil')) return { label: 'Épilepsie', classes: 'bg-[#EEEDFE] text-[#3C3489]' };
-  return { label: 'Suivi', classes: 'bg-[#E1F5EE] text-[#085041]' };
+  if (source.includes('alz')) return { label: 'Alzheimer', classes: 'bg-red-50 text-red-700' };
+  if (source.includes('épil') || source.includes('epil')) return { label: 'Épilepsie', classes: 'bg-violet-50 text-violet-700' };
+  return { label: 'Suivi', classes: 'bg-emerald-50 text-emerald-700' };
 }
 
 function getSlicesCount(patient) {
@@ -457,15 +457,15 @@ export default function NouvelleSegmentation() {
   };
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-[#f5f7ff] flex flex-col font-sans">
-      <div className="bg-[#0f3460] px-6 py-3 flex items-center justify-between">
+    <div className="h-screen w-screen overflow-hidden bg-slate-50 flex flex-col font-sans">
+      <div className="bg-slate-900 px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white">
             <UserRound className="h-4 w-4" />
           </span>
           <div>
             <p className="text-white text-[14px] font-medium">Nouvelle segmentation hippocampique</p>
-            <p className="text-[#6a9fd8] text-[11px]">Analyses MRI · Dr. {doctorName}</p>
+            <p className="text-blue-300 text-[11px]">Analyses MRI · Dr. {doctorName}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -526,7 +526,7 @@ export default function NouvelleSegmentation() {
           <div className="p-6 lg:p-8">
             {step === 1 && (
               <div className="space-y-4">
-                <div className="search-box flex items-center gap-2 px-3 py-2 border border-surface-border rounded-lg bg-[#f5f7ff] text-sm">
+                <div className="search-box flex items-center gap-2 px-3 py-2 border border-surface-border rounded-lg bg-slate-50 text-sm">
                   <Search className="w-4 h-4 text-slate-500 opacity-35" />
                   <input
                     type="text"
@@ -590,7 +590,7 @@ export default function NouvelleSegmentation() {
                           >
                             <span
                               className={`h-5 w-5 shrink-0 rounded-full border flex items-center justify-center ${
-                                isSelected ? 'border-[#185FA5] bg-[#185FA5]' : 'border-gray-300 bg-white'
+                                isSelected ? 'border-[#2563eb] bg-[#2563eb]' : 'border-gray-300 bg-white'
                               }`}
                             >
                               {isSelected && <Check className="h-3.5 w-3.5 text-white" />}
@@ -638,11 +638,11 @@ export default function NouvelleSegmentation() {
                     </div>
 
                     {selectedPatient && (
-                      <div className="mt-4 rounded-md border px-[14px] py-[10px] flex items-center gap-2 bg-[#eef5fd] border-[#b5d4f4]">
-                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#185FA5] text-white">
+                      <div className="mt-4 rounded-md border px-[14px] py-[10px] flex items-center gap-2 bg-blue-50 border-blue-200">
+                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#2563eb] text-white">
                           <Check className="h-3.5 w-3.5" />
                         </span>
-                        <p className="text-sm text-[#185FA5]">
+                        <p className="text-sm text-[#2563eb]">
                           Patient sélectionné : {getPatientName(selectedPatient)} · {getSlicesCount(selectedPatient) ?? '—'} coupes IRM disponibles
                         </p>
                       </div>
@@ -654,7 +654,7 @@ export default function NouvelleSegmentation() {
                         <button
                           type="button"
                           onClick={() => navigate(-1)}
-                          className="outline-button border border-surface-border text-gray-500 text-sm px-4 py-2 rounded-lg hover:bg-[#f5f7ff]"
+                          className="outline-button border border-surface-border text-gray-500 text-sm px-4 py-2 rounded-lg hover:bg-blue-50/50"
                         >
                           Annuler
                         </button>
@@ -662,7 +662,7 @@ export default function NouvelleSegmentation() {
                           type="button"
                           disabled={!selectedPatient}
                           onClick={() => setStep(2)}
-                          className="bg-[#185FA5] hover:bg-[#124a83] border border-[#185FA5] text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-[#185FA5] disabled:hover:bg-[#185FA5]"
+                          className="bg-[#2563eb] hover:bg-[#1d4ed8] border border-[#2563eb] text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-[#2563eb] disabled:hover:bg-[#2563eb]"
                         >
                           Confirmer le patient →
                         </button>
@@ -679,12 +679,12 @@ export default function NouvelleSegmentation() {
                   <div className="flex items-center gap-3 min-w-0">
                     <div
                       className="h-9 w-9 shrink-0 rounded-full text-white flex items-center justify-center font-semibold text-xs"
-                      style={{ backgroundColor: '#185FA5' }}
+                      style={{ backgroundColor: '#2563eb' }}
                     >
                       {getInitials(selectedPatient || {})}
                     </div>
                     <div className="min-w-0">
-                      <p className="text-sm text-[#1a1f3c] truncate">
+                      <p className="text-sm text-slate-900 truncate">
                         Patient sélectionné : <span className="font-semibold">{getPatientName(selectedPatient || {})}</span>
                       </p>
                       <p className="text-xs text-blue-700">{slices.length} coupes IRM disponibles</p>
@@ -716,7 +716,7 @@ export default function NouvelleSegmentation() {
                     type="button"
                     onClick={() => setSelectedSlices([])}
                     disabled={slicesLoading || selectedSlices.length === 0}
-                    className="rounded-lg border border-surface-border px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-[#f5f7ff] disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="rounded-lg border border-surface-border px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-blue-50/50 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Tout désélectionner
                   </button>
@@ -785,13 +785,13 @@ export default function NouvelleSegmentation() {
                           type="button"
                           onClick={() => toggleSlice(sliceId)}
                           className={`relative overflow-hidden rounded-lg border border-surface-border bg-white text-left cursor-pointer transition-colors ${
-                            isSelected ? 'border-[1.5px] border-[#185FA5]' : 'hover:border-blue-200'
+                            isSelected ? 'border-[1.5px] border-[#2563eb]' : 'hover:border-blue-200'
                           }`}
                         >
-                          {isSelected && <div className="absolute inset-x-0 top-0 h-8 bg-[#185FA5]/10" />}
+                          {isSelected && <div className="absolute inset-x-0 top-0 h-8 bg-[#2563eb]/10" />}
                           <span
                             className={`absolute right-2 top-2 z-10 h-5 w-5 rounded-full border flex items-center justify-center ${
-                              isSelected ? 'border-[#185FA5] bg-[#185FA5]' : 'border-gray-300 bg-white'
+                              isSelected ? 'border-[#2563eb] bg-[#2563eb]' : 'border-gray-300 bg-white'
                             }`}
                           >
                             {isSelected && (
@@ -822,7 +822,7 @@ export default function NouvelleSegmentation() {
 
                           <div className="flex items-center justify-between px-3 py-2">
                             <p className="text-[11px] text-slate-500">{truncateFilename(filename)}</p>
-                            <p className="text-[11px] text-[#185FA5]">Coupe N°{sliceIndex}</p>
+                            <p className="text-[11px] text-[#2563eb]">Coupe N°{sliceIndex}</p>
                           </div>
                         </button>
                       );
@@ -837,7 +837,7 @@ export default function NouvelleSegmentation() {
                     <button
                       type="button"
                       onClick={() => setStep(1)}
-                      className="rounded-lg border border-surface-border px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-[#f5f7ff]"
+                      className="rounded-lg border border-surface-border px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-blue-50/50"
                     >
                       ← Retour
                     </button>
@@ -845,7 +845,7 @@ export default function NouvelleSegmentation() {
                       type="button"
                       onClick={() => setStep(3)}
                       disabled={selectedSlices.length === 0}
-                      className="rounded-lg bg-[#185FA5] border border-[#185FA5] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#124a83] disabled:cursor-not-allowed disabled:opacity-50 disabled:bg-[#185FA5] disabled:hover:bg-[#185FA5]"
+                      className="rounded-lg bg-[#2563eb] border border-[#2563eb] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#1d4ed8] disabled:cursor-not-allowed disabled:opacity-50 disabled:bg-[#2563eb] disabled:hover:bg-[#2563eb]"
                     >
                       Continuer vers le modèle →
                     </button>
@@ -906,7 +906,7 @@ export default function NouvelleSegmentation() {
                     <button
                       type="button"
                       onClick={() => setStep(2)}
-                      className="rounded-lg border border-surface-border px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-[#f5f7ff]"
+                      className="rounded-lg border border-surface-border px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-blue-50/50"
                     >
                       ← Retour
                     </button>
@@ -914,7 +914,7 @@ export default function NouvelleSegmentation() {
                       type="button"
                       onClick={() => setStep(4)}
                       disabled={!selectedModel}
-                      className="rounded-lg bg-[#185FA5] border border-[#185FA5] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#124a83] disabled:cursor-not-allowed disabled:opacity-50 disabled:bg-[#185FA5] disabled:hover:bg-[#185FA5]"
+                      className="rounded-lg bg-[#2563eb] border border-[#2563eb] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#1d4ed8] disabled:cursor-not-allowed disabled:opacity-50 disabled:bg-[#2563eb] disabled:hover:bg-[#2563eb]"
                     >
                       Confirmer le modèle →
                     </button>
@@ -937,7 +937,7 @@ export default function NouvelleSegmentation() {
                             navigate(`/segmentation/modelisation?run=${currentRunId}`);
                           }}
                           disabled={!Number.isFinite(currentRunId) || currentRunId <= 0}
-                          className="rounded-lg bg-[#185FA5] border border-[#185FA5] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#124a83] disabled:cursor-not-allowed disabled:opacity-50"
+                          className="rounded-lg bg-[#2563eb] border border-[#2563eb] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#1d4ed8] disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           Valider segmentation
                         </button>
@@ -950,7 +950,7 @@ export default function NouvelleSegmentation() {
                             setLaunchError('');
                             launchTriggeredRef.current = false;
                           }}
-                          className="rounded-lg bg-[#185FA5] border border-[#185FA5] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#124a83]"
+                          className="rounded-lg bg-[#2563eb] border border-[#2563eb] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#1d4ed8]"
                         >
                           Choisir un autre modele
                         </button>
@@ -990,7 +990,7 @@ export default function NouvelleSegmentation() {
                               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                                 <div>
                                   <p className="mb-2 text-xs uppercase tracking-wide text-gray-400">Coupe originale</p>
-                                  <div className="overflow-hidden rounded-lg border border-surface-border bg-[#f5f7ff]">
+                                  <div className="overflow-hidden rounded-lg border border-surface-border bg-slate-50">
                                     {sourceSrc ? (
                                       <img src={sourceSrc} alt={`source-${sliceLabel}`} className="h-56 w-full object-contain" loading="lazy" />
                                     ) : (
@@ -1000,7 +1000,7 @@ export default function NouvelleSegmentation() {
                                 </div>
                                 <div>
                                   <p className="mb-2 text-xs uppercase tracking-wide text-gray-400">Masque généré</p>
-                                  <div className="overflow-hidden rounded-lg border border-surface-border bg-[#f5f7ff]">
+                                  <div className="overflow-hidden rounded-lg border border-surface-border bg-slate-50">
                                     {maskSrc ? (
                                       <img src={maskSrc} alt={`mask-${sliceLabel}`} className="h-56 w-full object-contain" loading="lazy" />
                                     ) : (
@@ -1027,13 +1027,13 @@ export default function NouvelleSegmentation() {
                 </div>
 
                 <div>
-                  <div className="mb-2 flex items-center justify-between text-sm text-slate-600">
-                    <span>Progression</span>
-                    <span className="font-medium text-slate-800">{progress}%</span>
+                  <div className="mb-2 flex items-center justify-between text-sm">
+                    <span className="font-semibold text-slate-700">Progression</span>
+                    <span className="font-bold text-blue-600">{progress}%</span>
                   </div>
                   <div className="h-3 w-full overflow-hidden rounded-full bg-slate-200">
                     <div
-                      className="h-full rounded-full bg-primary transition-all duration-75 ease-linear"
+                      className="h-full rounded-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-300 ease-out shadow-[0_0_8px_rgba(37,99,235,0.4)]"
                       style={{ width: `${progress}%` }}
                     />
                   </div>
@@ -1053,7 +1053,7 @@ export default function NouvelleSegmentation() {
                       <button
                         type="button"
                         onClick={() => setStep(3)}
-                        className="rounded-lg border border-surface-border px-3 py-1.5 text-sm text-gray-700 hover:bg-[#f5f7ff]"
+                        className="rounded-lg border border-surface-border px-3 py-1.5 text-sm text-gray-700 hover:bg-blue-50/50"
                       >
                         Retour au choix du modèle
                       </button>
@@ -1075,7 +1075,7 @@ export default function NouvelleSegmentation() {
                       >
                         <span
                           className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold ${
-                            done ? 'bg-[#3b6fd4] text-white' : 'bg-slate-200 text-slate-500'
+                            done ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-500'
                           }`}
                         >
                           {done ? '✓' : '•'}
@@ -1097,14 +1097,14 @@ export default function NouvelleSegmentation() {
                       <button
                         type="button"
                         onClick={openSegmentationResults}
-                        className="inline-flex items-center rounded-lg border border-[#185FA5] bg-[#185FA5] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#124a83]"
+                        className="inline-flex items-center rounded-lg border border-[#2563eb] bg-[#2563eb] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#1d4ed8]"
                       >
                         Voir les résultats
                       </button>
                       <button
                         type="button"
                         onClick={() => setStep(2)}
-                        className="inline-flex items-center rounded-lg border border-surface-border bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-[#f5f7ff]"
+                        className="inline-flex items-center rounded-lg border border-surface-border bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-blue-50/50"
                       >
                         Modifier les coupes
                       </button>

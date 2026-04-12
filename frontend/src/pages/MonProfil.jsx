@@ -407,9 +407,10 @@ function MonProfil() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f5f7ff] p-4 md:p-6 lg:p-8">
+    <div className="animate-fade-in">
       {showSuccessToast && (
-        <div className="fixed right-4 top-4 z-50 rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700 shadow-md">
+        <div className="fixed right-6 top-6 z-50 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3.5 text-sm font-semibold text-emerald-700 shadow-card-lg flex items-center gap-2 animate-slide-up">
+          <span className="w-2 h-2 rounded-full bg-emerald-500" />
           {toastMessage}
         </div>
       )}
@@ -440,12 +441,12 @@ function MonProfil() {
                 onMouseEnter={() => setHoverAvatar(true)}
                 onMouseLeave={() => setHoverAvatar(false)}
               >
-                <div className="flex h-[120px] w-[120px] items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-500 text-3xl font-bold text-white shadow-md">
+                <div className="flex h-[120px] w-[120px] items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-3xl font-bold text-white shadow-lg shadow-blue-500/25 ring-4 ring-white">
                   {initials || "N H"}
                 </div>
                 <button
                   type="button"
-                  className={`absolute bottom-0 right-0 flex h-9 w-9 items-center justify-center rounded-full border border-white bg-[#1a2332] text-white shadow transition-opacity ${
+                  className={`absolute bottom-0 right-0 flex h-9 w-9 items-center justify-center rounded-full border border-white bg-slate-900 text-white shadow transition-opacity ${
                     hoverAvatar ? "opacity-100" : "opacity-0"
                   }`}
                   title="Changer la photo"
@@ -466,8 +467,8 @@ function MonProfil() {
                 </button>
               </div>
 
-              <h2 className="mt-4 text-2xl font-bold text-primary">{fullName}</h2>
-              <span className="mt-2 rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-700">
+              <h2 className="mt-4 text-2xl font-bold text-slate-900 tracking-tight">{fullName}</h2>
+              <span className="mt-2 rounded-lg bg-blue-50 border border-blue-100 px-3 py-1 text-xs font-bold text-blue-600">
                 {formData.specialty}
               </span>
               <p className="mt-3 text-sm text-gray-500">{formData.institution}</p>
@@ -477,17 +478,17 @@ function MonProfil() {
             <hr className="my-5 border-surface-border" />
 
             <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-lg border border-surface-border bg-[#f5f7ff] px-2 py-3 text-center">
+              <div className="rounded-xl bg-blue-50/60 border border-blue-100/60 px-2 py-3 text-center">
                 <p className="text-lg font-bold text-blue-600">48</p>
-                <p className="mt-1 text-[11px] text-gray-500">Patients suivis</p>
+                <p className="mt-0.5 text-[10px] font-medium text-slate-500">Patients</p>
               </div>
-              <div className="rounded-lg border border-surface-border bg-[#f5f7ff] px-2 py-3 text-center">
-                <p className="text-lg font-bold text-blue-600">127</p>
-                <p className="mt-1 text-[11px] text-gray-500">Analyses</p>
+              <div className="rounded-xl bg-emerald-50/60 border border-emerald-100/60 px-2 py-3 text-center">
+                <p className="text-lg font-bold text-emerald-600">127</p>
+                <p className="mt-0.5 text-[10px] font-medium text-slate-500">Analyses</p>
               </div>
-              <div className="rounded-lg border border-surface-border bg-[#f5f7ff] px-2 py-3 text-center">
-                <p className="text-lg font-bold text-blue-600">89</p>
-                <p className="mt-1 text-[11px] text-gray-500">Rapports</p>
+              <div className="rounded-xl bg-violet-50/60 border border-violet-100/60 px-2 py-3 text-center">
+                <p className="text-lg font-bold text-violet-600">89</p>
+                <p className="mt-0.5 text-[10px] font-medium text-slate-500">Rapports</p>
               </div>
             </div>
 
@@ -502,20 +503,23 @@ function MonProfil() {
           </Card>
 
           <Card className="lg:col-span-2" padding="lg">
-            <div className="border-b border-surface-border">
-              <nav className="-mb-px flex flex-wrap gap-4 md:gap-8">
+            <div className="border-b border-slate-200/60">
+              <nav className="-mb-px flex flex-wrap gap-1">
                 {tabs.map((tab) => (
                   <button
                     key={tab.id}
                     type="button"
                     onClick={() => setActiveTab(tab.id)}
-                    className={`border-b-2 pb-3 text-sm font-medium transition ${
+                    className={`px-4 pb-3 pt-1 text-sm font-semibold transition-all relative ${
                       activeTab === tab.id
-                        ? "border-blue-600 text-blue-600"
-                        : "border-transparent text-gray-500 hover:text-gray-700"
+                        ? "text-blue-600"
+                        : "text-slate-400 hover:text-slate-700"
                     }`}
                   >
                     {tab.label}
+                    {activeTab === tab.id && (
+                      <span className="absolute bottom-0 left-2 right-2 h-0.5 bg-blue-600 rounded-full" />
+                    )}
                   </button>
                 ))}
               </nav>
@@ -528,7 +532,7 @@ function MonProfil() {
                     <button
                       type="button"
                       onClick={startEdit}
-                      className="rounded-lg border border-surface-border px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-[#f5f7ff]"
+                      className="rounded-lg border border-surface-border px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-blue-50/50"
                     >
                       ✏️ Modifier
                     </button>
@@ -545,7 +549,7 @@ function MonProfil() {
                       <button
                         type="button"
                         onClick={cancelEdit}
-                        className="rounded-lg border border-surface-border px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-[#f5f7ff]"
+                        className="rounded-lg border border-surface-border px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-blue-50/50"
                       >
                         Annuler
                       </button>
@@ -564,7 +568,7 @@ function MonProfil() {
                       onChange={(e) => handleChange("firstName", e.target.value)}
                       readOnly={!editMode}
                       className={`w-full rounded-lg border border-surface-border px-3 py-2 text-sm ${
-                        editMode ? "bg-white" : "bg-[#f5f7ff]"
+                        editMode ? "bg-white" : "bg-slate-50"
                       }`}
                     />
                     {fieldErrors.firstName && (
@@ -580,7 +584,7 @@ function MonProfil() {
                       onChange={(e) => handleChange("lastName", e.target.value)}
                       readOnly={!editMode}
                       className={`w-full rounded-lg border border-surface-border px-3 py-2 text-sm ${
-                        editMode ? "bg-white" : "bg-[#f5f7ff]"
+                        editMode ? "bg-white" : "bg-slate-50"
                       }`}
                     />
                     {fieldErrors.lastName && (
@@ -596,7 +600,7 @@ function MonProfil() {
                       onChange={(e) => handleChange("email", e.target.value)}
                       readOnly={!editMode}
                       className={`w-full rounded-lg border border-surface-border px-3 py-2 text-sm ${
-                        editMode ? "bg-white" : "bg-[#f5f7ff]"
+                        editMode ? "bg-white" : "bg-slate-50"
                       }`}
                     />
                     {fieldErrors.email && <p className="mt-1 text-xs text-red-600">{fieldErrors.email}</p>}
@@ -610,7 +614,7 @@ function MonProfil() {
                       onChange={(e) => handleChange("phone", e.target.value)}
                       readOnly={!editMode}
                       className={`w-full rounded-lg border border-surface-border px-3 py-2 text-sm ${
-                        editMode ? "bg-white" : "bg-[#f5f7ff]"
+                        editMode ? "bg-white" : "bg-slate-50"
                       }`}
                     />
                     {fieldErrors.phone && <p className="mt-1 text-xs text-red-600">{fieldErrors.phone}</p>}
@@ -624,7 +628,7 @@ function MonProfil() {
                       onChange={(e) => handleChange("birthDate", e.target.value)}
                       readOnly={!editMode}
                       className={`w-full rounded-lg border border-surface-border px-3 py-2 text-sm ${
-                        editMode ? "bg-white" : "bg-[#f5f7ff]"
+                        editMode ? "bg-white" : "bg-slate-50"
                       }`}
                     />
                     {fieldErrors.birthDate && (
@@ -639,7 +643,7 @@ function MonProfil() {
                       onChange={(e) => handleChange("gender", e.target.value)}
                       disabled={!editMode}
                       className={`w-full rounded-lg border border-surface-border px-3 py-2 text-sm ${
-                        editMode ? "bg-white" : "bg-[#f5f7ff]"
+                        editMode ? "bg-white" : "bg-slate-50"
                       }`}
                     >
                       <option value="Homme">Homme</option>
@@ -656,7 +660,7 @@ function MonProfil() {
                       onChange={(e) => handleChange("nationality", e.target.value)}
                       readOnly={!editMode}
                       className={`w-full rounded-lg border border-surface-border px-3 py-2 text-sm ${
-                        editMode ? "bg-white" : "bg-[#f5f7ff]"
+                        editMode ? "bg-white" : "bg-slate-50"
                       }`}
                     />
                     {fieldErrors.nationality && (
@@ -685,7 +689,7 @@ function MonProfil() {
                       onChange={(e) => handleChange("specialty", e.target.value)}
                       disabled={!editMode}
                       className={`w-full rounded-lg border border-surface-border px-3 py-2 text-sm ${
-                        editMode ? "bg-white" : "bg-[#f5f7ff]"
+                        editMode ? "bg-white" : "bg-slate-50"
                       }`}
                     >
                       <option value="Neurologue">Neurologue</option>
@@ -706,7 +710,7 @@ function MonProfil() {
                       onChange={(e) => handleChange("subSpecialty", e.target.value)}
                       readOnly={!editMode}
                       className={`w-full rounded-lg border border-surface-border px-3 py-2 text-sm ${
-                        editMode ? "bg-white" : "bg-[#f5f7ff]"
+                        editMode ? "bg-white" : "bg-slate-50"
                       }`}
                     />
                     {fieldErrors.subSpecialty && (
@@ -722,7 +726,7 @@ function MonProfil() {
                       onChange={(e) => handleChange("institution", e.target.value)}
                       readOnly={!editMode}
                       className={`w-full rounded-lg border border-surface-border px-3 py-2 text-sm ${
-                        editMode ? "bg-white" : "bg-[#f5f7ff]"
+                        editMode ? "bg-white" : "bg-slate-50"
                       }`}
                     />
                     {fieldErrors.institution && (
@@ -738,7 +742,7 @@ function MonProfil() {
                       onChange={(e) => handleChange("department", e.target.value)}
                       readOnly={!editMode}
                       className={`w-full rounded-lg border border-surface-border px-3 py-2 text-sm ${
-                        editMode ? "bg-white" : "bg-[#f5f7ff]"
+                        editMode ? "bg-white" : "bg-slate-50"
                       }`}
                     />
                     {fieldErrors.department && (
@@ -766,7 +770,7 @@ function MonProfil() {
                       onChange={(e) => handleChange("experienceYears", Number(e.target.value) || 0)}
                       readOnly={!editMode}
                       className={`w-full rounded-lg border border-surface-border px-3 py-2 text-sm ${
-                        editMode ? "bg-white" : "bg-[#f5f7ff]"
+                        editMode ? "bg-white" : "bg-slate-50"
                       }`}
                     />
                     {fieldErrors.experienceYears && (
@@ -812,7 +816,7 @@ function MonProfil() {
                       onChange={(e) => handleChange("bio", e.target.value)}
                       readOnly={!editMode}
                       className={`w-full rounded-lg border border-surface-border px-3 py-2 text-sm ${
-                        editMode ? "bg-white" : "bg-[#f5f7ff]"
+                        editMode ? "bg-white" : "bg-slate-50"
                       }`}
                     />
                     {fieldErrors.bio && <p className="mt-1 text-xs text-red-600">{fieldErrors.bio}</p>}
@@ -823,7 +827,7 @@ function MonProfil() {
               {activeTab === "security" && (
                 <div className="space-y-8">
                   <div>
-                    <h3 className="text-lg font-semibold text-[#1a2332]">Changer le mot de passe</h3>
+                    <h3 className="text-lg font-semibold text-slate-900">Changer le mot de passe</h3>
                     <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                       <div>
                         <label className="mb-1 block text-sm font-medium text-gray-700">Mot de passe actuel</label>
@@ -907,7 +911,7 @@ function MonProfil() {
                   </div>
 
                   <div>
-                    <h3 className="text-lg font-semibold text-[#1a2332]">Sessions actives</h3>
+                    <h3 className="text-lg font-semibold text-slate-900">Sessions actives</h3>
                     <div className="mt-3 overflow-hidden rounded-xl border border-surface-border">
                       <div className="flex flex-col divide-y divide-gray-100">
                         <div className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
@@ -940,8 +944,8 @@ function MonProfil() {
                   </div>
 
                   <div>
-                    <h3 className="text-lg font-semibold text-[#1a2332]">Authentification a deux facteurs</h3>
-                    <div className="mt-3 flex items-start justify-between gap-4 rounded-xl border border-surface-border bg-[#f5f7ff] p-4">
+                    <h3 className="text-lg font-semibold text-slate-900">Authentification a deux facteurs</h3>
+                    <div className="mt-3 flex items-start justify-between gap-4 rounded-xl border border-surface-border bg-slate-50 p-4">
                       <div>
                         <p className="text-sm font-medium text-gray-800">
                           Activer l'authentification a deux facteurs
@@ -968,7 +972,7 @@ function MonProfil() {
               {activeTab === "preferences" && (
                 <div className="space-y-8">
                   <div>
-                    <h3 className="text-lg font-semibold text-[#1a2332]">Preferences d'affichage</h3>
+                    <h3 className="text-lg font-semibold text-slate-900">Preferences d'affichage</h3>
                     <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                       <div>
                         <label className="mb-1 block text-sm font-medium text-gray-700">
@@ -1035,18 +1039,18 @@ function MonProfil() {
                   </div>
 
                   <div>
-                    <h3 className="text-lg font-semibold text-[#1a2332]">Notifications</h3>
+                    <h3 className="text-lg font-semibold text-slate-900">Notifications</h3>
                     <div className="mt-4 space-y-3 rounded-xl border border-surface-border p-4">
                       {[
                         { key: "mriDone", label: "Nouvelle analyse MRI terminee" },
                         { key: "reportReady", label: "Rapport PDF pret au telechargement" },
                         { key: "complaintUpdated", label: "Reclamation mise a jour" },
                         { key: "securityAlerts", label: "Alertes de securite (compte)" },
-                        { key: "newsletter", label: "Newsletter et mises a jour VisionMed" },
+                        { key: "newsletter", label: "Newsletter et mises a jour NeuroScan" },
                       ].map((item) => (
                         <div
                           key={item.key}
-                          className="flex items-center justify-between rounded-lg bg-[#f5f7ff] px-3 py-2"
+                          className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2"
                         >
                           <p className="text-sm text-gray-700">{item.label}</p>
                           <ToggleSwitch

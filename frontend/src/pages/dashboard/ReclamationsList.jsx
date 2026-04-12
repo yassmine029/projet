@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, FileText, X, ExternalLink } from 'lucide-react';
+import { Plus, FileText, X, ExternalLink, HelpCircle, MessageSquare, ChevronRight } from 'lucide-react';
 import api from '../../api';
 import ReclamationModal from '../../components/dashboard/ReclamationModal';
 import PageHeader from '../../components/ui/PageHeader';
@@ -22,10 +22,7 @@ export default function ReclamationsList() {
 
   const resolveFichierUrl = (fichierUrl) => {
     if (!fichierUrl) return null;
-
-    // If the backend already returns an absolute URL, use it directly.
     if (/^https?:\/\//i.test(fichierUrl)) return fichierUrl;
-
     const apiBase = api.defaults?.baseURL || window.location.origin;
     const backendOrigin = new URL(apiBase, window.location.origin).origin;
     return new URL(fichierUrl, backendOrigin).toString();
@@ -35,9 +32,7 @@ export default function ReclamationsList() {
     setLoading(true);
     try {
       const res = await api.get('/reclamations/');
-      if (res.data && res.data.ok) {
-        setReclamations(res.data.reclamations || []);
-      }
+      if (res.data && res.data.ok) setReclamations(res.data.reclamations || []);
     } catch (err) {
       console.error("Failed to fetch reclamations:", err);
     } finally {
@@ -45,21 +40,11 @@ export default function ReclamationsList() {
     }
   };
 
-  useEffect(() => {
-    fetchReclamations();
-  }, []);
-
-  const handleReclamationCreated = () => {
-    fetchReclamations();
-  };
+  useEffect(() => { fetchReclamations(); }, []);
 
   const openEditModal = (reclamation) => {
     setEditingReclamation(reclamation);
-    setEditForm({
-      description: reclamation?.description || '',
-      etat: reclamation?.etat || 'en_attente',
-      file: null,
-    });
+    setEditForm({ description: reclamation?.description || '', etat: reclamation?.etat || 'en_attente', file: null });
     setEditError('');
     setIsEditOpen(true);
   };
@@ -75,33 +60,21 @@ export default function ReclamationsList() {
   const handleEditSubmit = async (e) => {
     e.preventDefault();
     if (!editingReclamation) return;
-
     const trimmed = String(editForm.description || '').trim();
-    if (!trimmed) {
-      setEditError('La description est obligatoire.');
-      return;
-    }
-
+    if (!trimmed) { setEditError('La description est obligatoire.'); return; }
     setEditLoading(true);
     setEditError('');
     try {
       const fd = new FormData();
       fd.append('description', trimmed);
       fd.append('etat', editForm.etat || 'en_attente');
-      if (editForm.file) {
-        fd.append('fichier', editForm.file);
-      }
-
-      await api.post(`/reclamations/${editingReclamation.id}/`, fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-
+      if (editForm.file) fd.append('fichier', editForm.file);
+      await api.post(`/reclamations/${editingReclamation.id}/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
       closeEditModal();
       fetchReclamations();
     } catch (err) {
       console.error('Failed to edit reclamation:', err);
-      const apiError = err?.response?.data?.error;
-      setEditError(apiError || 'La modification de la reclamation a echoue.');
+      setEditError(err?.response?.data?.error || 'La modification de la reclamation a echoue.');
     } finally {
       setEditLoading(false);
     }
@@ -110,7 +83,6 @@ export default function ReclamationsList() {
   const handleDeleteReclamation = async (reclamation) => {
     const ok = window.confirm(`Supprimer la reclamation ${reclamation.numero || `#${reclamation.id}`} ?`);
     if (!ok) return;
-
     try {
       await api.delete(`/reclamations/${reclamation.id}/`);
       fetchReclamations();
@@ -123,27 +95,18 @@ export default function ReclamationsList() {
   const openPreview = (fichierUrl) => {
     const fileUrl = resolveFichierUrl(fichierUrl);
     if (!fileUrl) return;
-
     setPreviewFileUrl(fileUrl);
     setPreviewHasError(false);
     setIsPreviewOpen(true);
   };
 
-  const closePreview = () => {
-    setIsPreviewOpen(false);
-    setPreviewFileUrl(null);
-    setPreviewHasError(false);
-  };
+  const closePreview = () => { setIsPreviewOpen(false); setPreviewFileUrl(null); setPreviewHasError(false); };
 
   const getStatusBadge = (status) => {
-    switch(status) {
-      case 'payee':
-        return <Badge variant="success">Payee</Badge>;
-      case 'rejetee':
-        return <Badge variant="urgence">Rejetee</Badge>;
-      case 'en_attente':
-      default:
-        return <Badge variant="warning">En attente</Badge>;
+    switch (status) {
+      case 'payee': return <Badge variant="success" dot>Payee</Badge>;
+      case 'rejetee': return <Badge variant="urgence" dot>Rejetee</Badge>;
+      default: return <Badge variant="warning" dot>En attente</Badge>;
     }
   };
 
@@ -151,86 +114,80 @@ export default function ReclamationsList() {
     if (!dateStr) return '-';
     try {
       const d = new Date(dateStr);
-      return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } catch (e) {
-      return dateStr;
-    }
+      return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    } catch { return dateStr; }
   };
 
   return (
-    <div className="max-w-[1200px] space-y-6 bg-[#f5f7ff]">
+    <div className="max-w-[1200px] space-y-6 animate-fade-in">
       <PageHeader
+        icon={HelpCircle}
         title="Mes Reclamations"
-        subtitle={`${reclamations.length} reclamations trouvees`}
+        subtitle={`${reclamations.length} reclamation${reclamations.length !== 1 ? 's' : ''} soumise${reclamations.length !== 1 ? 's' : ''}`}
         actions={
-          <Button variant="primary" onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 shadow-card">
-            <Plus className="w-5 h-5" />
-            Ajouter Reclamation
+          <Button variant="primary" onClick={() => setIsModalOpen(true)}>
+            <Plus className="w-4 h-4" />
+            Nouvelle Reclamation
           </Button>
         }
       />
 
-      {/* Reclamations Table */}
-      <Card padding="sm" className="rounded-[14px] overflow-hidden">
+      <Card padding="none" className="overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+          <table className="w-full text-left">
             <thead>
-              <tr className="bg-[#f5f7ff] border-b border-surface-border">
-                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Numero</th>
-                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide w-1/3">Description</th>
-                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Date</th>
-                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide text-center">Etat</th>
-                <th className="p-4 text-xs font-bold text-[#9ca3af] uppercase tracking-wide text-right">Actions</th>
+              <tr className="bg-slate-50/80 border-b border-slate-200/60">
+                <th className="px-5 py-3.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Numero</th>
+                <th className="px-5 py-3.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest w-1/3">Description</th>
+                <th className="px-5 py-3.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Date</th>
+                <th className="px-5 py-3.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-center">Etat</th>
+                <th className="px-5 py-3.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-surface-border">
+            <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan="5" className="p-8 text-center text-gray-600">Chargement des reclamations...</td>
+                  <td colSpan="5" className="px-5 py-16 text-center">
+                    <span className="inline-block h-8 w-8 animate-spin rounded-full border-[3px] border-blue-600 border-t-transparent" />
+                    <p className="text-sm text-slate-500 mt-3">Chargement des reclamations...</p>
+                  </td>
                 </tr>
               ) : reclamations.length === 0 ? (
                 <tr>
-                  <td colSpan="5" className="p-8 text-center text-gray-600">Aucune reclamation trouvee.</td>
+                  <td colSpan="5" className="px-5 py-16 text-center">
+                    <MessageSquare className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                    <p className="text-sm font-semibold text-slate-500 mb-1">Aucune reclamation</p>
+                    <p className="text-xs text-slate-400 mb-4">Soumettez une reclamation si necessaire.</p>
+                  </td>
                 </tr>
               ) : (
                 reclamations.map(reclamation => (
-                  <tr key={reclamation.id} className="hover:bg-[#f5f7ff] transition-colors">
-                    <td className="p-4 text-sm font-semibold text-primary">{reclamation.numero}</td>
-                    <td className="p-4 text-sm text-gray-600 truncate max-w-[250px]">
+                  <tr key={reclamation.id} className="hover:bg-blue-50/30 transition-colors group">
+                    <td className="px-5 py-3.5">
+                      <span className="text-sm font-semibold text-blue-600">{reclamation.numero}</span>
+                    </td>
+                    <td className="px-5 py-3.5 text-sm text-slate-600 truncate max-w-[250px]">
                       {reclamation.description}
                     </td>
-                    <td className="p-4 text-sm text-gray-600">{formatDate(reclamation.date)}</td>
-                    <td className="p-4 text-center">
-                      {getStatusBadge(reclamation.etat)}
-                    </td>
-                    <td className="p-4 text-right">
-                      <div className="inline-flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          onClick={() => openEditModal(reclamation)}
-                        >
+                    <td className="px-5 py-3.5 text-sm text-slate-500">{formatDate(reclamation.date)}</td>
+                    <td className="px-5 py-3.5 text-center">{getStatusBadge(reclamation.etat)}</td>
+                    <td className="px-5 py-3.5 text-right">
+                      <div className="inline-flex items-center gap-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => openEditModal(reclamation)}
+                          className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
                           Modifier
-                        </Button>
-                        <Button
-                          variant="accent"
-                          onClick={() => handleDeleteReclamation(reclamation)}
-                        >
+                        </button>
+                        <button onClick={() => handleDeleteReclamation(reclamation)}
+                          className="px-3 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors">
                           Supprimer
-                        </Button>
+                        </button>
                         <button
-                          onClick={() => {
-                            if (reclamation.fichier_url) {
-                              openPreview(reclamation.fichier_url);
-                            }
-                          }}
+                          onClick={() => reclamation.fichier_url && openPreview(reclamation.fichier_url)}
                           disabled={!reclamation.fichier_url}
-                          className={`p-2 rounded-lg transition-colors inline-block
-                            ${reclamation.fichier_url
-                              ? 'text-primary bg-primary-light hover:bg-[#dbe6fb] cursor-pointer'
-                              : 'text-gray-300 bg-[#f5f7ff] cursor-not-allowed'}`}
+                          className={`p-1.5 rounded-lg transition-colors ${reclamation.fichier_url ? 'text-blue-600 bg-blue-50 hover:bg-blue-100' : 'text-slate-300 cursor-not-allowed'}`}
                           title={reclamation.fichier_url ? 'Voir le fichier' : 'Aucun fichier joint'}
                         >
-                          <FileText className="w-5 h-5" />
+                          <FileText className="w-4 h-4" />
                         </button>
                       </div>
                     </td>
@@ -242,123 +199,86 @@ export default function ReclamationsList() {
         </div>
       </Card>
 
-      <ReclamationModal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
-        onReclamationCreated={handleReclamationCreated} 
-      />
+      <ReclamationModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onReclamationCreated={fetchReclamations} />
 
-      {isEditOpen && editingReclamation ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={closeEditModal}>
-          <div
-            className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
+      {/* Edit Modal */}
+      {isEditOpen && editingReclamation && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-900/60 backdrop-blur-sm p-4" onClick={closeEditModal}>
+          <div className="w-full max-w-2xl rounded-2xl bg-white shadow-glass animate-slide-up" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
               <div>
-                <h3 className="text-lg font-bold text-[#1a1f3c]">Modifier la reclamation</h3>
-                <p className="text-xs text-slate-500 mt-1">Vous pouvez modifier la description et remplacer la capture jointe.</p>
+                <h3 className="text-lg font-bold text-slate-900">Modifier la reclamation</h3>
+                <p className="text-xs text-slate-500 mt-0.5">Modifiez la description ou remplacez la capture.</p>
               </div>
-              <button
-                onClick={closeEditModal}
-                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
-                title="Fermer"
-              >
+              <button onClick={closeEditModal} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <form onSubmit={handleEditSubmit} className="space-y-5 px-6 py-5">
-              {editError ? (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {editError}
-                </div>
-              ) : null}
+              {editError && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700 font-medium">{editError}</div>}
 
               <div>
-                <label className="mb-2 block text-sm font-semibold text-[#1a1f3c]">Description</label>
+                <label className="mb-1.5 block text-[11px] font-bold text-slate-500 uppercase tracking-widest">Description</label>
                 <textarea
                   value={editForm.description}
-                  onChange={(e) => setEditForm((prev) => ({ ...prev, description: e.target.value }))}
-                  className="min-h-[110px] w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-[#1a2b6d] focus:ring-2 focus:ring-[#1a2b6d]/10"
+                  onChange={(e) => setEditForm(prev => ({ ...prev, description: e.target.value }))}
+                  className="min-h-[100px] w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-3 focus:ring-blue-500/10"
                   placeholder="Description de la reclamation"
                 />
               </div>
 
-              <div className="grid grid-cols-1 gap-4">
-                <div>
-                  <label className="mb-2 block text-sm font-semibold text-[#1a1f3c]">Remplacer la capture</label>
-                  <input
-                    type="file"
-                    accept="image/*,.pdf"
-                    onChange={(e) => setEditForm((prev) => ({ ...prev, file: e.target.files?.[0] || null }))}
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-[#e8edf8] file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-[#1a2b6d]"
-                  />
-                </div>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-bold text-slate-500 uppercase tracking-widest">Remplacer la capture</label>
+                <input type="file" accept="image/*,.pdf"
+                  onChange={(e) => setEditForm(prev => ({ ...prev, file: e.target.files?.[0] || null }))}
+                  className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-blue-50 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-blue-600"
+                />
               </div>
 
-              {editingReclamation.fichier_url ? (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              {editingReclamation.fichier_url && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs text-slate-600 flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-slate-400" />
                   Capture actuelle disponible.
-                  <button
-                    type="button"
-                    className="ml-2 font-semibold text-[#1a2b6d] hover:underline"
-                    onClick={() => openPreview(editingReclamation.fichier_url)}
-                  >
+                  <button type="button" className="font-semibold text-blue-600 hover:underline" onClick={() => openPreview(editingReclamation.fichier_url)}>
                     Voir
                   </button>
                 </div>
-              ) : null}
+              )}
 
               <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
-                <Button type="button" variant="outline" onClick={closeEditModal}>
-                  Annuler
-                </Button>
+                <Button type="button" variant="outline" onClick={closeEditModal}>Annuler</Button>
                 <Button type="submit" variant="primary" disabled={editLoading}>
-                  {editLoading ? 'Enregistrement...' : 'Enregistrer les modifications'}
+                  {editLoading ? 'Enregistrement...' : 'Enregistrer'}
                 </Button>
               </div>
             </form>
           </div>
         </div>
-      ) : null}
+      )}
 
+      {/* Preview Modal */}
       {isPreviewOpen && previewFileUrl && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={closePreview}>
-          <div
-            className="w-full max-w-4xl rounded-2xl bg-white shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-              <h2 className="text-sm font-bold text-[#1a1f3c]">Capture de la réclamation</h2>
-              <button
-                onClick={closePreview}
-                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
-                title="Fermer"
-              >
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-900/70 backdrop-blur-sm p-4" onClick={closePreview}>
+          <div className="w-full max-w-4xl rounded-2xl bg-white shadow-glass" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5">
+              <h2 className="text-sm font-bold text-slate-900">Apercu de la capture</h2>
+              <button onClick={closePreview} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors">
                 <X className="h-5 w-5" />
               </button>
             </div>
-
-            <div className="max-h-[75vh] overflow-auto p-4">
+            <div className="max-h-[75vh] overflow-auto p-5">
               {previewHasError ? (
                 <div className="space-y-3 text-center text-sm text-slate-600">
-                  <p>Impossible d&apos;afficher un aperçu de cette capture.</p>
-                  <button
-                    onClick={() => window.open(previewFileUrl, '_blank', 'noopener,noreferrer')}
-                    className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 font-semibold text-white hover:bg-primary-dark"
-                  >
-                    <ExternalLink className="h-4 w-4" />
-                    Ouvrir le fichier
-                  </button>
+                  <p>Impossible d&apos;afficher un apercu de cette capture.</p>
+                  <Button variant="primary" onClick={() => window.open(previewFileUrl, '_blank', 'noopener,noreferrer')}>
+                    <ExternalLink className="h-4 w-4" /> Ouvrir le fichier
+                  </Button>
                 </div>
               ) : (
-                <img
-                  src={previewFileUrl}
-                  alt="Capture réclamation"
-                  className="mx-auto max-h-[70vh] w-auto max-w-full rounded-lg border border-slate-100"
-                  onError={() => setPreviewHasError(true)}
-                />
+                <img src={previewFileUrl} alt="Capture reclamation"
+                  className="mx-auto max-h-[70vh] w-auto max-w-full rounded-xl border border-slate-100"
+                  onError={() => setPreviewHasError(true)} />
               )}
             </div>
           </div>

@@ -1,14 +1,16 @@
 import React from 'react';
-import { 
+import {
+  Brain,
   House,
-  LayoutDashboard, 
-  Users, 
-  FileImage, 
-  FileText, 
-  HelpCircle, 
-  User, 
-  Settings, 
-  LogOut 
+  LayoutDashboard,
+  Users,
+  FileImage,
+  FileText,
+  HelpCircle,
+  User,
+  Settings,
+  LogOut,
+  ChevronRight,
 } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { logout } from '../api';
@@ -16,11 +18,11 @@ import { logout } from '../api';
 const NavItem = ({ to, icon: Icon, label, exact = false, isLogout = false, onClick }) => {
   if (isLogout) {
     return (
-      <button 
+      <button
         onClick={onClick}
-        className="flex items-center gap-3 px-4 py-2.5 text-accent hover:bg-accent-light w-full text-left text-sm transition-colors"
+        className="flex items-center gap-3 px-3 py-2.5 w-full text-left text-[13px] font-medium rounded-xl text-red-400/70 hover:text-red-400 hover:bg-red-500/10 transition-all duration-200"
       >
-        <Icon className="w-5 h-5" />
+        <Icon className="w-[18px] h-[18px]" />
         {label}
       </button>
     );
@@ -31,25 +33,35 @@ const NavItem = ({ to, icon: Icon, label, exact = false, isLogout = false, onCli
       to={to}
       end={exact}
       className={({ isActive }) =>
-        `flex items-center gap-3 px-4 py-2.5 text-sm rounded-md transition-colors ${
+        `group flex items-center gap-3 px-3 py-2.5 text-[13px] font-medium rounded-xl transition-all duration-200 relative ${
           isActive
-            ? 'bg-primary-light text-primary font-medium border-l-2 border-primary rounded-r-none'
-            : 'text-gray-600 hover:bg-[#f5f7ff] hover:text-primary border-l-2 border-transparent'
+            ? 'bg-blue-500/15 text-blue-400 shadow-inner-glow'
+            : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
         }`
       }
     >
-      <Icon className="w-5 h-5" />
-      {label}
+      {({ isActive }) => (
+        <>
+          {isActive && (
+            <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-blue-400 rounded-r-full" />
+          )}
+          <Icon className="w-[18px] h-[18px] flex-shrink-0" />
+          <span className="flex-1">{label}</span>
+          {!isActive && (
+            <ChevronRight className="w-3.5 h-3.5 text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+          )}
+        </>
+      )}
     </NavLink>
   );
 };
 
 const NavSection = ({ title, children }) => (
-  <div className="mb-6">
-    <h3 className="px-4 mb-1 text-[10px] uppercase tracking-widest text-gray-400 font-medium">
+  <div className="mb-4">
+    <h3 className="px-3 mb-2 text-[9px] font-bold uppercase tracking-[0.2em] text-slate-600">
       {title}
     </h3>
-    <nav className="space-y-0.5">
+    <nav className="space-y-0.5 px-1">
       {children}
     </nav>
   </div>
@@ -69,29 +81,45 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="fixed top-0 left-0 h-screen w-64 bg-white border-r border-surface-border flex flex-col z-10">
-      {/* Header / Logo */}
-      <div className="h-24 flex items-center px-6">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-white font-bold text-lg shadow-sm">
-            V
+    <aside className="fixed top-0 left-0 h-screen w-[260px] bg-sidebar-gradient flex flex-col z-10 border-r border-white/[0.06]">
+      {/* Ambient glow effects */}
+      <div className="pointer-events-none absolute top-0 left-0 w-full h-40 bg-gradient-to-b from-blue-500/[0.04] to-transparent" />
+      <div className="pointer-events-none absolute bottom-0 left-0 w-full h-32 bg-gradient-to-t from-blue-500/[0.03] to-transparent" />
+
+      {/* Logo */}
+      <div className="h-[72px] flex items-center px-5 relative">
+        <div
+          className="flex items-center gap-3 cursor-pointer group"
+          onClick={() => navigate('/')}
+        >
+          <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/25 group-hover:shadow-blue-500/40 transition-shadow">
+            <Brain className="w-5 h-5 text-white" />
           </div>
-          <span className="text-xl font-bold text-primary tracking-tight">VisionMed</span>
+          <div>
+            <span className="text-[15px] font-bold tracking-tight text-white block leading-tight">NeuroScan</span>
+            <span className="text-[9px] font-semibold text-blue-400/80 uppercase tracking-[0.15em]">Clinical Platform</span>
+          </div>
         </div>
       </div>
 
-      {/* Nav Content */}
-      <div className="flex-1 overflow-y-auto py-2">
-        <NavSection title="Clinique">
+      {/* Divider */}
+      <div className="mx-5 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+
+      {/* Navigation */}
+      <div className="flex-1 overflow-y-auto py-4 px-3 scrollbar-thin">
+        <NavSection title="Principal">
           <NavItem to="/" icon={House} label="Accueil" />
           <NavItem to="/dashboard" exact icon={LayoutDashboard} label="Tableau de bord" />
+        </NavSection>
+
+        <NavSection title="Clinique">
           <NavItem to="/dashboard/patients" icon={Users} label="Mes Patients" />
+          <NavItem to="/dashboard/analysesMRI" icon={FileImage} label="Analyses MRI" />
         </NavSection>
 
         <NavSection title="Documents">
-          <NavItem to="/dashboard/analysesMRI" icon={FileImage} label="Analyses MRI" />
           <NavItem to="/dashboard/reports" icon={FileText} label="Rapports" />
-          <NavItem to="/dashboard/reclamations" icon={HelpCircle} label="Mes Réclamations" />
+          <NavItem to="/dashboard/reclamations" icon={HelpCircle} label="Réclamations" />
         </NavSection>
 
         <NavSection title="Compte">
@@ -100,8 +128,9 @@ export default function Sidebar() {
         </NavSection>
       </div>
 
-      {/* Footer / Logout */}
-      <div className="p-4 mb-4">
+      {/* Bottom section */}
+      <div className="mx-5 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+      <div className="p-3">
         <NavItem isLogout icon={LogOut} label="Déconnexion" onClick={handleLogout} />
       </div>
     </aside>

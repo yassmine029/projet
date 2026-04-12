@@ -87,10 +87,10 @@ export default function SegmentationModal({ onClose, onPatientSelected }) {
       <div className="w-full max-w-4xl bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden flex flex-col max-h-[90vh]">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-blue-50 text-[#3b6fd4]">
+            <div className="p-2 rounded-lg bg-blue-50 text-blue-600">
               <UserRound className="w-5 h-5" />
             </div>
-            <h2 className="text-lg md:text-xl font-bold text-[#1a1f3c]">
+            <h2 className="text-lg md:text-xl font-bold text-slate-900">
               Nouvelle segmentation — Étape 1/3 : Sélection du patient
             </h2>
           </div>
@@ -112,7 +112,7 @@ export default function SegmentationModal({ onClose, onPatientSelected }) {
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Rechercher un patient par nom..."
-              className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#3b6fd4]/30 focus:border-[#3b6fd4] text-sm"
+              className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 text-sm"
             />
           </div>
         </div>
@@ -120,7 +120,7 @@ export default function SegmentationModal({ onClose, onPatientSelected }) {
         <div className="px-6 py-4 overflow-y-auto flex-1 min-h-[300px]">
           {loading && (
             <div className="h-full flex items-center justify-center text-slate-500 gap-3">
-              <RefreshCw className="w-5 h-5 animate-spin text-[#3b6fd4]" />
+              <RefreshCw className="w-5 h-5 animate-spin text-blue-600" />
               <span className="text-sm font-medium">Chargement des patients...</span>
             </div>
           )}
@@ -148,13 +148,13 @@ export default function SegmentationModal({ onClose, onPatientSelected }) {
                     key={patient.id}
                     className={`rounded-xl border p-4 transition-all ${
                       isSelected
-                        ? 'border-[#3b6fd4] bg-blue-50/50 shadow-sm'
+                        ? 'border-blue-600 bg-blue-50/50 shadow-sm'
                         : 'border-slate-200 bg-white hover:border-slate-300'
                     }`}
                   >
                     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                       <div>
-                        <p className="font-semibold text-[#1a1f3c]">{fullName}</p>
+                        <p className="font-semibold text-slate-900">{fullName}</p>
                         <p className="text-sm text-slate-500">Date de naissance : {formatBirthDate(patient.date_of_birth)}</p>
                       </div>
 
@@ -163,7 +163,7 @@ export default function SegmentationModal({ onClose, onPatientSelected }) {
                         onClick={() => setSelectedPatientId(patient.id)}
                         className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
                           isSelected
-                            ? 'bg-[#3b6fd4] text-white'
+                            ? 'bg-blue-600 text-white'
                             : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                         }`}
                       >
@@ -182,7 +182,7 @@ export default function SegmentationModal({ onClose, onPatientSelected }) {
             <button
               type="button"
               onClick={() => onPatientSelected(selectedPatient)}
-              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#3b6fd4] text-white text-sm font-semibold shadow-sm hover:bg-blue-700 transition-colors"
+              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold shadow-sm hover:bg-blue-700 transition-colors"
             >
               Continuer →
               <ArrowRight className="w-4 h-4" />

@@ -74,18 +74,18 @@ export default function Sidebar() {
           Navigation
         </div>
         <nav className="space-y-1">
-          <NavItem to="/dashboard" exact icon={LayoutDashboard} label="Tableau de bord" />
-          <NavItem to="/dashboard/comptes" icon={Users} label="Comptes" />
-          <NavItem to="/dashboard/temoignages" icon={Quote} label="Témoignages" />
-          <NavItem to="/dashboard/reclamations" icon={MessageSquareWarning} label="Réclamations" />
-          <NavItem to="/dashboard/historique" icon={History} label="Historique" />
+          <NavItem to="/admin" exact icon={LayoutDashboard} label="Tableau de bord" />
+          <NavItem to="/admin/comptes" icon={Users} label="Comptes" />
+          <NavItem to="/admin/temoignages" icon={Quote} label="Témoignages" />
+          <NavItem to="/admin/reclamations" icon={MessageSquareWarning} label="Réclamations" />
+          <NavItem to="/admin/historique" icon={History} label="Historique" />
         </nav>
 
         <div className="mb-3 mt-8 px-3 text-[11px] font-bold uppercase tracking-[0.2em] text-blue-200/50">
           Système
         </div>
         <nav className="space-y-1">
-          <NavItem to="/dashboard/parametres" icon={Settings} label="Paramètres" />
+          <NavItem to="/admin/parametres" icon={Settings} label="Paramètres" />
         </nav>
       </div>
 

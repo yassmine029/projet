@@ -7,16 +7,18 @@ const api = axios.create({
 });
 
 // Auth
-export const register = ({ username, password, fullName, specialty } = {}) =>
-  api.post("/register", { username, password, fullName, specialty });
+export const register = (payload = {}) =>
+  api.post("/register", payload);
 export const login = (username, password) => api.post("/login", { username, password });
-export const emergencyLogin = (email) => api.post("/emergency_login", { email });
-export const checkEmergencyLimit = (email) => api.post("/emergency_check", { email });
+export const emergencyLogin = (email, orderNumber) => api.post("/emergency_login", { email, order_number: orderNumber });
+export const checkEmergencyLimit = (email, orderNumber) => api.post("/emergency_check", { email, order_number: orderNumber });
 export const logout = () => api.post("/logout");
 export const checkSession = () => api.get("/check_session");
 export const forgotPassword = (email) => api.post("/forgot_password", { email });
 export const validateResetToken = (token) => api.post("/validate_reset_token", { token });
 export const resetPassword = (token, newPassword) => api.post("/reset_password", { token, new_password: newPassword });
+export const validateActivationToken = (token) => api.post("/validate_activation_token", { token });
+export const activateAccount = (token, newPassword) => api.post("/activate_account", { token, new_password: newPassword });
 
 // Uploads
 export const uploadTwo = (patientId, refFile, patFile) => {
@@ -92,11 +94,20 @@ export const createReclamation = (formData) => api.post("/reclamations/", formDa
 
 // Contact requests (landing popup)
 export const createContactRequest = (data) => api.post('/contact_requests/', data);
+export const getApprovedTestimonials = () => api.get('/testimonials/');
+export const submitTestimonial = (payload) => api.post('/testimonials/submit/', payload);
 
 // Admin dashboard
 export const getAdminOverview = () => api.get('/admin/dashboard/overview');
 export const getAdminAccounts = () => api.get('/admin/dashboard/accounts');
+export const createAdminAccount = (payload) => api.post('/admin/dashboard/accounts/create', payload);
 export const getAdminHistory = () => api.get('/admin/dashboard/history');
 export const getAdminSettings = () => api.get('/admin/dashboard/settings');
+export const getAdminAnalytics = () => api.get('/admin/dashboard/analytics');
+export const getAdminTestimonials = () => api.get('/admin/dashboard/testimonials');
+export const approveAdminAccount = (userId) => api.post(`/admin/dashboard/accounts/${userId}/approve`);
+export const rejectAdminAccount = (userId, reason) => api.post(`/admin/dashboard/accounts/${userId}/reject`, { reason });
+export const approveAdminTestimonial = (testimonialId) => api.post(`/admin/dashboard/testimonials/${testimonialId}/approve`);
+export const rejectAdminTestimonial = (testimonialId) => api.post(`/admin/dashboard/testimonials/${testimonialId}/reject`);
 
 export default api;

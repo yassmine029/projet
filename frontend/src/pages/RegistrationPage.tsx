@@ -41,6 +41,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const [alphaBlending, setAlphaBlending]   = useState(50);
   const [visMode, setVisMode]               = useState<'overlay' | 'split' | 'heatmap'>('split');
   const [splitPos, setSplitPos]             = useState(50);
+  const resultPatYOffset = 0;
   const [showMagnifier, setShowMagnifier]   = useState(false);
   const [magnifierPos, setMagnifierPos]     = useState({ x: 0, y: 0 });
   const [showShortcuts, setShowShortcuts]   = useState(false);
@@ -52,7 +53,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const [autoAlignStatus, setAutoAlignStatus] = useState<'idle'|'processing'|'success'|'error'>('idle');
   const [autoAlignMetrics, setAutoAlignMetrics] = useState<any>(null);
   const [autoAlignError, setAutoAlignError] = useState('');
-  const [autoAlignIters, setAutoAlignIters] = useState(120);
+  const [autoAlignIters, setAutoAlignIters] = useState(300);
   const [jobId, setJobId]                   = useState('');
   const [refView, setRefView]               = useState<ViewTransform>(DEFAULT_VIEW);
   const [patView, setPatView]               = useState<ViewTransform>(DEFAULT_VIEW);
@@ -385,11 +386,11 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       img.src = src;
     });
 
-    const drawCover = (ctx: CanvasRenderingContext2D, img: HTMLImageElement) => {
+    const drawCover = (ctx: CanvasRenderingContext2D, img: HTMLImageElement, offsetY = 0) => {
       ctx.fillStyle = '#f8fafc';
       ctx.fillRect(0, 0, SIZE, SIZE);
       const s = Math.min(SIZE / img.width, SIZE / img.height) * 0.95;
-      ctx.drawImage(img, (SIZE - img.width * s) / 2, (SIZE - img.height * s) / 2, img.width * s, img.height * s);
+      ctx.drawImage(img, (SIZE - img.width * s) / 2, ((SIZE - img.height * s) / 2) + offsetY, img.width * s, img.height * s);
       console.log('✅ drawCover done', img.width, img.height);
     };
 
@@ -397,11 +398,11 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       console.log('✅ Both images loaded, drawing canvases...');
       refCanvas.width = refCanvas.height = SIZE;
       const refCtx = refCanvas.getContext('2d')!;
-      drawCover(refCtx, refImg);
+      drawCover(refCtx, refImg, 0);
 
       patCanvas.width = patCanvas.height = SIZE;
       const patCtx = patCanvas.getContext('2d')!;
-      drawCover(patCtx, patImg);
+      drawCover(patCtx, patImg, resultPatYOffset);
       console.log('✅ Both canvases drawn successfully');
 
       if (visMode === 'heatmap') {
@@ -890,10 +891,10 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         ? ['/api/volume/auto-align']
         : ['/api/volume/auto-align', '/api/auto-align'];
 
-      const safeIters = Math.max(30, Math.min(1000, Number(autoAlignIters) || 120));
+      const safeIters = Math.max(30, Math.min(1000, Number(autoAlignIters) || 300));
       const data = await postRegistrationWithFallback(
         autoAlignEndpoints,
-        { jobId, transform: 'MINE', axis, index, n_iters: safeIters },
+        { jobId, transform: 'MINE', axis, index, n_iters: safeIters, strict_atlas_grid: registrationDimension === '3d' },
         'Recalage automatique échoué'
       );
       if (data.metrics) setAutoAlignMetrics(data.metrics);
@@ -1845,6 +1846,14 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
             </>
           ) : (
             <>
+              <button
+                onClick={startNewRegistration}
+                disabled={autoAlignStatus==='processing'}
+                className={`w-full py-2.5 px-4 rounded-xl border text-[10px] font-bold flex items-center justify-center gap-2 transition-colors ${autoAlignStatus==='processing' ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}
+              >
+                <ArrowLeft className="w-3.5 h-3.5"/> Retour au choix du mode 2D ou 3D
+              </button>
+
               <button onClick={startNewRegistration} className="w-full py-2.5 px-4 rounded-xl border border-blue-300 bg-blue-50 text-[10px] font-bold text-blue-700 hover:bg-blue-100 flex items-center justify-center gap-2 transition-colors">
                 <RotateCcw className="w-3.5 h-3.5"/> Nouveau recalage
               </button>
@@ -1874,16 +1883,22 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                       <input
                         id="auto-iters"
                         type="number"
-                        min={30}
+                        min={300}
                         max={1000}
                         step={10}
                         value={autoAlignIters}
-                        onChange={(e) => setAutoAlignIters(Math.max(30, Math.min(1000, Number(e.target.value) || 120)))}
+                        onChange={(e) => setAutoAlignIters(Math.max(300, Math.min(1000, Number(e.target.value) || 300)))}
                         disabled={autoAlignStatus==='processing'}
                         className="w-24 rounded-md border border-blue-300 bg-white px-2 py-1 text-xs font-semibold text-blue-900 outline-none focus:border-blue-500"
                       />
                     </div>
-                    <p className="mt-1 text-[10px] text-blue-700">Plus d'iterations peut ameliorer l'alignement, mais augmente le temps de calcul.</p>
+                    <p className="mt-1 text-[10px] text-blue-700">Minimum verrouillé a 300 itérations.</p>
+                    <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2">
+                      <p className="text-[10px] font-semibold text-amber-800">
+                        Conseil: vous pouvez augmenter le nombre d'itérations pour améliorer encore le résultat.
+                        Cela peut prendre un peu plus de temps de calcul.
+                      </p>
+                    </div>
                   </div>
 
                   <button onClick={handleAutoAlign} disabled={autoAlignStatus==='processing'}
@@ -2363,9 +2378,35 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
 
                 <div className="relative w-full h-full p-10 flex items-center justify-center">
                   <div className="relative" style={{width:'600px',height:'600px',maxWidth:'100%',maxHeight:'100%'}}>
-                    <canvas ref={resultRefCanvasRef} width={600} height={600} style={{position:'absolute',inset:0,width:'100%',height:'100%'}}/>
-                    <div style={{position:'absolute',inset:0,opacity:visMode==='overlay'?alphaBlending/100:1,clipPath:visMode==='split'?`inset(0 ${100-splitPos}% 0 0)`:'none'}}>
-                      <canvas ref={resultPatCanvasRef} width={600} height={600} style={{width:'100%',height:'100%'}}/>
+                    <div style={{
+                      position: 'absolute',
+                      inset: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      <canvas
+                        ref={resultRefCanvasRef}
+                        width={600}
+                        height={600}
+                        style={{width:'100%',height:'100%',display:'block'}}
+                      />
+                    </div>
+                    <div style={{
+                      position: 'absolute',
+                      inset: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      opacity: visMode==='overlay'?alphaBlending/100:1,
+                      clipPath: visMode==='split'?`inset(0 ${100-splitPos}% 0 0)`:'none'
+                    }}>
+                      <canvas
+                        ref={resultPatCanvasRef}
+                        width={600}
+                        height={600}
+                        style={{width:'100%',height:'100%',display:'block'}}
+                      />
                     </div>
                     {/* Split draggable */}
                     {visMode==='split'&&(

@@ -163,11 +163,11 @@ export default function ForgotPasswordPage({ onNavigate }) {
   }
 
   return (
-    <div className="min-h-screen flex bg-white font-sans selection:bg-blue-100 selection:text-blue-900">
+    <div className="min-h-screen flex bg-[#e9eef8] font-sans selection:bg-blue-100 selection:text-blue-900">
       <div className="fixed top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-400 via-blue-600 to-blue-800 z-50"></div>
 
       <div className="flex-1 flex flex-col justify-center px-8 sm:px-16 lg:px-24 xl:px-32 relative">
-        <div className="absolute top-0 left-0 w-full h-full bg-blue-50/20 -z-10"></div>
+        <div className="absolute top-0 left-0 w-full h-full bg-[#e9eef8] -z-10"></div>
         
         <div className="max-w-md w-full mx-auto space-y-10 py-12 animate-in fade-in slide-in-from-bottom-4 duration-700">
           

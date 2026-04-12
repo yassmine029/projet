@@ -6,6 +6,8 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import { LandingPage } from './pages/LandingPage'
 import { RegistrationPage } from './pages/RegistrationPage'
+import ForgotPasswordPage from './pages/ForgotPasswordPage'
+import ResetPasswordPage from './pages/ResetPasswordPage'
 // import Upload from './pages/Upload'
 // import History from './pages/History'
 // import Patients from './pages/Patients'
@@ -28,6 +30,7 @@ import { checkSession, logout } from './api'
 export default function App() {
   const [user, setUser] = useState(null)
   const [checking, setChecking] = useState(true)
+  const [routeNormalized, setRouteNormalized] = useState(false)
   const [isDarkMode, setIsDarkMode] = useState(() => {
     const saved = localStorage.getItem('theme')
     if (saved === 'dark') return true
@@ -56,7 +59,36 @@ export default function App() {
     localStorage.setItem('theme', isDarkMode ? 'dark' : 'light')
   }, [isDarkMode])
 
-  if (checking) {
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const token = (params.get('token') || '').trim()
+    const pathname = window.location.pathname || '/'
+
+    if (!token) {
+      setRouteNormalized(true)
+      return
+    }
+
+    // Some email clients alter path casing, separators or trailing slashes.
+    const normalizedPath = pathname.toLowerCase().replace(/\/+$/, '')
+    const resetAliases = new Set(['/reset-password', '/reset_password'])
+    const activationAliases = new Set(['/activate-account', '/activate_account'])
+
+    if (activationAliases.has(normalizedPath) || resetAliases.has(normalizedPath)) {
+      setRouteNormalized(true)
+      return
+    }
+
+    if (normalizedPath === '/' || normalizedPath === '/login') {
+      const qs = params.toString()
+      window.location.replace(`/reset-password${qs ? `?${qs}` : ''}`)
+      return
+    }
+
+    setRouteNormalized(true)
+  }, [])
+
+  if (checking || !routeNormalized) {
     return <div style={{ padding: 40 }}>Vérification session...</div>
   }
 
@@ -87,6 +119,26 @@ export default function App() {
     }
   }
 
+  const handleAuthNavigate = (page) => {
+    if (page === 'login') {
+      window.location.pathname = '/login'
+      return
+    }
+    if (page === 'forgot-password') {
+      window.location.pathname = '/forgot-password'
+      return
+    }
+    if (page === 'reset-password') {
+      window.location.pathname = '/reset-password'
+      return
+    }
+    if (page === 'activate-account') {
+      window.location.pathname = '/activate-account'
+      return
+    }
+    window.location.pathname = '/login'
+  }
+
   return (
     <>
       <button
@@ -108,6 +160,42 @@ export default function App() {
         <Route
           path="/login"
           element={user ? <Navigate to="/" replace /> : <Login onLogin={setUser} />}
+        />
+        <Route
+          path="/forgot-password"
+          element={<ForgotPasswordPage onNavigate={handleAuthNavigate} />}
+        />
+        <Route
+          path="/reset-password"
+          element={<ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} />}
+        />
+        <Route
+          path="/reset-password/"
+          element={<ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} />}
+        />
+        <Route
+          path="/reset_password"
+          element={<ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} />}
+        />
+        <Route
+          path="/reset_password/"
+          element={<ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} />}
+        />
+        <Route
+          path="/activate-account"
+          element={<ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} mode="activation" />}
+        />
+        <Route
+          path="/activate-account/"
+          element={<ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} mode="activation" />}
+        />
+        <Route
+          path="/activate_account"
+          element={<ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} mode="activation" />}
+        />
+        <Route
+          path="/activate_account/"
+          element={<ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} mode="activation" />}
         />
         <Route
           path="/dashboard/*"

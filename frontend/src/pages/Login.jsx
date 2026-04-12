@@ -7,6 +7,35 @@ import ForgotPasswordPage from './ForgotPasswordPage'
 import ResetPasswordPage from './ResetPasswordPage'
 import EmergencyLoginPage from './EmergencyLoginPage'
 
+const AFFILIATION_OPTIONS = [
+  'CHU de Monastir',
+  'CHU de Sfax',
+  'CHU de Tunis',
+  'CHU de Sousse',
+  'Hôpital régional',
+  'Clinique privée',
+  'Université / Faculté de médecine',
+  'Autre',
+]
+
+const SPECIALTY_OPTIONS = [
+  { value: 'neuroradiologie', label: 'Neuroradiologie' },
+  { value: 'neurologie', label: 'Neurologie' },
+  { value: 'medecine_nucleaire', label: 'Médecine nucléaire' },
+  { value: 'autre', label: 'Autre' },
+]
+
+const GRADE_OPTIONS = [
+  { value: 'interne', label: 'Interne' },
+  { value: 'resident', label: 'Résident' },
+  { value: 'assistant', label: 'Assistant' },
+  { value: 'praticien', label: 'Praticien' },
+  { value: 'professeur', label: 'Professeur' },
+]
+
+const ORDER_NUMBER_REGEX = /^(?:\d{4,6}|T-\d{4,6})$/
+const PHONE_REGEX = /^[24579]\d{7}$/
+
 export default function Login({ onLogin }) {
   const [currentPage, setCurrentPage] = useState('login')
   const [isSignUp, setIsSignUp] = useState(false)
@@ -18,7 +47,9 @@ export default function Login({ onLogin }) {
   const [hospital, setHospital] = useState('')
   const [nom, setNom] = useState('')
   const [prenom, setPrenom] = useState('')
+  const [orderNumber, setOrderNumber] = useState('')
   const [affiliation, setAffiliation] = useState('')
+  const [customAffiliation, setCustomAffiliation] = useState('')
   const [grade, setGrade] = useState('')
   const [telephone, setTelephone] = useState('')
   const [generatedPassword, setGeneratedPassword] = useState('')
@@ -29,10 +60,15 @@ export default function Login({ onLogin }) {
   const [isLoading, setIsLoading] = useState(false)
   const [emailError, setEmailError] = useState('')
   const [passwordError, setPasswordError] = useState('')
+  const [signUpFieldErrors, setSignUpFieldErrors] = useState({})
   const [emailSuccess, setEmailSuccess] = useState('')
   const [passwordSuccess, setPasswordSuccess] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [passwordGeneratedNotification, setPasswordGeneratedNotification] = useState(false)
+  const [allowSignUpEmailInput, setAllowSignUpEmailInput] = useState(false)
+  const [allowSignUpPasswordInput, setAllowSignUpPasswordInput] = useState(false)
+  const [allowSignInEmailInput, setAllowSignInEmailInput] = useState(false)
+  const [allowSignInPasswordInput, setAllowSignInPasswordInput] = useState(false)
 
   // Sign In password visibility
   const [showSignInPassword, setShowSignInPassword] = useState(false)
@@ -45,10 +81,41 @@ export default function Login({ onLogin }) {
   // Error type tracking
   const [errorType, setErrorType] = useState(null) // 'user_not_found' or 'invalid_password' or null
 
+  const focusSignUpField = (field) => {
+    const fieldIdMap = {
+      nom: 'signup-nom',
+      prenom: 'signup-prenom',
+      affiliation: 'signup-affiliation',
+      customAffiliation: 'signup-custom-affiliation',
+      orderNumber: 'signup-order-number',
+      telephone: 'signup-telephone',
+      email: 'signup-email',
+      password: 'signup-password',
+    }
+    const target = document.getElementById(fieldIdMap[field])
+    if (!target) return
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    target.focus()
+    if (typeof target.animate === 'function') {
+      target.animate(
+        [
+          { transform: 'translateX(0)' },
+          { transform: 'translateX(-6px)' },
+          { transform: 'translateX(6px)' },
+          { transform: 'translateX(-4px)' },
+          { transform: 'translateX(4px)' },
+          { transform: 'translateX(0)' },
+        ],
+        { duration: 280, easing: 'ease-out' }
+      )
+    }
+  }
+
   // Check for reset token in URL on mount
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const token = params.get('token')
+    const mode = params.get('mode')
     const pathname = window.location.pathname
 
     if (token || pathname.includes('/reset-password')) {
@@ -56,6 +123,8 @@ export default function Login({ onLogin }) {
       setCurrentPage('reset-password')
     } else if (pathname.includes('/forgot-password')) {
       setCurrentPage('forgot-password')
+    } else if (pathname.includes('/login') && mode === 'signup') {
+      setIsSignUp(true)
     }
   }, [])
 
@@ -104,6 +173,14 @@ export default function Login({ onLogin }) {
     return () => clearInterval(interval)
   }, [isBlocked, blockTimer])
 
+  useEffect(() => {
+    setAllowSignUpEmailInput(false)
+    setAllowSignUpPasswordInput(false)
+    setAllowSignInEmailInput(false)
+    setAllowSignInPasswordInput(false)
+    setSignUpFieldErrors({})
+  }, [isSignUp])
+
   const validateEmail = (e) => {
     const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
     return re.test(e)
@@ -133,8 +210,42 @@ export default function Login({ onLogin }) {
     const newPassword = generateSecurePassword()
     setPassword(newPassword)
     setPasswordError('')
+    setSignUpFieldErrors(prev => ({ ...prev, password: '' }))
     setPasswordGeneratedNotification(true)
     setTimeout(() => setPasswordGeneratedNotification(false), 3000)
+  }
+
+  const applySignUpServerError = (rawMessage) => {
+    const errMsg = String(rawMessage || 'Erreur lors de la création du compte')
+    const low = errMsg.toLowerCase()
+
+    if (low.includes('username') || low.includes('email') || low.includes('exist')) {
+      setEmailError('Email déjà utilisé')
+      setSignUpFieldErrors(prev => ({ ...prev, email: 'Email déjà utilisé' }))
+      focusSignUpField('email')
+      return
+    }
+
+    if (low.includes("numéro d'ordre") || low.includes('ordre') || low.includes('t-12345') || low.includes('format invalide')) {
+      setSignUpFieldErrors(prev => ({ ...prev, orderNumber: errMsg }))
+      focusSignUpField('orderNumber')
+      return
+    }
+
+    if (low.includes('password')) {
+      setPasswordError(errMsg)
+      setSignUpFieldErrors(prev => ({ ...prev, password: errMsg }))
+      focusSignUpField('password')
+      return
+    }
+
+    if (low.includes('téléphone') || low.includes('telephone')) {
+      setSignUpFieldErrors(prev => ({ ...prev, telephone: errMsg }))
+      focusSignUpField('telephone')
+      return
+    }
+
+    setError(errMsg)
   }
 
   const handleSignUp = async (e) => {
@@ -142,45 +253,90 @@ export default function Login({ onLogin }) {
     setError('')
     setEmailError('')
     setPasswordError('')
+    setSignUpFieldErrors({})
 
+    const normalizedAffiliation = affiliation === 'Autre' ? customAffiliation.trim() : affiliation.trim()
+    const normalizedOrderNumber = (orderNumber || '').trim().toUpperCase()
+    const normalizedTelephone = (telephone || '').trim().replace(/\s+/g, '')
+
+    const nextErrors = {}
     let hasError = false
-    if (!nom.trim()) { hasError = true }
-    if (!prenom.trim()) { hasError = true }
-    if (!affiliation.trim()) { hasError = true }
-    if (!validateEmail(username)) { setEmailError('Email invalide'); hasError = true }
-    if (password.length < 8) { setPasswordError('Minimum 8 caractères'); hasError = true }
-    if (!acceptTerms) { setError('Veuillez accepter les conditions'); hasError = true }
-    if (!acceptPrivacy) { setError('Veuillez accepter la politique de confidentialité'); hasError = true }
+    if (!nom.trim()) { nextErrors.nom = 'Ce champ est obligatoire'; hasError = true }
+    if (!prenom.trim()) { nextErrors.prenom = 'Ce champ est obligatoire'; hasError = true }
+    if (!normalizedOrderNumber) {
+      nextErrors.orderNumber = 'Ce champ est obligatoire'
+      hasError = true
+    } else if (!ORDER_NUMBER_REGEX.test(normalizedOrderNumber)) {
+      nextErrors.orderNumber = "Format invalide"
+      hasError = true
+    }
+    if (!affiliation.trim()) {
+      nextErrors.affiliation = 'Ce champ est obligatoire'
+      hasError = true
+    } else if (affiliation === 'Autre' && !customAffiliation.trim()) {
+      nextErrors.customAffiliation = 'Ce champ est obligatoire'
+      hasError = true
+    }
+    if (normalizedTelephone && !PHONE_REGEX.test(normalizedTelephone)) {
+      nextErrors.telephone = 'Numéro tunisien invalide.'
+      hasError = true
+    }
+    if (!username.trim()) {
+      nextErrors.email = 'Ce champ est obligatoire'
+      hasError = true
+    } else if (!validateEmail(username)) {
+      nextErrors.email = 'Email invalide'
+      setEmailError('Email invalide')
+      hasError = true
+    }
+
+    if (!password.trim()) {
+      nextErrors.password = 'Ce champ est obligatoire'
+      hasError = true
+    } else if (password.length < 8) {
+      nextErrors.password = 'Minimum 8 caractères'
+      setPasswordError('Minimum 8 caractères')
+      hasError = true
+    }
+
+    if (!acceptTerms) {
+      nextErrors.terms = 'Veuillez accepter les conditions d\'utilisation.'
+      hasError = true
+    }
+
+    if (!acceptPrivacy) {
+      nextErrors.privacy = 'Veuillez accepter la politique de confidentialité.'
+      hasError = true
+    }
+
+    if (!username.trim()) nextErrors.email = 'Ce champ est obligatoire'
+    if (!password.trim()) nextErrors.password = 'Ce champ est obligatoire'
+    setSignUpFieldErrors(nextErrors)
+
+    if (hasError) {
+      const order = ['nom', 'prenom', 'orderNumber', 'telephone', 'affiliation', 'customAffiliation', 'email', 'password', 'terms', 'privacy']
+      const firstInvalid = order.find((key) => nextErrors[key])
+      if (firstInvalid) focusSignUpField(firstInvalid)
+    }
     if (hasError) return
 
     setIsLoading(true)
     try {
-      const r = await register({ username, password, nom, prenom, affiliation, specialty, grade, telephone })
+      const r = await register({ username, password, nom, prenom, order_number: normalizedOrderNumber, affiliation: normalizedAffiliation, specialty, grade, telephone: normalizedTelephone })
       if (r.data && r.data.ok) {
+        setSuccessMessage('')
         setIsSignUp(false)
-        setSuccessMessage('Compte créé avec succès ! Connectez-vous.')
-        setTimeout(() => setSuccessMessage(''), 5000)
       } else {
         const errMsg = (r.data && r.data.error) ? r.data.error : 'Erreur lors de la création du compte'
-        const low = String(errMsg).toLowerCase()
-        if (low.includes('username') || low.includes('email') || low.includes('exist')) {
-          setEmailError('Email déjà utilisé')
-        } else {
-          setError(errMsg)
-        }
+        applySignUpServerError(errMsg)
       }
     } catch (err) {
       console.error(err)
       const srvMsg = err && err.response && err.response.data && err.response.data.error
       if (srvMsg) {
-        const low = String(srvMsg).toLowerCase()
-        if (low.includes('username') || low.includes('email') || low.includes('exist')) {
-          setEmailError('Email déjà utilisé')
-        } else {
-          setError(srvMsg)
-        }
+        applySignUpServerError(srvMsg)
       } else {
-        setError('Serveur indisponible. Verifiez que le backend Django est demarre sur le port 8000.')
+        setError('Serveur indisponible. Verifiez que le backend Django est démarre sur le port 8000.')
       }
     } finally {
       setIsLoading(false)
@@ -276,10 +432,10 @@ export default function Login({ onLogin }) {
   if (currentPage === 'emergency') return <EmergencyLoginPage onBack={() => setCurrentPage('login')} />
 
   return (
-    <div className="min-h-screen flex bg-white font-sans selection:bg-blue-100 selection:text-blue-900 overflow-hidden">
+    <div className="min-h-screen flex bg-[#e9eef8] font-sans selection:bg-blue-100 selection:text-blue-900 overflow-hidden">
 
       {/* Left Column - Form */}
-      <div className={`flex-1 flex flex-col px-4 sm:px-6 lg:px-20 xl:px-24 relative bg-white overflow-y-auto ${isSignUp ? 'justify-start pt-8 pb-8' : 'justify-center py-12'}`}>
+      <div className={`flex-1 flex flex-col px-4 sm:px-6 lg:px-20 xl:px-24 relative bg-[#e9eef8] overflow-y-auto ${isSignUp ? 'justify-start pt-8 pb-8' : 'justify-center py-12'}`}>
         {/* Subtle decorative accent */}
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-400 via-blue-600 to-blue-800"></div>
         <div className="absolute -top-40 -right-40 w-80 h-80 bg-blue-50/20 rounded-full blur-3xl opacity-60"></div>
@@ -303,25 +459,26 @@ export default function Login({ onLogin }) {
             )}
           </div>
 
-          <div className="mb-8">
+          <div className="mb-6">
             <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight mb-2 uppercase">
               {isSignUp ? 'Créer un compte' : 'Bon retour'}
             </h2>
             <p className="text-slate-500 text-sm font-medium leading-relaxed">
               {isSignUp ? 'Rejoignez la nouvelle génération de praticiens connectés.' : 'Accédez à votre poste de travail clinique sécurisé.'}
             </p>
+            <p className="mt-2 text-xs font-semibold text-rose-600">* Champs obligatoires</p>
           </div>
 
-          <div className="bg-slate-50 p-1.5 rounded-2xl flex mb-10 border border-slate-100">
+          <div className="bg-[#dfe5f2] p-1 rounded-xl flex mb-6 border border-[#d4dced]">
             <button
               onClick={() => setIsSignUp(false)}
-              className={`flex-1 py-3 text-xs font-bold rounded-xl transition-all duration-300 ${!isSignUp ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' : 'text-slate-400 hover:text-slate-600 font-black uppercase tracking-widest'}`}
+              className={`flex-1 py-2.5 text-xs font-semibold rounded-lg transition-all duration-300 ${!isSignUp ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
               Connexion
             </button>
             <button
               onClick={() => setIsSignUp(true)}
-              className={`flex-1 py-3 text-xs font-bold rounded-xl transition-all duration-300 ${isSignUp ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' : 'text-slate-400 hover:text-slate-600 font-black uppercase tracking-widest'}`}
+              className={`flex-1 py-2.5 text-xs font-semibold rounded-lg transition-all duration-300 ${isSignUp ? 'bg-white text-[#2457d6] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
               Inscription
             </button>
@@ -349,102 +506,260 @@ export default function Login({ onLogin }) {
             </div>
           )}
 
-          <form onSubmit={isSignUp ? handleSignUp : handleSignIn} className="space-y-5">
+          <form onSubmit={isSignUp ? handleSignUp : handleSignIn} autoComplete="off" className="space-y-4">
+            <input type="text" name="fake_username" autoComplete="username" className="hidden" tabIndex={-1} aria-hidden="true" />
+            <input type="password" name="fake_password" autoComplete="new-password" className="hidden" tabIndex={-1} aria-hidden="true" />
             {isSignUp && (
               <>
-                <div className="flex flex-col gap-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 px-1">Nom</label>
-                      <div className="relative">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                          <User className="h-4 w-4 text-slate-400" />
-                        </div>
-                        <input
-                          value={nom}
-                          onChange={e => setNom(e.target.value)}
-                          className="block w-full pl-10 pr-3 py-3.5 border border-slate-100 rounded-2xl bg-slate-50/50 focus:bg-white focus:ring-4 focus:ring-blue-600/5 transition-all outline-none text-sm font-medium"
-                          placeholder="Nom"
-                        />
-                      </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-600 mb-1.5">Nom <span className="text-rose-600">*</span></label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <User className="h-4 w-4 text-slate-400" />
                     </div>
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 px-1">Prénom</label>
-                      <div className="relative">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                          <User className="h-4 w-4 text-slate-400" />
-                        </div>
-                        <input
-                          value={prenom}
-                          onChange={e => setPrenom(e.target.value)}
-                          className="block w-full pl-10 pr-3 py-3.5 border border-slate-100 rounded-2xl bg-slate-50/50 focus:bg-white focus:ring-4 focus:ring-blue-600/5 transition-all outline-none text-sm font-medium"
-                          placeholder="Prénom"
-                        />
-                      </div>
-                    </div>
+                    <input
+                      id="signup-nom"
+                      value={nom}
+                      onChange={e => {
+                        setNom(e.target.value)
+                        setSignUpFieldErrors(prev => ({ ...prev, nom: '' }))
+                      }}
+                      className={`block w-full pl-10 pr-3 py-3 border rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300 transition-all outline-none text-sm ${signUpFieldErrors.nom ? 'border-rose-300 bg-rose-50/40' : 'border-slate-300'}`}
+                      placeholder="Votre nom"
+                    />
                   </div>
+                  {signUpFieldErrors.nom && <p className="mt-1 text-xs font-semibold text-rose-700">{signUpFieldErrors.nom}</p>}
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 px-1">Affiliation</label>
+                  <label className="block text-sm font-semibold text-slate-600 mb-1.5">Prénom <span className="text-rose-600">*</span></label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <User className="h-4 w-4 text-slate-400" />
+                    </div>
+                    <input
+                      id="signup-prenom"
+                      value={prenom}
+                      onChange={e => {
+                        setPrenom(e.target.value)
+                        setSignUpFieldErrors(prev => ({ ...prev, prenom: '' }))
+                      }}
+                      className={`block w-full pl-10 pr-3 py-3 border rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300 transition-all outline-none text-sm ${signUpFieldErrors.prenom ? 'border-rose-300 bg-rose-50/40' : 'border-slate-300'}`}
+                      placeholder="Votre prénom"
+                    />
+                  </div>
+                  {signUpFieldErrors.prenom && <p className="mt-1 text-xs font-semibold text-rose-700">{signUpFieldErrors.prenom}</p>}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-600 mb-1.5">Affiliation <span className="text-rose-600">*</span></label>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                       <Building2 className="h-4 w-4 text-slate-400" />
                     </div>
-                    <input
+                    <select
+                      id="signup-affiliation"
                       value={affiliation}
-                      onChange={e => setAffiliation(e.target.value)}
-                      className="block w-full pl-10 pr-3 py-3.5 border border-slate-100 rounded-2xl bg-slate-50/50 focus:bg-white focus:ring-4 focus:ring-blue-600/5 transition-all outline-none text-sm font-medium"
-                      placeholder="Identifiant Hospitalier / Institution"
-                    />
+                      onChange={e => {
+                        const value = e.target.value
+                        setAffiliation(value)
+                        setSignUpFieldErrors(prev => ({ ...prev, affiliation: '', customAffiliation: '' }))
+                        if (value !== 'Autre') setCustomAffiliation('')
+                      }}
+                      className={`block w-full pl-10 pr-3 py-3 border rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300 transition-all outline-none text-sm text-slate-700 ${signUpFieldErrors.affiliation ? 'border-rose-300 bg-rose-50/40' : 'border-slate-300'}`}
+                    >
+                      <option value="">Sélectionner</option>
+                      {AFFILIATION_OPTIONS.map((option) => (
+                        <option key={option} value={option}>{option}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {signUpFieldErrors.affiliation && <p className="mt-1 text-xs font-semibold text-rose-700">{signUpFieldErrors.affiliation}</p>}
+                </div>
+
+                {affiliation === 'Autre' && (
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-600 mb-1.5">Préciser l'affiliation <span className="text-rose-600">*</span></label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <Building2 className="h-4 w-4 text-slate-400" />
+                      </div>
+                      <input
+                        id="signup-custom-affiliation"
+                        value={customAffiliation}
+                        onChange={e => {
+                          setCustomAffiliation(e.target.value)
+                          setSignUpFieldErrors(prev => ({ ...prev, customAffiliation: '' }))
+                        }}
+                        className={`block w-full pl-10 pr-3 py-3 border rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300 transition-all outline-none text-sm ${signUpFieldErrors.customAffiliation ? 'border-rose-300 bg-rose-50/40' : 'border-slate-300'}`}
+                        placeholder="Nom de l'établissement"
+                      />
+                    </div>
+                    {signUpFieldErrors.customAffiliation && <p className="mt-1 text-xs font-semibold text-rose-700">{signUpFieldErrors.customAffiliation}</p>}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-600 mb-1.5">Spécialité (optionnel)</label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <Briefcase className="h-4 w-4 text-slate-400" />
+                      </div>
+                      <select
+                        value={specialty}
+                        onChange={e => setSpecialty(e.target.value)}
+                        className="block w-full pl-10 pr-3 py-3 border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300 transition-all outline-none text-sm text-slate-700"
+                      >
+                        <option value="">Sélectionner</option>
+                        {SPECIALTY_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-600 mb-1.5">Grade (optionnel)</label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <Briefcase className="h-4 w-4 text-slate-400" />
+                      </div>
+                      <select
+                        value={grade}
+                        onChange={e => setGrade(e.target.value)}
+                        className="block w-full pl-10 pr-3 py-3 border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300 transition-all outline-none text-sm text-slate-700"
+                      >
+                        <option value="">Sélectionner</option>
+                        {GRADE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 px-1">Email professionnel</label>
+                  <label className="block text-sm font-semibold text-slate-600 mb-1.5">Numéro d'ordre tunisien <span className="text-rose-600">*</span></label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Briefcase className="h-4 w-4 text-slate-400" />
+                    </div>
+                    <input
+                      id="signup-order-number"
+                      value={orderNumber}
+                      onChange={e => {
+                        setOrderNumber(e.target.value.toUpperCase())
+                        setSignUpFieldErrors(prev => ({ ...prev, orderNumber: '' }))
+                      }}
+                      className={`block w-full pl-10 pr-3 py-3 border rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300 transition-all outline-none text-sm ${signUpFieldErrors.orderNumber ? 'border-rose-300 bg-rose-50/40' : 'border-slate-300'}`}
+                      placeholder="12345 ou T-12345"
+                    />
+                  </div>
+                  {signUpFieldErrors.orderNumber && <p className="mt-1 text-xs font-semibold text-rose-700">{signUpFieldErrors.orderNumber}</p>}
+                  <p className="mt-1 text-xs text-slate-400">Format: 4 à 6 chiffres, avec ou sans préfixe T-.</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-600 mb-1.5">Téléphone (optionnel)</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Phone className="h-4 w-4 text-slate-400" />
+                    </div>
+                    <input
+                      id="signup-telephone"
+                      value={telephone}
+                      onChange={e => {
+                        setTelephone(e.target.value)
+                        setSignUpFieldErrors(prev => ({ ...prev, telephone: '' }))
+                      }}
+                      className={`block w-full pl-10 pr-3 py-3 border rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300 transition-all outline-none text-sm ${signUpFieldErrors.telephone ? 'border-rose-300 bg-rose-50/40' : 'border-slate-300'}`}
+                      placeholder="22345678"
+                    />
+                  </div>
+                  {signUpFieldErrors.telephone && <p className="mt-1 text-xs font-semibold text-rose-700">{signUpFieldErrors.telephone}</p>}
+                  <p className="mt-1 text-xs text-slate-400">Format tunisien: 8 chiffres, commence par 2, 4, 5, 7 ou 9.</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-600 mb-1.5">Email professionnel <span className="text-rose-600">*</span></label>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                       <Mail className="h-4 w-4 text-slate-400" />
                     </div>
                     <input
+                      id="signup-email"
                       type="email"
+                      name="signup_email"
+                      readOnly={!allowSignUpEmailInput}
+                      onFocus={() => setAllowSignUpEmailInput(true)}
+                      autoComplete="off"
                       value={username}
                       onChange={e => setUsername(e.target.value)}
-                      className={`block w-full pl-10 pr-3 py-3.5 border ${emailError ? 'border-red-300' : 'border-slate-100'} rounded-2xl bg-slate-50/50 focus:bg-white focus:ring-4 focus:ring-blue-600/5 transition-all outline-none text-sm font-medium`}
-                      placeholder="medecin@hopital.med"
+                      className={`block w-full pl-10 pr-3 py-3 border ${emailError ? 'border-red-300' : 'border-slate-300'} rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300 transition-all outline-none text-sm`}
+                      placeholder="votre.email@hopital.com"
                     />
                   </div>
+                  {(signUpFieldErrors.email || emailError) && (
+                    <p className="mt-1 text-xs font-semibold text-rose-700">{signUpFieldErrors.email || emailError}</p>
+                  )}
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 px-1">Mot de passe</label>
+                  <label className="block text-sm font-semibold text-slate-600 mb-1.5">Mot de passe <span className="text-rose-600">*</span></label>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                       <Lock className="h-4 w-4 text-slate-400" />
                     </div>
                     <input
+                      id="signup-password"
                       type={showPassword ? 'text' : 'password'}
+                      name="signup_password"
+                      readOnly={!allowSignUpPasswordInput}
+                      onFocus={() => setAllowSignUpPasswordInput(true)}
+                      autoComplete="new-password"
                       value={password}
                       onChange={e => setPassword(e.target.value)}
-                      className={`block w-full pl-10 pr-20 py-3.5 border ${passwordError ? 'border-red-300' : 'border-slate-100'} rounded-2xl bg-slate-50/50 focus:bg-white focus:ring-4 focus:ring-blue-600/5 transition-all outline-none text-sm font-medium`}
-                      placeholder="Tapez ou générez"
+                      className={`block w-full pl-10 pr-20 py-3 border ${passwordError ? 'border-red-300' : 'border-slate-300'} rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300 transition-all outline-none text-sm`}
+                      placeholder="••••••••••"
                     />
                     <div className="absolute inset-y-0 right-2 flex items-center gap-1">
                       <button type="button" onClick={handleGeneratePassword} className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors rounded-md hover:bg-blue-50"><RefreshCw className="w-4 h-4" /></button>
                       <button type="button" onClick={() => setShowPassword(!showPassword)} className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors rounded-md hover:bg-blue-50">{showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}</button>
                     </div>
                   </div>
+                  <p className="mt-1 text-xs text-slate-400">Min. 8 caractères • Maj • Chiffres • Symboles</p>
+                  {(signUpFieldErrors.password || passwordError) && (
+                    <p className="mt-1 text-xs font-semibold text-rose-700">{signUpFieldErrors.password || passwordError}</p>
+                  )}
                 </div>
 
-                <div className="space-y-3 pt-2">
+                <div className="space-y-2 pt-1">
                   <label className="flex items-start gap-3 cursor-pointer group">
-                    <input type="checkbox" checked={acceptTerms} onChange={e => setAcceptTerms(e.target.checked)} className="mt-1 w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-600" />
-                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide group-hover:text-blue-600 transition-colors">J'accepte les conditions d'utilisation</span>
+                    <input
+                      type="checkbox"
+                      checked={acceptTerms}
+                      onChange={e => {
+                        setAcceptTerms(e.target.checked)
+                        setSignUpFieldErrors(prev => ({ ...prev, terms: '' }))
+                      }}
+                      className="mt-1 w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-600"
+                    />
+                    <span className="text-sm text-slate-600 group-hover:text-blue-600 transition-colors">J'accepte les <button type="button" onClick={() => setCurrentPage('terms')} className="underline text-blue-700">conditions d'utilisation</button></span>
                   </label>
+                  {signUpFieldErrors.terms && <p className="text-xs font-semibold text-rose-700">{signUpFieldErrors.terms}</p>}
                   <label className="flex items-start gap-3 cursor-pointer group">
-                    <input type="checkbox" checked={acceptPrivacy} onChange={e => setAcceptPrivacy(e.target.checked)} className="mt-1 w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-600" />
-                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide group-hover:text-blue-600 transition-colors">J'accepte la politique de confidentialité</span>
+                    <input
+                      type="checkbox"
+                      checked={acceptPrivacy}
+                      onChange={e => {
+                        setAcceptPrivacy(e.target.checked)
+                        setSignUpFieldErrors(prev => ({ ...prev, privacy: '' }))
+                      }}
+                      className="mt-1 w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-600"
+                    />
+                    <span className="text-sm text-slate-600 group-hover:text-blue-600 transition-colors">J'accepte la <button type="button" onClick={() => setCurrentPage('privacy')} className="underline text-blue-700">politique de confidentialité</button></span>
                   </label>
+                  {signUpFieldErrors.privacy && <p className="text-xs font-semibold text-rose-700">{signUpFieldErrors.privacy}</p>}
                 </div>
               </>
             )}
@@ -452,13 +767,17 @@ export default function Login({ onLogin }) {
             {!isSignUp && (
               <>
                 <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 px-1">Email professionnel</label>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 px-1">Email professionnel <span className="text-rose-600">*</span></label>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                       <Mail className="h-4 w-4 text-slate-400" />
                     </div>
                     <input
                       type="email"
+                      name="signin_email"
+                      readOnly={!allowSignInEmailInput}
+                      onFocus={() => setAllowSignInEmailInput(true)}
+                      autoComplete="off"
                       value={username}
                       onChange={e => onEmailChange(e.target.value)}
                       className={`block w-full pl-10 pr-3 py-4 border ${emailError ? 'border-red-300' : 'border-slate-100'} rounded-2xl bg-slate-50/50 focus:bg-white focus:ring-4 focus:ring-blue-600/5 transition-all outline-none text-sm font-medium`}
@@ -469,13 +788,17 @@ export default function Login({ onLogin }) {
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 px-1">Mot de passe</label>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 px-1">Mot de passe <span className="text-rose-600">*</span></label>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                       <Lock className="h-4 w-4 text-slate-400" />
                     </div>
                     <input
                       type={showSignInPassword ? 'text' : 'password'}
+                      name="signin_password"
+                      readOnly={!allowSignInPasswordInput}
+                      onFocus={() => setAllowSignInPasswordInput(true)}
+                      autoComplete="new-password"
                       value={password}
                       onChange={e => onPasswordChange(e.target.value)}
                       className={`block w-full pl-10 pr-12 py-4 border ${passwordError ? 'border-red-300' : 'border-slate-100'} rounded-2xl bg-slate-50/50 focus:bg-white focus:ring-4 focus:ring-blue-600/5 transition-all outline-none text-sm font-medium`}
@@ -492,14 +815,14 @@ export default function Login({ onLogin }) {
 
             <button
               type="submit"
-              disabled={isLoading || (isSignUp && (!nom.trim() || !prenom.trim() || !affiliation.trim() || !username.trim() || password.length < 8 || !acceptTerms || !acceptPrivacy)) || (isBlocked && !isSignUp)}
-              className="group w-full h-14 flex justify-center items-center gap-3 px-8 rounded-2xl shadow-xl shadow-blue-600/20 text-sm font-bold text-white bg-gradient-to-r from-blue-600 to-blue-800 hover:from-blue-700 hover:to-blue-900 focus:outline-none focus:ring-4 focus:ring-blue-500/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 hover:-translate-y-0.5 active:scale-[0.98] relative overflow-hidden"
+              disabled={isLoading || (isBlocked && !isSignUp)}
+              className="group w-full h-12 flex justify-center items-center gap-3 px-8 rounded-xl shadow-md text-sm font-semibold text-white bg-gradient-to-r from-[#2563eb] to-[#1e40af] hover:from-[#1d4ed8] hover:to-[#1e3a8a] focus:outline-none focus:ring-4 focus:ring-blue-500/15 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 active:scale-[0.98] relative overflow-hidden"
             >
               {isLoading ? (
                 <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
               ) : (
                 <>
-                  <span className="text-sm font-bold uppercase tracking-widest">{isSignUp ? 'Créer mon compte' : 'Se connecter'}</span>
+                  <span className="text-sm font-semibold">{isSignUp ? 'Créer mon compte' : 'Se connecter'}</span>
                   <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                 </>
               )}

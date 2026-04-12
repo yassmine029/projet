@@ -14,6 +14,8 @@ urlpatterns = [
     path('forgot_password', views.forgot_password, name='forgot_password'),
     path('validate_reset_token', views.validate_reset_token, name='validate_reset_token'),
     path('reset_password', views.reset_password, name='reset_password'),
+    path('validate_activation_token', views.validate_activation_token, name='validate_activation_token'),
+    path('activate_account', views.activate_account, name='activate_account'),
 
     # Upload routes
     path('upload', views.upload, name='upload'),
@@ -57,8 +59,15 @@ urlpatterns = [
     # Admin dashboard routes
     path('admin/dashboard/overview', views.admin_dashboard_overview, name='admin_dashboard_overview'),
     path('admin/dashboard/accounts', views.admin_dashboard_accounts, name='admin_dashboard_accounts'),
+    path('admin/dashboard/accounts/create', views.admin_account_create, name='admin_account_create'),
+    path('admin/dashboard/accounts/<int:user_id>/approve', views.admin_account_approve, name='admin_account_approve'),
+    path('admin/dashboard/accounts/<int:user_id>/reject', views.admin_account_reject, name='admin_account_reject'),
     path('admin/dashboard/history', views.admin_dashboard_history, name='admin_dashboard_history'),
     path('admin/dashboard/settings', views.admin_dashboard_settings, name='admin_dashboard_settings'),
+    path('admin/dashboard/analytics', views.admin_dashboard_analytics, name='admin_dashboard_analytics'),
+    path('admin/dashboard/testimonials', views.admin_dashboard_testimonials, name='admin_dashboard_testimonials'),
+    path('admin/dashboard/testimonials/<int:testimonial_id>/approve', views.admin_testimonial_approve, name='admin_testimonial_approve'),
+    path('admin/dashboard/testimonials/<int:testimonial_id>/reject', views.admin_testimonial_reject, name='admin_testimonial_reject'),
 
     # Patient routes (Yesmine - anciennes)
     path('patients', views.list_patients, name='patients'),
@@ -75,6 +84,9 @@ urlpatterns = [
     path('reclamations/', views.reclamations_list_create, name='reclamations_list_create'),
     path('reclamations/<int:reclamation_id>/', views.reclamation_detail, name='reclamation_detail'),
     path('contact_requests/', views.create_contact_request, name='create_contact_request'),
+    path('testimonials/', views.testimonials_public_list, name='testimonials_public_list'),
+    path('testimonials/submit', views.testimonials_submit, name='testimonials_submit'),
+    path('testimonials/submit/', views.testimonials_submit, name='testimonials_submit_slash'),
 
     # Series routes
     path('series/<int:series_id>/download', views.download_series, name='download_series'),

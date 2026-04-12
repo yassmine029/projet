@@ -9,6 +9,9 @@ import smtplib
 import uuid
 import base64
 import threading
+import re
+from urllib.parse import urlparse
+from html import escape
 from datetime import datetime
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
@@ -41,7 +44,7 @@ from django.utils import timezone
 from django.core.mail import send_mail
 # from django.core.paginator import Paginator # Not used, can be removed
 from django.db.models import Q
-from .models import Series, PasswordResetToken, EmergencyLoginAttempt, Patient, Reclamation, MRIFile, ContactRequest
+from .models import Series, PasswordResetToken, AccountActivationToken, EmergencyLoginAttempt, Patient, Reclamation, MRIFile, ContactRequest, DoctorProfile, Testimonial
 from .serializers import ReclamationSerializer, PatientSerializer, MRIFileSerializer, ContactRequestSerializer
 
 # auto_registration (ANTs) supprimé — MINE uniquement
@@ -57,6 +60,239 @@ JOBS = {}
 UPLOAD_DIR = settings.MEDIA_ROOT
 MEDIA_ROOT = settings.MEDIA_ROOT
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+ORDER_NUMBER_PATTERN = re.compile(r'^(?:\d{4,6}|T-\d{4,6})$')
+PHONE_NUMBER_PATTERN = re.compile(r'^[24579]\d{7}$')
+
+
+def get_frontend_origin():
+    """Return frontend origin (scheme + host) to avoid malformed auth links."""
+    raw = (getattr(settings, 'FRONTEND_URL', '') or '').strip() or 'http://localhost:5173'
+    if '://' not in raw:
+        raw = f"http://{raw}"
+    parsed = urlparse(raw)
+    if not parsed.scheme or not parsed.netloc:
+        return 'http://localhost:5173'
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def normalize_order_number(raw_value):
+    value = (raw_value or '').strip().upper().replace(' ', '')
+    return value
+
+
+def is_valid_order_number(value):
+    return bool(ORDER_NUMBER_PATTERN.fullmatch(value or ''))
+
+
+def normalize_tunisian_phone(raw_value):
+    return re.sub(r'\s+', '', (raw_value or '').strip())
+
+
+def is_valid_tunisian_phone(value):
+    return bool(PHONE_NUMBER_PATTERN.fullmatch(value or ''))
+
+
+def send_pending_registration_email(email, nom, prenom):
+        display_name = f"{(nom or '').strip()} {(prenom or '').strip()}".strip()
+        if not display_name:
+                display_name = email
+
+        subject = "Demande d'inscription reçue — NeuroScan"
+        plain_message = f"""
+Bonjour Dr. {display_name},
+
+    Votre demande d'inscription est bien reçue et en cours d'examen. Vous recevrez une réponse sous 24 à 48 heures.
+
+    Mode Urgence disponible dès maintenant
+    En attendant, vous pouvez accéder au Mode Urgence via votre email professionnel + numéro d'ordre CNOM. Vous disposez de 2 utilisations pendant cette période.
+
+    Vous serez notifié par email dès qu'une décision est prise sur votre dossier.
+
+Des questions ? support@neuroscan.com
+
+    L'équipe NeuroScan
+""".strip()
+
+        html_message = f"""
+        <html><body style=\"font-family: Arial, sans-serif; color: #0f172a;\">
+            <div style=\"max-width: 680px; margin: 0 auto; padding: 20px;\">
+                <h2 style=\"margin: 0 0 16px; color: #1d4ed8;\">NeuroScan</h2>
+                <p>Bonjour Dr. <strong>{display_name}</strong>,</p>
+                <p>Votre demande d'inscription est bien reçue et en cours d'examen. Vous recevrez une réponse sous <strong>24 à 48 heures</strong>.</p>
+
+                <h3 style="margin-top: 22px;">Mode Urgence disponible dès maintenant</h3>
+                <p>En attendant, vous pouvez accéder au Mode Urgence via votre email professionnel + numéro d'ordre CNOM. Vous disposez de <strong>2 utilisations</strong> pendant cette période.</p>
+
+                <p>Vous serez notifié par email dès qu'une décision est prise sur votre dossier.</p>
+                <p>Des questions ? <a href=\"mailto:support@neuroscan.com\">support@neuroscan.com</a></p>
+                <p>L'équipe NeuroScan</p>
+            </div>
+        </body></html>
+        """
+
+        sender_email = settings.EMAIL_HOST_USER or settings.DEFAULT_FROM_EMAIL
+        send_email_async(
+                subject=subject,
+                message=plain_message,
+                from_email=sender_email,
+                recipient_list=[email],
+                html_message=html_message,
+        )
+
+
+def send_account_approved_email(email, nom, prenom):
+    display_name = f"{(nom or '').strip()} {(prenom or '').strip()}".strip()
+    if not display_name:
+        display_name = email
+
+    login_url = f"{get_frontend_origin()}/login"
+    subject = "Compte activé — NeuroScan"
+    plain_message = f"""
+Bonjour Dr. {display_name},
+
+Votre compte NeuroScan est activé. Vous pouvez dès maintenant accéder à toutes les fonctionnalités de la plateforme.
+
+👉 Se connecter à NeuroScan: {login_url}
+
+Des questions ? support@neuroscan.com
+
+L'équipe NeuroScan
+""".strip()
+
+    html_message = f"""
+    <html><body style=\"font-family: Arial, sans-serif; color: #0f172a;\">
+        <div style=\"max-width: 680px; margin: 0 auto; padding: 20px;\">
+            <h2 style=\"margin: 0 0 16px; color: #1d4ed8;\">NeuroScan</h2>
+            <p>Bonjour Dr. <strong>{display_name}</strong>,</p>
+            <p>Votre compte NeuroScan est activé. Vous pouvez dès maintenant accéder à toutes les fonctionnalités de la plateforme.</p>
+
+            <p style=\"margin: 26px 0;\">
+                <a href=\"{login_url}\" style=\"display: inline-block; background: #1d4ed8; color: #ffffff; text-decoration: none; padding: 10px 16px; border-radius: 8px; font-weight: 600;\">Se connecter à NeuroScan</a>
+            </p>
+
+            <p>Des questions ? <a href=\"mailto:support@neuroscan.com\">support@neuroscan.com</a></p>
+            <p>L'équipe NeuroScan</p>
+        </div>
+    </body></html>
+    """
+
+    sender_email = settings.EMAIL_HOST_USER or settings.DEFAULT_FROM_EMAIL
+    send_email_async(
+        subject=subject,
+        message=plain_message,
+        from_email=sender_email,
+        recipient_list=[email],
+        html_message=html_message,
+    )
+
+
+def send_account_rejected_email(email, nom, prenom, reason):
+    display_name = f"{(nom or '').strip()} {(prenom or '').strip()}".strip()
+    if not display_name:
+        display_name = email
+
+    safe_reason = (reason or '').strip()
+    signup_url = f"{get_frontend_origin()}/login?mode=signup"
+    subject = "Demande d'inscription — NeuroScan"
+    plain_message = f"""
+Bonjour Dr. {display_name},
+
+Nous avons examiné votre dossier et nous ne sommes pas en mesure d'activer votre compte pour la raison suivante :
+
+{safe_reason}
+
+Vous pouvez corriger cette situation et soumettre une nouvelle demande directement via NeuroScan.
+
+👉 Créer un nouveau compte: {signup_url}
+
+Des questions ? support@neuroscan.com
+
+L'équipe NeuroScan
+""".strip()
+
+    html_message = f"""
+    <html><body style=\"font-family: Arial, sans-serif; color: #0f172a;\">
+        <div style=\"max-width: 680px; margin: 0 auto; padding: 20px;\">
+            <h2 style=\"margin: 0 0 16px; color: #1d4ed8;\">NeuroScan</h2>
+            <p>Bonjour Dr. <strong>{escape(display_name)}</strong>,</p>
+
+            <p>Nous avons examiné votre dossier et nous ne sommes pas en mesure d'activer votre compte pour la raison suivante :</p>
+
+            <blockquote style=\"margin: 16px 0; padding: 12px 14px; border-left: 4px solid #1d4ed8; background: #f8fafc; color: #1e293b;\">{escape(safe_reason)}</blockquote>
+
+            <p>Vous pouvez corriger cette situation et soumettre une nouvelle demande directement via NeuroScan.</p>
+
+            <p style=\"margin: 26px 0;\">
+                <a href=\"{signup_url}\" style=\"display: inline-block; background: #1d4ed8; color: #ffffff; text-decoration: none; padding: 10px 16px; border-radius: 8px; font-weight: 600;\">Créer un nouveau compte</a>
+            </p>
+
+            <p>Des questions ? <a href=\"mailto:support@neuroscan.com\">support@neuroscan.com</a></p>
+            <p>L'équipe NeuroScan</p>
+        </div>
+    </body></html>
+    """
+
+    sender_email = settings.EMAIL_HOST_USER or settings.DEFAULT_FROM_EMAIL
+    send_email_async(
+        subject=subject,
+        message=plain_message,
+        from_email=sender_email,
+        recipient_list=[email],
+        html_message=html_message,
+    )
+
+
+def send_account_activation_email(email, nom, prenom, activation_token):
+    display_name = f"{(nom or '').strip()} {(prenom or '').strip()}".strip()
+    if not display_name:
+        display_name = email
+
+    activation_url = f"{get_frontend_origin()}/activate-account?token={activation_token.token}"
+    subject = "Activation de votre compte — NeuroScan"
+    plain_message = f"""
+Bonjour Dr. {display_name},
+
+Votre compte NeuroScan a été créé par un administrateur.
+
+Pour activer votre compte, veuillez choisir votre mot de passe via le lien sécurisé ci-dessous :
+
+{activation_url}
+
+Ce lien est valable jusqu'au {activation_token.expires_at.strftime('%d/%m/%Y %H:%M')}.
+
+Des questions ? support@neuroscan.com
+
+L'équipe NeuroScan
+""".strip()
+
+    html_message = f"""
+    <html><body style=\"font-family: Arial, sans-serif; color: #0f172a;\">
+        <div style=\"max-width: 680px; margin: 0 auto; padding: 20px;\">
+            <h2 style=\"margin: 0 0 16px; color: #1d4ed8;\">NeuroScan</h2>
+            <p>Bonjour Dr. <strong>{escape(display_name)}</strong>,</p>
+            <p>Votre compte NeuroScan a été créé par un administrateur.</p>
+            <p>Pour activer votre compte, veuillez choisir votre mot de passe via le lien sécurisé ci-dessous :</p>
+
+            <p style=\"margin: 26px 0;\">
+                <a href=\"{activation_url}\" style=\"display: inline-block; background: #1d4ed8; color: #ffffff; text-decoration: none; padding: 10px 16px; border-radius: 8px; font-weight: 600;\">Activer mon compte</a>
+            </p>
+
+            <p style=\"color: #475569;\">Ce lien est valable jusqu'au <strong>{activation_token.expires_at.strftime('%d/%m/%Y %H:%M')}</strong>.</p>
+            <p>Des questions ? <a href=\"mailto:support@neuroscan.com\">support@neuroscan.com</a></p>
+            <p>L'équipe NeuroScan</p>
+        </div>
+    </body></html>
+    """
+
+    sender_email = settings.EMAIL_HOST_USER or settings.DEFAULT_FROM_EMAIL
+    send_email_async(
+        subject=subject,
+        message=plain_message,
+        from_email=sender_email,
+        recipient_list=[email],
+        html_message=html_message,
+    )
 
 
 def send_email_async(subject, message, from_email, recipient_list, html_message=None):
@@ -413,17 +649,55 @@ def register(request):
     print(f"Yassmine now the register endpoint works - username: {data.get('username')}")
     username = (data.get('username') or '').strip()
     password = data.get('password') or ''
+    nom = (data.get('nom') or '').strip()
+    prenom = (data.get('prenom') or '').strip()
+    affiliation = (data.get('affiliation') or '').strip()
+    order_number = normalize_order_number(data.get('order_number'))
+    specialty = (data.get('specialty') or 'autre').strip().lower()
+    grade = (data.get('grade') or '').strip()
+    telephone = normalize_tunisian_phone(data.get('telephone'))
+
+    allowed_specialties = {'neuroradiologie', 'neurologie', 'medecine_nucleaire', 'autre'}
+    if specialty not in allowed_specialties:
+        specialty = 'autre'
     if not username or not password:
         print("Yassmine now the register validation FAILED - missing username or password")
         return JsonResponse({'ok': False, 'error': 'username and password required'}, status=400)
+    if not order_number:
+        return JsonResponse({'ok': False, 'error': "Numéro d'ordre tunisien requis."}, status=400)
+    if not is_valid_order_number(order_number):
+        return JsonResponse({'ok': False, 'error': "Format invalide: utilisez 12345 ou T-12345 (4 à 6 chiffres)."}, status=400)
+    if telephone and not is_valid_tunisian_phone(telephone):
+        return JsonResponse({'ok': False, 'error': 'Téléphone invalide: utilisez un numéro tunisien à 8 chiffres (ex: 22345678).'}, status=400)
 
     try:
         with transaction.atomic():
             if User.objects.filter(username=username).exists():
                 print(f"Yassmine now the register FAILED - username exists: {username}")
                 return JsonResponse({'ok': False, 'error': 'username exists'}, status=400)
+            if DoctorProfile.objects.filter(order_number__iexact=order_number).exists():
+                return JsonResponse({'ok': False, 'error': "Ce numéro d'ordre existe déjà."}, status=400)
             # Keep username=email convention and also persist email for robust lookup.
-            User.objects.create_user(username=username, email=username, password=password)
+            user = User.objects.create_user(
+                username=username,
+                email=username,
+                password=password,
+                first_name=prenom,
+                last_name=nom,
+                is_active=False,
+            )
+            DoctorProfile.objects.create(
+                user=user,
+                nom=nom,
+                prenom=prenom,
+                order_number=order_number,
+                affiliation=affiliation,
+                specialty=specialty,
+                grade=grade,
+                telephone=telephone,
+                status='en_attente',
+            )
+            transaction.on_commit(lambda: send_pending_registration_email(username, nom, prenom))
             print(f"Yassmine now the register SUCCESS for user: {username}")
             return JsonResponse({'ok': True, 'message': 'Compte créé avec succès'})
     except IntegrityError as e:
@@ -449,6 +723,13 @@ def login_view(request):
         if account is None:
             print(f"Nadine Yassmine - login failed - account not found: {username}")
             return JsonResponse({'ok': False, 'error': 'Compte introuvable', 'error_type': 'user_not_found'}, status=401)
+
+        profile = DoctorProfile.objects.filter(user=account).first()
+        if profile and profile.status == 'en_attente':
+            return JsonResponse({'ok': False, 'error': 'Votre compte est en attente de validation admin.', 'error_type': 'pending_approval'}, status=403)
+        if profile and profile.status == 'refuse':
+            refusal_msg = profile.refusal_reason or 'Votre demande de compte a ete refusee.'
+            return JsonResponse({'ok': False, 'error': refusal_msg, 'error_type': 'account_rejected'}, status=403)
 
         user = authenticate(request, username=account.username, password=password)
         if user is None:
@@ -620,6 +901,12 @@ def align(request):
         print(f"Yassmine RANSAC OK — inliers: {int(inliers.sum()) if inliers is not None else '?'} for job_id: {job_id}")
 
     warped = cv2.warpAffine(pat, M, (512, 512), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    if job_id not in JOBS:
+        JOBS[job_id] = {
+            'ref_path': ref_path,
+            'pat_path': pat_path,
+            'created_at': timezone.now().isoformat(),
+        }
     JOBS[job_id]['tform'] = tform
     try:
         series.tform = tform
@@ -707,6 +994,12 @@ def auto_align(request):
 
         job_id = data.get('jobId')
         transform_type = data.get('transform', 'SyN')
+        requested_iters = data.get('n_iters', 300)
+        try:
+            mine_iters = int(requested_iters)
+        except (TypeError, ValueError):
+            mine_iters = 300
+        mine_iters = max(30, min(1000, mine_iters))
         print(f"Yassmine now the auto_align endpoint works - job_id: {job_id}, transform: {transform_type}, user: {request.user.username}")
 
         if not job_id:
@@ -741,7 +1034,7 @@ def auto_align(request):
             ref_path,
             pat_path,
             os.path.join(auto_dir, f"mine_{job_id}"),
-            n_iters=300,
+            n_iters=mine_iters,
             device_name="auto"
         )
 
@@ -784,6 +1077,7 @@ def auto_align(request):
                     'mutual_information': round(float(final_mi), 4),
                     'mi_quality': mi_quality,
                     'quality_score': round(float(mi_score), 4),
+                    'n_iters': mine_iters,
                     'processing_time_ms': round(float(result['processing_time'] * 1000), 2),
                     'device': result['device'],
                     'success': True,
@@ -794,6 +1088,7 @@ def auto_align(request):
                 metrics = {
                     'success': True,
                     'mutual_information': result.get('mutual_information', 0.0),
+                    'n_iters': mine_iters,
                     'processing_time_ms': round(result['processing_time'] * 1000, 2),
                     'device': result['device']
                 }
@@ -1616,22 +1911,38 @@ def emergency_login(request):
     try:
         data = json.loads(request.body)
         email = (data.get('email') or '').strip().lower()
+        order_number = normalize_order_number(data.get('order_number'))
         if not email:
             return JsonResponse({'ok': False, 'error': 'Email requis'}, status=400)
+        if not order_number:
+            return JsonResponse({'ok': False, 'error': "Numéro d'ordre requis"}, status=400)
+        if not is_valid_order_number(order_number):
+            return JsonResponse({'ok': False, 'error': "Format invalide du numéro d'ordre."}, status=400)
         try:
             user = User.objects.filter(Q(username=email) | Q(email__iexact=email)).first()
             if not user:
                 raise User.DoesNotExist
         except User.DoesNotExist:
             return JsonResponse({'ok': False, 'error': 'Aucun compte trouvé avec cet email professionnel.'}, status=404)
+
+        profile = DoctorProfile.objects.filter(user=user).first()
+        if not profile:
+            return JsonResponse({'ok': False, 'error': 'Profil médecin introuvable.'}, status=403)
+
+        if (profile.order_number or '').strip().upper() != order_number:
+            return JsonResponse({'ok': False, 'error': "Email professionnel et numéro d'ordre ne correspondent pas."}, status=403)
+
+        if profile.status != 'en_attente':
+            return JsonResponse({'ok': False, 'error': "Le mode urgence est disponible uniquement pour les comptes en attente de validation."}, status=403)
+
         attempt, created = EmergencyLoginAttempt.objects.get_or_create(email=email)
-        if attempt.count >= 5:
-            return JsonResponse({'ok': False, 'error': 'Limite d\'accès d\'urgence atteinte (max 5).'}, status=403)
+        if attempt.count >= 2:
+            return JsonResponse({'ok': False, 'error': 'Limite d\'accès d\'urgence atteinte (max 2).'}, status=403)
         attempt.count += 1
         attempt.save()
         login(request, user)
         request.session['username'] = user.username
-        return JsonResponse({'ok': True, 'message': f'Connexion d\'urgence réussie ({attempt.count}/5)', 'user': user.username, 'count': attempt.count})
+        return JsonResponse({'ok': True, 'message': f'Connexion d\'urgence réussie ({attempt.count}/2)', 'user': user.username, 'count': attempt.count})
     except json.JSONDecodeError:
         return JsonResponse({'ok': False, 'error': 'JSON invalide'}, status=400)
     except Exception as e:
@@ -1644,11 +1955,29 @@ def check_emergency_limit(request):
     try:
         data = json.loads(request.body)
         email = (data.get('email') or '').strip().lower()
+        order_number = normalize_order_number(data.get('order_number'))
         if not email:
             return JsonResponse({'ok': False, 'error': 'Email requis'}, status=400)
+        if not order_number:
+            return JsonResponse({'ok': False, 'error': "Numéro d'ordre requis"}, status=400)
+        if not is_valid_order_number(order_number):
+            return JsonResponse({'ok': False, 'error': "Format invalide du numéro d'ordre."}, status=400)
+
+        user = User.objects.filter(Q(username=email) | Q(email__iexact=email)).first()
+        if not user:
+            return JsonResponse({'ok': False, 'error': 'Aucun compte trouvé avec cet email professionnel.'}, status=404)
+
+        profile = DoctorProfile.objects.filter(user=user).first()
+        if not profile:
+            return JsonResponse({'ok': False, 'error': 'Profil médecin introuvable.'}, status=403)
+        if (profile.order_number or '').strip().upper() != order_number:
+            return JsonResponse({'ok': False, 'error': "Email professionnel et numéro d'ordre ne correspondent pas."}, status=403)
+        if profile.status != 'en_attente':
+            return JsonResponse({'ok': False, 'error': "Le mode urgence est disponible uniquement pour les comptes en attente de validation."}, status=403)
+
         attempt = EmergencyLoginAttempt.objects.filter(email=email).first()
         count = attempt.count if attempt else 0
-        return JsonResponse({'ok': True, 'count': count, 'remaining': max(0, 5 - count)})
+        return JsonResponse({'ok': True, 'count': count, 'remaining': max(0, 2 - count)})
     except json.JSONDecodeError:
         return JsonResponse({'ok': False, 'error': 'JSON invalide'}, status=400)
     except Exception as e:
@@ -1686,7 +2015,7 @@ def forgot_password(request):
             expires_at=timezone.now() + timedelta(minutes=15)
         )
 
-        reset_link = f"{settings.FRONTEND_URL}/reset-password?token={reset_token.token}"
+        reset_link = f"{get_frontend_origin()}/reset-password?token={reset_token.token}"
 
         subject = "NeuroScan - Lien de réinitialisation de mot de passe"
         html_message = f"""
@@ -1828,6 +2157,70 @@ def reset_password(request):
     except json.JSONDecodeError:
         return JsonResponse({'ok': False, 'error': 'invalid JSON'}, status=400)
     except Exception as e:
+        return JsonResponse({'ok': False, 'error': 'Internal Server Error'}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def validate_activation_token(request):
+    try:
+        data = json.loads(request.body)
+        token = (data.get('token') or '').strip()
+        if not token:
+            return JsonResponse({'ok': False, 'error': 'token required'}, status=400)
+        try:
+            activation_token = AccountActivationToken.objects.get(token=token)
+        except AccountActivationToken.DoesNotExist:
+            return JsonResponse({'ok': False, 'error_type': 'token_invalid', 'error': 'Lien invalide'}, status=400)
+        if not activation_token.is_valid():
+            if timezone.now() > activation_token.expires_at:
+                return JsonResponse({'ok': False, 'error_type': 'token_expired', 'error': 'Lien expiré'}, status=400)
+            return JsonResponse({'ok': False, 'error_type': 'token_invalid', 'error': 'Lien déjà utilisé'}, status=400)
+        return JsonResponse({'ok': True, 'message': 'Token valide'})
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'invalid JSON'}, status=400)
+    except Exception:
+        return JsonResponse({'ok': False, 'error': 'Internal Server Error'}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def activate_account(request):
+    try:
+        data = json.loads(request.body)
+        token = (data.get('token') or '').strip()
+        new_password = data.get('new_password') or ''
+        if not token or not new_password:
+            return JsonResponse({'ok': False, 'error': 'token and new_password required'}, status=400)
+        try:
+            activation_token = AccountActivationToken.objects.get(token=token)
+        except AccountActivationToken.DoesNotExist:
+            return JsonResponse({'ok': False, 'error_type': 'token_invalid', 'error': 'Lien invalide'}, status=400)
+
+        if not activation_token.is_valid():
+            if timezone.now() > activation_token.expires_at:
+                return JsonResponse({'ok': False, 'error_type': 'token_expired', 'error': 'Lien expiré'}, status=400)
+            return JsonResponse({'ok': False, 'error_type': 'token_invalid', 'error': 'Lien déjà utilisé'}, status=400)
+
+        user = activation_token.user
+        user.set_password(new_password)
+        user.is_active = True
+        user.save(update_fields=['password', 'is_active'])
+
+        profile = DoctorProfile.objects.filter(user=user).first()
+        if profile and profile.status != 'actif':
+            profile.status = 'actif'
+            profile.refusal_reason = ''
+            profile.reviewed_at = timezone.now()
+            profile.save(update_fields=['status', 'refusal_reason', 'reviewed_at'])
+
+        activation_token.is_used = True
+        activation_token.save(update_fields=['is_used'])
+
+        return JsonResponse({'ok': True, 'message': 'Compte activé avec succès'})
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'invalid JSON'}, status=400)
+    except Exception:
         return JsonResponse({'ok': False, 'error': 'Internal Server Error'}, status=500)
 
 
@@ -2140,6 +2533,128 @@ def create_contact_request(request):
     )
 
 
+def _testimonial_initials(full_name):
+    parts = [p for p in str(full_name or '').strip().split() if p]
+    if not parts:
+        return 'NA'
+    return ''.join(p[0].upper() for p in parts[:2])
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def testimonials_public_list(request):
+    rows = Testimonial.objects.filter(status='approved').order_by('-reviewed_at', '-created_at')[:50]
+    items = [
+        {
+            'id': t.id,
+            'name': t.full_name,
+            'role': t.role,
+            'text': t.message,
+            'initials': _testimonial_initials(t.full_name),
+            'status': 'approved',
+            'created_at': t.created_at.isoformat() if t.created_at else None,
+        }
+        for t in rows
+    ]
+    return JsonResponse({'ok': True, 'count': len(items), 'items': items})
+
+
+@csrf_exempt
+@require_http_methods(["POST", "OPTIONS"])
+def testimonials_submit(request):
+    if request.method == 'OPTIONS':
+        return JsonResponse({'ok': True})
+
+    try:
+        data = json.loads(request.body or '{}') if request.body else {}
+    except Exception:
+        data = {}
+
+    if not isinstance(data, dict):
+        data = {}
+
+    full_name = (data.get('name') or data.get('full_name') or '').strip()
+    role = (data.get('role') or '').strip()
+    message = (data.get('text') or data.get('message') or '').strip()
+
+    if not full_name or not role or not message:
+        return JsonResponse({'ok': False, 'error': 'Nom, role et temoignage sont obligatoires.'}, status=400)
+
+    t = Testimonial.objects.create(
+        full_name=full_name,
+        role=role,
+        message=message,
+        status='pending',
+    )
+    return JsonResponse(
+        {
+            'ok': True,
+            'message': 'Temoignage envoye. Il sera publie apres validation admin.',
+            'testimonial': {
+                'id': t.id,
+                'status': t.status,
+            },
+        },
+        status=201,
+    )
+
+
+@api_view(['GET'])
+@login_required
+def admin_dashboard_testimonials(request):
+    if not request.user.is_staff:
+        return JsonResponse({'ok': False, 'error': 'Permission denied'}, status=403)
+
+    qs = Testimonial.objects.all().order_by('-created_at')[:200]
+    items = []
+    for t in qs:
+        reviewer = t.reviewed_by.get_full_name() if t.reviewed_by else ''
+        items.append({
+            'id': t.id,
+            'name': t.full_name,
+            'role': t.role,
+            'text': t.message,
+            'status': t.status,
+            'initials': _testimonial_initials(t.full_name),
+            'created_at': t.created_at.isoformat() if t.created_at else None,
+            'reviewed_at': t.reviewed_at.isoformat() if t.reviewed_at else None,
+            'reviewed_by': reviewer or (t.reviewed_by.username if t.reviewed_by else ''),
+        })
+
+    pending_count = sum(1 for item in items if item['status'] == 'pending')
+    return JsonResponse({'ok': True, 'count': len(items), 'pending_count': pending_count, 'items': items})
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@login_required
+def admin_testimonial_approve(request, testimonial_id):
+    if not request.user.is_staff:
+        return JsonResponse({'ok': False, 'error': 'Permission denied'}, status=403)
+
+    t = get_object_or_404(Testimonial, id=testimonial_id)
+    t.status = 'approved'
+    t.reviewed_by = request.user
+    t.reviewed_at = timezone.now()
+    t.save(update_fields=['status', 'reviewed_by', 'reviewed_at'])
+    return JsonResponse({'ok': True, 'message': 'Temoignage approuve.'})
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@login_required
+def admin_testimonial_reject(request, testimonial_id):
+    if not request.user.is_staff:
+        return JsonResponse({'ok': False, 'error': 'Permission denied'}, status=403)
+
+    t = get_object_or_404(Testimonial, id=testimonial_id)
+    t.status = 'rejected'
+    t.reviewed_by = request.user
+    t.reviewed_at = timezone.now()
+    t.save(update_fields=['status', 'reviewed_by', 'reviewed_at'])
+    return JsonResponse({'ok': True, 'message': 'Temoignage rejete.'})
+
+
 def _admin_scope_users(request):
     if request.user.is_staff:
         return User.objects.all()
@@ -2164,6 +2679,136 @@ def _admin_scope_reclamations(request):
     return Reclamation.objects.filter(user=request.user)
 
 
+def _series_analysis_type(series):
+    files = getattr(series, 'files', None) or []
+    files_text = ' '.join([str(f) for f in files])
+    haystack = f"{series.patient_id} {files_text}".lower()
+    if any(k in haystack for k in ['segmentation', 'segment', 'brodmann']):
+        return 'segmentation'
+    # Current production workflow is recalage-first.
+    return 'recalage'
+
+
+@api_view(['GET'])
+@login_required
+def admin_dashboard_analytics(request):
+    users_qs = _admin_scope_users(request)
+    series_qs = _admin_scope_series(request)
+    reclamations_qs = _admin_scope_reclamations(request)
+
+    # Active doctors = doctors who have logged in at least once.
+    active_doctors = users_qs.filter(is_staff=False, is_superuser=False, last_login__isnull=False)
+    profiles = DoctorProfile.objects.filter(user__in=active_doctors)
+
+    specialty_counts = {
+        'neuroradiologie': 0,
+        'medecine_nucleaire': 0,
+        'neurologie': 0,
+        'autre': 0,
+    }
+    for profile in profiles:
+        key = (profile.specialty or 'autre').strip().lower()
+        if key not in specialty_counts:
+            key = 'autre'
+        specialty_counts[key] += 1
+
+    total_active_doctors = sum(specialty_counts.values())
+    if total_active_doctors == 0:
+        total_active_doctors = 1
+
+    audience = [
+        {
+            'label': 'Neuroradiologie',
+            'value': int(specialty_counts['neuroradiologie']),
+            'percent': int(round((specialty_counts['neuroradiologie'] / total_active_doctors) * 100)),
+        },
+        {
+            'label': 'Med. nucleaire',
+            'value': int(specialty_counts['medecine_nucleaire']),
+            'percent': int(round((specialty_counts['medecine_nucleaire'] / total_active_doctors) * 100)),
+        },
+        {
+            'label': 'Neurologie',
+            'value': int(specialty_counts['neurologie']),
+            'percent': int(round((specialty_counts['neurologie'] / total_active_doctors) * 100)),
+        },
+        {
+            'label': 'Autres',
+            'value': int(specialty_counts['autre']),
+            'percent': int(round((specialty_counts['autre'] / total_active_doctors) * 100)),
+        },
+    ]
+
+    month_names = {
+        1: 'Jan',
+        2: 'Fev',
+        3: 'Mar',
+        4: 'Avr',
+        5: 'Mai',
+        6: 'Jun',
+        7: 'Jul',
+        8: 'Aou',
+        9: 'Sep',
+        10: 'Oct',
+        11: 'Nov',
+        12: 'Dec',
+    }
+
+    now = timezone.localtime(timezone.now())
+    first_series_date = series_qs.order_by('created_at').values_list('created_at', flat=True).first()
+    if first_series_date:
+        first_local = timezone.localtime(first_series_date)
+        months_since_launch = ((now.year - first_local.year) * 12) + (now.month - first_local.month) + 1
+    else:
+        months_since_launch = 1
+
+    # Window is tied to real platform lifetime and capped to keep chart readable.
+    usage_window_months = max(1, min(4, months_since_launch))
+
+    usage_keys = []
+    for delta in range(usage_window_months - 1, -1, -1):
+        total = (now.year * 12 + (now.month - 1)) - delta
+        year = total // 12
+        month = (total % 12) + 1
+        usage_keys.append((year, month))
+
+    usage_map = {(y, m): {'month': month_names[m], 'segmentation': 0, 'recalage': 0} for (y, m) in usage_keys}
+
+    for s in series_qs:
+        if not s.created_at:
+            continue
+        dt = timezone.localtime(s.created_at)
+        key = (dt.year, dt.month)
+        if key not in usage_map:
+            continue
+        analysis_type = _series_analysis_type(s)
+        usage_map[key][analysis_type] += 1
+
+    usage = [usage_map[key] for key in usage_keys]
+
+    open_complaints = reclamations_qs.filter(etat='en_attente').count()
+    rejected_complaints = reclamations_qs.filter(etat='rejetee').count()
+    total_ops = max(1, series_qs.count())
+    availability = max(90.0, min(99.9, 100.0 - (open_complaints * 0.35 + rejected_complaints * 0.8)))
+    healthy_ops = max(90.0, min(99.9, 100.0 - ((rejected_complaints / total_ops) * 100.0)))
+
+    status = 'Stable' if healthy_ops >= 97 else ('Sous surveillance' if healthy_ops >= 94 else 'Action requise')
+
+    return JsonResponse({
+        'ok': True,
+        'audience': audience,
+        'usage': usage,
+        'usage_window_months': usage_window_months,
+        'health': {
+            'availability': round(availability, 1),
+            'healthy_ops': round(healthy_ops, 1),
+            'incidents': int(rejected_complaints),
+            'open_complaints': int(open_complaints),
+            'status': status,
+        },
+    })
+
+
 @api_view(['GET'])
 @login_required
 def admin_dashboard_overview(request):
@@ -2177,11 +2822,12 @@ def admin_dashboard_overview(request):
 
     recent = []
     for s in series_qs.order_by('-created_at')[:6]:
+        analysis_type = _series_analysis_type(s)
         recent.append({
             'action': 'Analyse IRM cérébrale',
             'user': (s.user.username if s.user else 'Utilisateur inconnu'),
-            'type': 'Segmentation',
-            'status': 'segmentation',
+            'type': 'Recalage' if analysis_type == 'recalage' else 'Segmentation',
+            'status': analysis_type,
             'date': s.created_at.isoformat() if s.created_at else None,
         })
     for r in reclamations_qs.order_by('-date')[:6]:
@@ -2223,22 +2869,228 @@ def admin_dashboard_overview(request):
 def admin_dashboard_accounts(request):
     users_qs = _admin_scope_users(request).order_by('-date_joined')
     accounts = []
+    now = timezone.now()
     for i, u in enumerate(users_qs[:100], start=1):
-        if not u.last_login:
-            status_label = 'En attente'
+        profile = DoctorProfile.objects.filter(user=u).first()
+        if profile:
+            has_pending_activation = AccountActivationToken.objects.filter(
+                user=u,
+                is_used=False,
+                expires_at__gt=now,
+            ).exists()
+            if profile.status == 'en_attente':
+                status_label = "En attente d'activation" if has_pending_activation else 'En attente'
+            else:
+                status_map = {'actif': 'Actif', 'refuse': 'Refuse'}
+                status_label = status_map.get(profile.status, 'En attente')
+            specialty = profile.specialty
+            affiliation = profile.affiliation
+            order_number = profile.order_number or ''
+            grade = profile.grade
+            telephone = profile.telephone
+            refusal_reason = profile.refusal_reason
         else:
-            status_label = 'Actif' if u.is_active else 'Inactif'
+            status_label = 'Actif' if u.is_active else "En attente d'activation"
+            specialty = ''
+            affiliation = ''
+            order_number = ''
+            grade = ''
+            telephone = ''
+            refusal_reason = ''
+
         accounts.append({
             'id': f'USR-{i:03d}',
+            'user_id': u.id,
             'username': u.username,
             'full_name': (u.get_full_name() or u.username),
             'email': u.email or '-',
             'role': 'Super Admin' if u.is_superuser else ('Admin' if u.is_staff else 'Clinicien'),
             'status': status_label,
             'last_login': u.last_login.isoformat() if u.last_login else None,
+            'specialty': specialty,
+            'affiliation': affiliation,
+            'order_number': order_number,
+            'grade': grade,
+            'telephone': telephone,
+            'refusal_reason': refusal_reason,
         })
 
-    return JsonResponse({'ok': True, 'count': len(accounts), 'accounts': accounts})
+    pending_count = sum(1 for a in accounts if str(a.get('status', '')).lower() == 'en attente')
+    return JsonResponse({'ok': True, 'count': len(accounts), 'pending_count': pending_count, 'accounts': accounts})
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@login_required
+def admin_account_approve(request, user_id):
+    if not request.user.is_staff:
+        return JsonResponse({'ok': False, 'error': 'Permission denied'}, status=403)
+
+    target = get_object_or_404(User, id=user_id)
+    profile, _ = DoctorProfile.objects.get_or_create(user=target)
+    profile.status = 'actif'
+    profile.refusal_reason = ''
+    profile.reviewed_by = request.user
+    profile.reviewed_at = timezone.now()
+    profile.save()
+
+    target.is_active = True
+    target.save(update_fields=['is_active'])
+
+    if target.email:
+        send_account_approved_email(
+            email=target.email,
+            nom=profile.nom or target.last_name,
+            prenom=profile.prenom or target.first_name,
+        )
+
+    return JsonResponse({'ok': True, 'message': f'Compte {target.username} active.'})
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@login_required
+def admin_account_reject(request, user_id):
+    if not request.user.is_staff:
+        return JsonResponse({'ok': False, 'error': 'Permission denied'}, status=403)
+
+    try:
+        data = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'JSON invalide'}, status=400)
+
+    reason = (data.get('reason') or '').strip()
+    if not reason:
+        return JsonResponse({'ok': False, 'error': 'Le motif de refus est obligatoire.'}, status=400)
+
+    target = get_object_or_404(User, id=user_id)
+    profile, _ = DoctorProfile.objects.get_or_create(user=target)
+    profile.status = 'refuse'
+    profile.refusal_reason = reason
+    profile.reviewed_by = request.user
+    profile.reviewed_at = timezone.now()
+    profile.save()
+
+    target.is_active = False
+    target.save(update_fields=['is_active'])
+
+    if target.email:
+        send_account_rejected_email(
+            email=target.email,
+            nom=profile.nom or target.last_name,
+            prenom=profile.prenom or target.first_name,
+            reason=reason,
+        )
+
+    return JsonResponse({'ok': True, 'message': f'Compte {target.username} refuse.'})
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@login_required
+def admin_account_create(request):
+    if not request.user.is_staff:
+        return JsonResponse({'ok': False, 'error': 'Permission denied'}, status=403)
+
+    try:
+        data = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'JSON invalide'}, status=400)
+
+    email = (data.get('email') or '').strip().lower()
+    nom = (data.get('nom') or '').strip()
+    prenom = (data.get('prenom') or '').strip()
+    order_number = normalize_order_number(data.get('order_number'))
+    affiliation = (data.get('affiliation') or '').strip()
+    specialty = (data.get('specialty') or 'autre').strip().lower()
+    grade = (data.get('grade') or '').strip()
+    telephone = normalize_tunisian_phone(data.get('telephone'))
+    username = (data.get('username') or email).strip().lower()
+    password = (data.get('password') or '').strip()
+
+    if not email:
+        return JsonResponse({'ok': False, 'error': 'Email professionnel requis.'}, status=400)
+    if not nom or not prenom:
+        return JsonResponse({'ok': False, 'error': 'Nom et prénom requis.'}, status=400)
+    if not order_number:
+        return JsonResponse({'ok': False, 'error': "Numéro d'ordre tunisien requis."}, status=400)
+    if not is_valid_order_number(order_number):
+        return JsonResponse({'ok': False, 'error': "Format invalide: utilisez 12345 ou T-12345 (4 à 6 chiffres)."}, status=400)
+    if telephone and not is_valid_tunisian_phone(telephone):
+        return JsonResponse({'ok': False, 'error': 'Téléphone invalide: utilisez un numéro tunisien à 8 chiffres (ex: 22345678).'}, status=400)
+    if not affiliation:
+        return JsonResponse({'ok': False, 'error': 'Affiliation requise.'}, status=400)
+
+    allowed_specialties = {'neuroradiologie', 'neurologie', 'medecine_nucleaire', 'autre'}
+    if specialty not in allowed_specialties:
+        specialty = 'autre'
+
+    activation_token = None
+    activation_required = not bool(password)
+    activation_hours = int(os.getenv('ACCOUNT_ACTIVATION_HOURS', '48'))
+
+    try:
+        with transaction.atomic():
+            if User.objects.filter(username=username).exists() or User.objects.filter(email__iexact=email).exists():
+                return JsonResponse({'ok': False, 'error': 'Un compte avec cet email existe déjà.'}, status=400)
+            if DoctorProfile.objects.filter(order_number__iexact=order_number).exists():
+                return JsonResponse({'ok': False, 'error': "Ce numéro d'ordre existe déjà."}, status=400)
+
+            user = User.objects.create_user(
+                username=username,
+                email=email,
+                password=password,
+                first_name=prenom,
+                last_name=nom,
+                is_active=not activation_required,
+            )
+
+            DoctorProfile.objects.create(
+                user=user,
+                nom=nom,
+                prenom=prenom,
+                order_number=order_number,
+                affiliation=affiliation,
+                specialty=specialty,
+                grade=grade,
+                telephone=telephone,
+                status='en_attente' if activation_required else 'actif',
+                reviewed_by=request.user,
+                reviewed_at=timezone.now(),
+            )
+
+            if activation_required:
+                AccountActivationToken.objects.filter(user=user).delete()
+                activation_token = AccountActivationToken.objects.create(
+                    user=user,
+                    expires_at=timezone.now() + timedelta(hours=activation_hours),
+                )
+                send_account_activation_email(
+                    email=user.email,
+                    nom=nom,
+                    prenom=prenom,
+                    activation_token=activation_token,
+                )
+
+            return JsonResponse({
+                'ok': True,
+                'message': (
+                    'Compte médecin créé. Un lien d\'activation sécurisé a été envoyé par email.'
+                    if activation_required
+                    else 'Compte médecin créé avec succès.'
+                ),
+                'account': {
+                    'user_id': user.id,
+                    'username': user.username,
+                    'email': user.email,
+                    'full_name': user.get_full_name() or user.username,
+                    'status': "En attente d'activation" if activation_required else 'Actif',
+                },
+                'activation_required': activation_required,
+                'activation_expires_at': activation_token.expires_at.isoformat() if activation_token else None,
+            })
+    except IntegrityError:
+        return JsonResponse({'ok': False, 'error': 'Impossible de créer le compte (doublon détecté).'}, status=400)
 
 
 @api_view(['GET'])
@@ -2249,11 +3101,12 @@ def admin_dashboard_history(request):
 
     items = []
     for s in series_qs.order_by('-created_at')[:20]:
+        analysis_type = _series_analysis_type(s)
         items.append({
             'title': 'Analyse IRM cérébrale',
             'subtitle': f"{s.user.username if s.user else 'Utilisateur'} · Série {s.job_id[:8]}",
-            'type': 'Segmentation',
-            'status': 'segmentation',
+            'type': 'Recalage' if analysis_type == 'recalage' else 'Segmentation',
+            'status': analysis_type,
             'date': s.created_at.isoformat() if s.created_at else None,
         })
     for r in reclamations_qs.order_by('-date')[:20]:

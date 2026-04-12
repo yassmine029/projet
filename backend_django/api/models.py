@@ -65,6 +65,20 @@ class PasswordResetToken(models.Model):
         return f"Reset token for {self.user.username}"
 
 
+class AccountActivationToken(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='activation_token')
+    token = models.CharField(max_length=64, unique=True, default=secrets.token_urlsafe)
+    created_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+
+    def is_valid(self):
+        return timezone.now() < self.expires_at and not self.is_used
+
+    def __str__(self):
+        return f"Activation token for {self.user.username}"
+
+
 class EmergencyLoginAttempt(models.Model):
     email = models.EmailField(unique=True)
     count = models.IntegerField(default=0)
@@ -72,6 +86,45 @@ class EmergencyLoginAttempt(models.Model):
 
     def __str__(self):
         return f"Emergency attempts for {self.email}: {self.count}"
+
+
+class DoctorProfile(models.Model):
+    SPECIALTY_CHOICES = [
+        ('neuroradiologie', 'Neuroradiologie'),
+        ('neurologie', 'Neurologie'),
+        ('medecine_nucleaire', 'Medecine nucleaire'),
+        ('autre', 'Autre'),
+    ]
+
+    STATUS_CHOICES = [
+        ('en_attente', 'En attente'),
+        ('actif', 'Actif'),
+        ('refuse', 'Refuse'),
+    ]
+
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='doctor_profile')
+    nom = models.CharField(max_length=100, blank=True, default='')
+    prenom = models.CharField(max_length=100, blank=True, default='')
+    order_number = models.CharField(
+        max_length=8,
+        unique=True,
+        null=True,
+        blank=True,
+        validators=[RegexValidator(regex=r'^(?:\d{4,6}|T-\d{4,6})$', message='Order number must be 4-6 digits or T-4-6 digits.')],
+    )
+    affiliation = models.CharField(max_length=255, blank=True, default='')
+    specialty = models.CharField(max_length=50, choices=SPECIALTY_CHOICES, default='autre')
+    grade = models.CharField(max_length=80, blank=True, default='')
+    telephone = models.CharField(max_length=40, blank=True, default='')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='en_attente')
+    refusal_reason = models.TextField(blank=True, default='')
+    reviewed_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='reviewed_doctor_profiles')
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"DoctorProfile({self.user.username}, {self.specialty})"
 
 
 dossier_number_regex = RegexValidator(
@@ -146,3 +199,22 @@ class ContactRequest(models.Model):
 
     def __str__(self):
         return f"ContactRequest({self.full_name}, {self.email}, {self.subject})"
+
+
+class Testimonial(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'En attente'),
+        ('approved', 'Approuve'),
+        ('rejected', 'Rejete'),
+    ]
+
+    full_name = models.CharField(max_length=150)
+    role = models.CharField(max_length=180)
+    message = models.TextField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending', db_index=True)
+    reviewed_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='reviewed_testimonials')
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Testimonial({self.full_name}, {self.status})"

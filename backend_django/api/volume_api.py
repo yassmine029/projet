@@ -824,6 +824,149 @@ def _stabilize_translation_to_reference(
     return out.astype(np.float32), (dx, dy, dz)
 
 
+def _center_crop_or_pad_volume(vol: np.ndarray, target_shape: tuple) -> np.ndarray:
+    """Center-crop/pad a 3D volume to target shape."""
+    src = np.asarray(vol, dtype=np.float32)
+    tx, ty, tz = [int(v) for v in target_shape]
+    sx, sy, sz = [int(v) for v in src.shape]
+    out = np.zeros((tx, ty, tz), dtype=np.float32)
+
+    copy_x = min(sx, tx)
+    copy_y = min(sy, ty)
+    copy_z = min(sz, tz)
+
+    src_x0 = max(0, (sx - copy_x) // 2)
+    src_y0 = max(0, (sy - copy_y) // 2)
+    src_z0 = max(0, (sz - copy_z) // 2)
+
+    dst_x0 = max(0, (tx - copy_x) // 2)
+    dst_y0 = max(0, (ty - copy_y) // 2)
+    dst_z0 = max(0, (tz - copy_z) // 2)
+
+    out[
+        dst_x0:dst_x0 + copy_x,
+        dst_y0:dst_y0 + copy_y,
+        dst_z0:dst_z0 + copy_z,
+    ] = src[
+        src_x0:src_x0 + copy_x,
+        src_y0:src_y0 + copy_y,
+        src_z0:src_z0 + copy_z,
+    ]
+    return out
+
+
+def _stabilize_similarity_to_reference(
+    moving_vol: np.ndarray,
+    ref_vol: np.ndarray,
+    threshold: float = 0.10,
+    max_shift_ratio: float = 0.10,
+    max_scale_delta: float = 0.14,
+    min_scale_trigger: float = 0.08,
+) -> tuple:
+    """Bounded post-MINE similarity stabilization (global scale + translation)."""
+    moving = np.asarray(moving_vol, dtype=np.float32)
+    ref = np.asarray(ref_vol, dtype=np.float32)
+    if moving.shape != ref.shape or moving.ndim != 3:
+        return moving, {'scale': 1.0, 'shift': (0, 0, 0)}
+
+    mov_mask = _robust_normalize_01(moving) > float(threshold)
+    ref_mask = _robust_normalize_01(ref) > float(threshold)
+    if np.count_nonzero(mov_mask) == 0 or np.count_nonzero(ref_mask) == 0:
+        return moving, {'scale': 1.0, 'shift': (0, 0, 0)}
+
+    mov_pts = np.where(mov_mask)
+    ref_pts = np.where(ref_mask)
+
+    mov_ext = np.array([
+        float(np.max(mov_pts[0]) - np.min(mov_pts[0]) + 1),
+        float(np.max(mov_pts[1]) - np.min(mov_pts[1]) + 1),
+        float(np.max(mov_pts[2]) - np.min(mov_pts[2]) + 1),
+    ], dtype=np.float32)
+    ref_ext = np.array([
+        float(np.max(ref_pts[0]) - np.min(ref_pts[0]) + 1),
+        float(np.max(ref_pts[1]) - np.min(ref_pts[1]) + 1),
+        float(np.max(ref_pts[2]) - np.min(ref_pts[2]) + 1),
+    ], dtype=np.float32)
+
+    valid = mov_ext > 1.0
+    raw_scale = float(np.mean(ref_ext[valid] / np.maximum(mov_ext[valid], 1.0))) if np.any(valid) else 1.0
+    lo = max(0.75, 1.0 - float(max_scale_delta))
+    hi = min(1.25, 1.0 + float(max_scale_delta))
+    bounded_scale = float(np.clip(raw_scale, lo, hi))
+
+    scaled = moving
+    applied_scale = 1.0
+    if abs(bounded_scale - 1.0) >= float(min_scale_trigger):
+        zoomed = zoom(
+            moving,
+            (bounded_scale, bounded_scale, bounded_scale),
+            order=1,
+            mode='nearest',
+            prefilter=False,
+        )
+        scaled = _center_crop_or_pad_volume(zoomed, moving.shape)
+        applied_scale = bounded_scale
+
+    translated, shift = _stabilize_translation_to_reference(
+        scaled,
+        ref,
+        threshold=threshold,
+        max_shift_ratio=max_shift_ratio,
+    )
+    return translated, {'scale': applied_scale, 'shift': shift}
+
+
+def _force_extent_alignment_to_reference(
+    moving_vol: np.ndarray,
+    ref_vol: np.ndarray,
+    threshold: float = 0.10,
+    max_scale_delta: float = 0.30,
+) -> tuple:
+    """Strict mode: match global foreground extent to reference with bounded isotropic scale."""
+    moving = np.asarray(moving_vol, dtype=np.float32)
+    ref = np.asarray(ref_vol, dtype=np.float32)
+    if moving.shape != ref.shape or moving.ndim != 3:
+        return moving, 1.0
+
+    mov_mask = _robust_normalize_01(moving) > float(threshold)
+    ref_mask = _robust_normalize_01(ref) > float(threshold)
+    if np.count_nonzero(mov_mask) == 0 or np.count_nonzero(ref_mask) == 0:
+        return moving, 1.0
+
+    mov_pts = np.where(mov_mask)
+    ref_pts = np.where(ref_mask)
+
+    mov_ext = np.array([
+        float(np.max(mov_pts[0]) - np.min(mov_pts[0]) + 1),
+        float(np.max(mov_pts[1]) - np.min(mov_pts[1]) + 1),
+        float(np.max(mov_pts[2]) - np.min(mov_pts[2]) + 1),
+    ], dtype=np.float32)
+    ref_ext = np.array([
+        float(np.max(ref_pts[0]) - np.min(ref_pts[0]) + 1),
+        float(np.max(ref_pts[1]) - np.min(ref_pts[1]) + 1),
+        float(np.max(ref_pts[2]) - np.min(ref_pts[2]) + 1),
+    ], dtype=np.float32)
+
+    ratio = ref_ext / np.maximum(mov_ext, 1.0)
+    raw_scale = float(np.median(ratio))
+    lo = max(0.60, 1.0 - float(max_scale_delta))
+    hi = min(1.60, 1.0 + float(max_scale_delta))
+    bounded_scale = float(np.clip(raw_scale, lo, hi))
+
+    if abs(bounded_scale - 1.0) < 0.02:
+        return moving, 1.0
+
+    zoomed = zoom(
+        moving,
+        (bounded_scale, bounded_scale, bounded_scale),
+        order=1,
+        mode='nearest',
+        prefilter=False,
+    )
+    aligned = _center_crop_or_pad_volume(zoomed, moving.shape)
+    return aligned, bounded_scale
+
+
 def _is_suspicious_spatial_position(vol: np.ndarray) -> bool:
     """Heuristic to detect bad affine placement (brain clipped/off-center in atlas grid)."""
     arr = np.asarray(vol, dtype=np.float32)
@@ -1828,6 +1971,8 @@ def auto_align_volume(request):
         n_iters = 120
     n_iters = int(np.clip(n_iters, 30, 1000))
 
+    strict_atlas_grid = bool(payload.get('strict_atlas_grid', True))
+
     _ensure_atlas()
     selected = entry.get('selected_slice') or {}
     axis = str(payload.get('axis', selected.get('axis', 'axial'))).lower()
@@ -1933,14 +2078,30 @@ def auto_align_volume(request):
     else:
         print(f"[OK] Warped volume shape matches atlas")
 
-    # Final residual translation correction to remove small visual offsets.
-    warped_vol, residual_shift = _stabilize_translation_to_reference(
+    strict_scale = 1.0
+    if strict_atlas_grid:
+        warped_vol, strict_scale = _force_extent_alignment_to_reference(
+            np.asarray(warped_vol, dtype=np.float32),
+            np.asarray(atlas_vol, dtype=np.float32),
+            threshold=0.10,
+            max_scale_delta=0.30,
+        )
+
+    # Final bounded similarity stabilization to remove residual scale/position offsets.
+    warped_vol, stabilization = _stabilize_similarity_to_reference(
         np.asarray(warped_vol, dtype=np.float32),
         np.asarray(atlas_vol, dtype=np.float32),
         threshold=0.10,
-        max_shift_ratio=0.08,
+        max_shift_ratio=0.15 if strict_atlas_grid else 0.08,
+        max_scale_delta=0.30 if strict_atlas_grid else 0.14,
+        min_scale_trigger=0.03 if strict_atlas_grid else 0.08,
     )
-    print(f"[AUTO_ALIGN] Residual translation stabilization shift: {residual_shift}")
+    print(
+        f"[AUTO_ALIGN] strict_atlas_grid={strict_atlas_grid} | "
+        f"strict_scale={strict_scale:.4f} | "
+        f"similarity_scale={stabilization.get('scale', 1.0):.4f}, "
+        f"shift={stabilization.get('shift', (0, 0, 0))}"
+    )
 
     matrix_4x4 = result.get('matrix')
     suspicious_matrix = _is_suspicious_affine_matrix_3d(matrix_4x4)
@@ -1955,10 +2116,16 @@ def auto_align_volume(request):
         'axis': axis,
         'index': idx,
         'n_iters': n_iters,
+        'strict_atlas_grid': strict_atlas_grid,
         'matrix_4x4': matrix_4x4,
         'warped_path': warped_path,
         'fallback_used': auto_fallback_used,
         'fallback_reason': 'suspicious_matrix' if suspicious_matrix else None,
+        'stabilization': {
+            'strict_scale': float(strict_scale),
+            'similarity_scale': float(stabilization.get('scale', 1.0)),
+            'shift': list(stabilization.get('shift', (0, 0, 0))),
+        },
     }
     _persist_job_entry(job_id)
 
@@ -1989,8 +2156,10 @@ def auto_align_volume(request):
         'axis': axis,
         'index': idx,
         'n_iters': n_iters,
+        'strict_atlas_grid': strict_atlas_grid,
         'metrics': {
             'n_iters': n_iters,
+            'strict_atlas_grid': strict_atlas_grid,
             'mutual_information': round(final_mi, 4),
             'mi_quality': mi_quality,
             'mse_before': float(result.get('metrics', {}).get('mse_before', 0.0)),

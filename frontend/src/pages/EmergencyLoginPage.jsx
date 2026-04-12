@@ -1,28 +1,35 @@
 import React, { useState, useEffect } from 'react'
-import { Mail, ArrowLeft, ShieldAlert, CheckCircle2, AlertTriangle, Brain, Zap, ArrowRight } from 'lucide-react'
+import { Mail, ArrowLeft, ShieldAlert, CheckCircle2, AlertTriangle, Brain, Zap, ArrowRight, Briefcase } from 'lucide-react'
 import { emergencyLogin } from '../api'
 
 export default function EmergencyLoginPage({ onBack }) {
   const [email, setEmail] = useState('')
+  const [orderNumber, setOrderNumber] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [sent, setSent] = useState(false)
   const [emailError, setEmailError] = useState('')
+  const [orderError, setOrderError] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
   const [remainingAttempts, setRemainingAttempts] = useState(null)
 
   useEffect(() => {
     // Logic for checking remaining attempts could be added here
-    setRemainingAttempts(5)
+    setRemainingAttempts(2)
   }, [])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!email) return
+    if (!email || !orderNumber) {
+      if (!email) setEmailError('Email professionnel requis')
+      if (!orderNumber) setOrderError("Numéro d'ordre requis")
+      return
+    }
     setIsLoading(true)
     setEmailError('')
+    setOrderError('')
     
     try {
-      const response = await emergencyLogin(email)
+      const response = await emergencyLogin(email, orderNumber)
       if (response.data && response.data.ok) {
         setSent(true)
         setSuccessMessage('Accès d\'urgence validé.')
@@ -32,7 +39,12 @@ export default function EmergencyLoginPage({ onBack }) {
       }
     } catch (err) {
       console.error(err)
-      setEmailError('Erreur de communication avec le serveur HDS.')
+      const serverError = err?.response?.data?.error
+      if (serverError && serverError.toLowerCase().includes('numéro')) {
+        setOrderError(serverError)
+      } else {
+        setEmailError(serverError || 'Erreur de communication avec le serveur HDS.')
+      }
     } finally {
       setIsLoading(false)
     }
@@ -106,7 +118,7 @@ export default function EmergencyLoginPage({ onBack }) {
                   {remainingAttempts !== null && !emailError && (
                     <div className="flex items-center gap-2 pl-1 mt-3">
                        <div className="flex gap-1">
-                          {[1,2,3,4,5].map(i => (
+                          {[1,2].map(i => (
                             <div key={i} className={`w-3 h-1 rounded-full transition-colors duration-500 ${i <= remainingAttempts ? 'bg-red-400' : 'bg-slate-100'}`}></div>
                           ))}
                        </div>
@@ -117,9 +129,31 @@ export default function EmergencyLoginPage({ onBack }) {
                   )}
                 </div>
 
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Numéro d'ordre tunisien</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                      <Briefcase className={`h-4 w-4 ${orderError ? 'text-red-400' : 'text-slate-400'}`} />
+                    </div>
+                    <input
+                      type="text"
+                      value={orderNumber}
+                      onChange={e => { setOrderNumber(e.target.value.toUpperCase()); setOrderError('') }}
+                      className={`block w-full pl-10 pr-4 py-3.5 border ${orderError ? 'border-red-300' : 'border-slate-100'} rounded-2xl bg-slate-50/50 focus:bg-white transition-all duration-300 placeholder-slate-300 focus:outline-none focus:ring-4 focus:ring-red-600/5 sm:text-sm text-slate-900 font-medium`}
+                      placeholder="12345 ou T-12345"
+                    />
+                  </div>
+                  {orderError && (
+                    <p className="text-xs text-red-600 font-black pl-1 flex items-center gap-1.5 mt-2">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      {orderError}
+                    </p>
+                  )}
+                </div>
+
                 <button 
                   type="submit" 
-                  disabled={isLoading || !email}
+                  disabled={isLoading || !email || !orderNumber}
                   className="w-full h-14 flex justify-center items-center gap-3 py-4 bg-gradient-to-r from-red-600 to-red-800 text-white font-bold rounded-2xl hover:shadow-xl hover:shadow-red-600/20 active:scale-[0.98] transition-all duration-300 group disabled:opacity-50"
                 >
                   {isLoading ? (

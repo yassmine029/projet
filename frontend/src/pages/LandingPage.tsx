@@ -1,5 +1,5 @@
 import React from 'react';
-import { createContactRequest } from '../api';
+import { createContactRequest, getApprovedTestimonials, submitTestimonial } from '../api';
 import {
   Brain,
   Layers,
@@ -58,6 +58,9 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
   const [isContactSending, setIsContactSending] = React.useState(false);
   const [featureAccessHint, setFeatureAccessHint] = React.useState('');
   const [formData, setFormData] = React.useState({ name: '', role: '', text: '' });
+  const [testimonialSuccess, setTestimonialSuccess] = React.useState('');
+  const [testimonialError, setTestimonialError] = React.useState('');
+  const [testimonialSubmitting, setTestimonialSubmitting] = React.useState(false);
   const [contactForm, setContactForm] = React.useState({
     fullName: '',
     email: '',
@@ -90,6 +93,21 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
   ]);
 
   React.useEffect(() => {
+    const loadApprovedTestimonials = async () => {
+      try {
+        const res = await getApprovedTestimonials();
+        const items = Array.isArray(res?.data?.items) ? res.data.items : [];
+        if (items.length > 0) {
+          setTestimonials(items);
+        }
+      } catch (err) {
+        console.error('Testimonials load failed:', err);
+      }
+    };
+    void loadApprovedTestimonials();
+  }, []);
+
+  React.useEffect(() => {
     const observerOptions = {
       root: null,
       rootMargin: '0px',
@@ -111,19 +129,33 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
     return () => observer.disconnect();
   }, []);
 
-  const handleSubmitTestimonial = (e: React.FormEvent) => {
+  const handleSubmitTestimonial = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name || !formData.role || !formData.text) return;
 
-    const newEntry = {
-      ...formData,
-      initials: formData.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2),
-      status: 'pending' as const
-    };
-
-    setTestimonials([...testimonials, newEntry]);
-    setFormData({ name: '', role: '', text: '' });
-    setIsModalOpen(false);
+    setTestimonialError('');
+    setTestimonialSuccess('');
+    setTestimonialSubmitting(true);
+    try {
+      await submitTestimonial({
+        name: formData.name,
+        role: formData.role,
+        text: formData.text,
+      });
+      setTestimonialSuccess('Merci. Votre témoignage a été envoyé et sera affiché après validation admin.');
+      setFormData({ name: '', role: '', text: '' });
+      setTimeout(() => {
+        setIsModalOpen(false);
+        setTestimonialSuccess('');
+      }, 1400);
+    } catch (err: any) {
+      const apiMessage = err?.response?.data?.error;
+      const statusCode = err?.response?.status;
+      const networkMessage = err?.message;
+      setTestimonialError(apiMessage || (statusCode ? `Impossible d'envoyer le témoignage (HTTP ${statusCode}).` : `Impossible d'envoyer le témoignage: ${networkMessage || 'erreur réseau'}.`));
+    } finally {
+      setTestimonialSubmitting(false);
+    }
   };
 
   const scrollToSection = (id: string) => {
@@ -652,7 +684,7 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
 
           <div className="grid md:grid-cols-3 gap-8 reveal reveal-up">
             {testimonials.map((t, i) => (
-              <div key={i} className={`p-8 bg-white border border-slate-100 rounded-3xl shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 relative group ${t.status === 'pending' ? 'border-dashed border-blue-200 bg-blue-50/10' : ''}`}>
+              <div key={i} className="p-8 bg-white border border-slate-100 rounded-3xl shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 relative group">
                 <Quote className="absolute top-6 right-8 w-12 h-12 text-blue-50 opacity-0 group-hover:opacity-100 transition-opacity" />
 
                 <div className="flex justify-between items-start mb-6">
@@ -661,12 +693,6 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
                       <Star key={j} className="w-4 h-4 fill-amber-400 text-amber-400" />
                     ))}
                   </div>
-                  {t.status === 'pending' && (
-                    <div className="flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-[9px] font-bold uppercase tracking-wider">
-                      <Clock className="w-3 h-3" />
-                      En attente
-                    </div>
-                  )}
                 </div>
 
                 <p className="text-slate-600 text-sm leading-relaxed mb-8 relative z-10">
@@ -748,12 +774,24 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
                     ></textarea>
                   </div>
 
+                  {testimonialSuccess && (
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">
+                      {testimonialSuccess}
+                    </div>
+                  )}
+                  {testimonialError && (
+                    <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">
+                      {testimonialError}
+                    </div>
+                  )}
+
                   <button
                     type="submit"
+                    disabled={testimonialSubmitting}
                     className="w-full py-4 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-700 shadow-xl shadow-blue-600/20 transition-all flex items-center justify-center gap-2 group"
                   >
                     <Send className="w-4 h-4 group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
-                    Soumettre le témoignage
+                    {testimonialSubmitting ? 'Envoi en cours...' : 'Soumettre le témoignage'}
                   </button>
                 </form>
               </div>

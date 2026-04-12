@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { Lock, ArrowLeft, Shield, Eye, EyeOff, Clock, ArrowRight, Brain, CheckCircle2 } from 'lucide-react'
-import { validateResetToken, resetPassword } from '../api'
+import { validateResetToken, resetPassword, validateActivationToken, activateAccount } from '../api'
 
 // Full-page minimal state — modern clinical style
 const MinimalStatePage = ({ type, errorMessage, onNavigate }) => {
@@ -67,7 +67,7 @@ const MinimalStatePage = ({ type, errorMessage, onNavigate }) => {
   )
 }
 
-export default function ResetPasswordPage({ onNavigate, token }) {
+export default function ResetPasswordPage({ onNavigate, token, mode = 'reset' }) {
   const [step, setStep] = useState('form')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -78,6 +78,7 @@ export default function ResetPasswordPage({ onNavigate, token }) {
   const [confirmError, setConfirmError] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
   const [isValidatingToken, setIsValidatingToken] = useState(true)
+  const isActivationMode = mode === 'activation'
 
   useEffect(() => {
     if (!token) {
@@ -88,7 +89,9 @@ export default function ResetPasswordPage({ onNavigate, token }) {
     }
     const validate = async () => {
       try {
-        const response = await validateResetToken(token)
+        const response = isActivationMode
+          ? await validateActivationToken(token)
+          : await validateResetToken(token)
         if (response.data && response.data.ok) {
           setStep('form')
         } else {
@@ -98,14 +101,22 @@ export default function ResetPasswordPage({ onNavigate, token }) {
         }
       } catch (err) {
         console.error(err)
-        setStep('error')
-        setErrorMessage('Erreur lors de la validation du lien')
+        const data = err?.response?.data
+        if (data?.error_type === 'token_expired') {
+          setStep('expired')
+        } else if (data?.error_type === 'token_invalid') {
+          setStep('error')
+          setErrorMessage(data?.error || 'Lien invalide')
+        } else {
+          setStep('error')
+          setErrorMessage('Erreur lors de la validation du lien')
+        }
       } finally {
         setIsValidatingToken(false)
       }
     }
     validate()
-  }, [token])
+  }, [token, isActivationMode])
 
   const validatePassword = (pwd) => {
     if (!pwd) return 'Le mot de passe est requis'
@@ -124,7 +135,9 @@ export default function ResetPasswordPage({ onNavigate, token }) {
     if (newPassword !== confirmPassword) { setConfirmError('Les mots de passe ne correspondent pas'); setPasswordError(''); return }
     setIsLoading(true); setPasswordError(''); setConfirmError(''); setErrorMessage('')
     try {
-      const response = await resetPassword(token, newPassword)
+      const response = isActivationMode
+        ? await activateAccount(token, newPassword)
+        : await resetPassword(token, newPassword)
       if (response.data && response.data.ok) {
         setStep('success')
       } else {
@@ -135,7 +148,16 @@ export default function ResetPasswordPage({ onNavigate, token }) {
       }
     } catch (err) {
       console.error(err)
-      setStep('error'); setErrorMessage('Erreur de connexion. Veuillez réessayer.')
+      const data = err?.response?.data
+      if (data?.error_type === 'token_expired') {
+        setStep('expired')
+      } else if (data?.error_type === 'token_invalid') {
+        setStep('error')
+        setErrorMessage(data?.error || 'Lien invalide ou expiré')
+      } else {
+        setStep('error')
+        setErrorMessage('Erreur de connexion. Veuillez réessayer.')
+      }
     } finally {
       setIsLoading(false)
     }
@@ -146,11 +168,11 @@ export default function ResetPasswordPage({ onNavigate, token }) {
   }
 
   return (
-    <div className="min-h-screen flex bg-white font-sans selection:bg-blue-100 selection:text-blue-900">
+    <div className="min-h-screen flex bg-[#e9eef8] font-sans selection:bg-blue-100 selection:text-blue-900">
       <div className="fixed top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-400 via-blue-600 to-blue-800 z-50"></div>
 
       <div className="flex-1 flex flex-col justify-center px-8 sm:px-16 lg:px-24 xl:px-32 relative py-12">
-        <div className="absolute top-0 left-0 w-full h-full bg-blue-50/20 -z-10"></div>
+        <div className="absolute top-0 left-0 w-full h-full bg-[#e9eef8] -z-10"></div>
         
         <div className="max-w-md w-full mx-auto space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-700">
           
@@ -199,10 +221,12 @@ export default function ResetPasswordPage({ onNavigate, token }) {
             <div className="space-y-8">
               <div className="space-y-3">
                 <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight leading-tight uppercase">
-                  Nouveau <br/><span className="text-blue-600">mot de passe</span>
+                  {isActivationMode ? 'Activation' : 'Nouveau'} <br/><span className="text-blue-600">mot de passe</span>
                 </h2>
                 <p className="text-slate-500 font-medium leading-relaxed">
-                  Identité vérifiée. Veuillez choisir un nouveau mot de passe robuste.
+                  {isActivationMode
+                    ? 'Bienvenue sur NeuroScan. Choisissez votre mot de passe pour activer votre compte.'
+                    : 'Identité vérifiée. Veuillez choisir un nouveau mot de passe robuste.'}
                 </p>
               </div>
 
@@ -273,7 +297,7 @@ export default function ResetPasswordPage({ onNavigate, token }) {
                     <span className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
                   ) : (
                     <>
-                      <span className="text-sm">Mettre à jour</span>
+                      <span className="text-sm">{isActivationMode ? 'Activer mon compte' : 'Mettre à jour'}</span>
                       <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                     </>
                   )}
@@ -286,8 +310,12 @@ export default function ResetPasswordPage({ onNavigate, token }) {
                 <div className="w-24 h-24 bg-emerald-50 rounded-3xl flex items-center justify-center mx-auto mb-6 ring-1 ring-emerald-100 shadow-sm">
                   <CheckCircle2 className="w-12 h-12 text-emerald-600" />
                 </div>
-                <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">Mot de passe mis à jour !</h2>
-                <p className="text-slate-500 font-medium">Votre nouveau mot de passe a été enregistré avec succès.</p>
+                <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">{isActivationMode ? 'Compte activé !' : 'Mot de passe mis à jour !'}</h2>
+                <p className="text-slate-500 font-medium">
+                  {isActivationMode
+                    ? 'Votre compte est maintenant actif. Vous pouvez vous connecter à la plateforme.'
+                    : 'Votre nouveau mot de passe a été enregistré avec succès.'}
+                </p>
               </div>
               
               <button 

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { Moon, Sun } from 'lucide-react'
 
 import Login from './pages/Login'
-import Dashboard from './pages/Dashboard'
+import AdminDashboard from './pages/AdminDashboard'
 import { LandingPage } from './pages/LandingPage'
 import { RegistrationPage } from './pages/RegistrationPage'
 import ForgotPasswordPage from './pages/ForgotPasswordPage'
@@ -18,7 +18,7 @@ import ResetPasswordPage from './pages/ResetPasswordPage'
 
 // import PrivacyPage from './pages/PrivacyPage'
 // import TermsPage from './pages/TermsPage'
-// import Dashboard from './pages/Dashboard'
+// import AdminDashboard from './pages/AdminDashboard'
 // import PatientsList from './pages/dashboard/PatientsList'
 // import PatientDetail from './pages/dashboard/PatientDetail'
 // import ReclamationsList from './pages/dashboard/ReclamationsList'
@@ -198,12 +198,8 @@ export default function App() {
           element={<ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} mode="activation" />}
         />
         <Route
-          path="/dashboard/*"
-          element={user ? <Dashboard /> : <Navigate to="/login" replace />}
-        />
-        <Route
           path="/admin/*"
-          element={user ? <Dashboard /> : <Navigate to="/login" replace />}
+          element={user ? <AdminDashboard /> : <Navigate to="/login" replace />}
         />
         <Route
           path="/registration"

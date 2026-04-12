@@ -11,7 +11,7 @@ export default function PrivacyPage({ onBack }) {
             <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center">
               <Activity className="w-6 h-6 text-white" />
             </div>
-            <span className="text-xl font-semibold text-slate-900">VisionMed</span>
+            <span className="text-xl font-semibold text-slate-900">NeuroScan</span>
           </div>
           <button
             onClick={onBack}
@@ -33,14 +33,14 @@ export default function PrivacyPage({ onBack }) {
         <div className="space-y-12 text-slate-700 text-base leading-relaxed">
           {/* Intro */}
           <p>
-            Cette Politique de Confidentialité décrit comment VisionMed (« nous », « notre » ou « VisionMed ») collecte, utilise, divulgue et protège les informations vous concernant lorsque vous utilisez la plateforme VisionMed (la « Plateforme »). Cette Politique s'applique à tous les utilisateurs de la Plateforme, notamment les professionnels de santé enregistrés et les chercheurs autorisés. Nous nous engageons à protéger votre vie privée et à traiter vos données personnelles conformément à la législation applicable en matière de protection des données, notamment le Règlement Général sur la Protection des Données (UE) 2016/679 (« RGPD ») et les lois nationales applicables en matière de protection des données.
+            Cette Politique de Confidentialité décrit comment NeuroScan (« nous », « notre » ou « NeuroScan ») collecte, utilise, divulgue et protège les informations vous concernant lorsque vous utilisez la plateforme NeuroScan (la « Plateforme »). Cette Politique s'applique à tous les utilisateurs de la Plateforme, notamment les professionnels de santé enregistrés et les chercheurs autorisés. Nous nous engageons à protéger votre vie privée et à traiter vos données personnelles conformément à la législation applicable en matière de protection des données, notamment le Règlement Général sur la Protection des Données (UE) 2016/679 (« RGPD ») et les lois nationales applicables en matière de protection des données.
           </p>
 
           {/* Section 1 */}
           <div>
             <h2 className="text-lg font-semibold text-slate-900 mb-3">Responsable du traitement</h2>
             <p>
-              VisionMed SAS (SIRET : 12345678901234), située à 123 Rue de la Médecine, 75001 Paris, France, est le responsable du traitement responsable du traitement de vos données personnelles en vertu du RGPD. Notre Délégué à la Protection des Données peut être contacté à <a href="mailto:dpo@visionmed.com" className="text-blue-600 underline hover:text-blue-700">dpo@visionmed.com</a>. Nous nous engageons à répondre à toutes les demandes d'exercice des droits des personnes concernées et aux demandes de renseignements relatifs à la confidentialité dans un délai de 72 heures ouvrables.
+              NeuroScan SAS (SIRET : 12345678901234), située à 123 Rue de la Médecine, 75001 Paris, France, est le responsable du traitement responsable du traitement de vos données personnelles en vertu du RGPD. Notre Délégué à la Protection des Données peut être contacté à <a href="mailto:dpo@neuroscan.com" className="text-blue-600 underline hover:text-blue-700">dpo@neuroscan.com</a>. Nous nous engageons à répondre à toutes les demandes d'exercice des droits des personnes concernées et aux demandes de renseignements relatifs à la confidentialité dans un délai de 72 heures ouvrables.
             </p>
           </div>
 
@@ -94,7 +94,7 @@ export default function PrivacyPage({ onBack }) {
           <div>
             <h2 className="text-lg font-semibold text-slate-900 mb-3">Traitement des images médicales</h2>
             <p>
-              Les données d'imagerie médicale chargées sur VisionMed bénéficient d'un traitement spécialisé garantissant une confidentialité et une sécurité maximales. Toutes les images sont traitées exclusivement en mémoire volatile (RAM) et ne sont jamais écrites dans le stockage persistant (disque dur) sauf s'il est explicitement demandé par l'utilisateur via une action de sauvegarde. Les images chargées sont automatiquement converties en format NIfTI (.nii.gz) pour un traitement optimisé de l'intelligence artificielle et sont garanties d'être complètement supprimées à la fin de chaque session active, sans traces subsistant sur nos serveurs. Nous n'utilisons pas les images médicales chargées pour le réentraînement du modèle, l'amélioration d'algorithmes ou toute autre utilisation secondaire sans obtenir votre consentement écrit explicite et séparé. Tous les traitements des images médicales sont effectués en pleine conformité avec l'Article 9 du RGPD concernant les catégories spéciales de données et les réglementations nationales applicables en matière de protection des données médicales.
+              Les données d'imagerie médicale chargées sur NeuroScan bénéficient d'un traitement spécialisé garantissant une confidentialité et une sécurité maximales. Toutes les images sont traitées exclusivement en mémoire volatile (RAM) et ne sont jamais écrites dans le stockage persistant (disque dur) sauf s'il est explicitement demandé par l'utilisateur via une action de sauvegarde. Les images chargées sont automatiquement converties en format NIfTI (.nii.gz) pour un traitement optimisé de l'intelligence artificielle et sont garanties d'être complètement supprimées à la fin de chaque session active, sans traces subsistant sur nos serveurs. Nous n'utilisons pas les images médicales chargées pour le réentraînement du modèle, l'amélioration d'algorithmes ou toute autre utilisation secondaire sans obtenir votre consentement écrit explicite et séparé. Tous les traitements des images médicales sont effectués en pleine conformité avec l'Article 9 du RGPD concernant les catégories spéciales de données et les réglementations nationales applicables en matière de protection des données médicales.
             </p>
           </div>
 
@@ -143,7 +143,7 @@ export default function PrivacyPage({ onBack }) {
           <div>
             <h2 className="text-lg font-semibold text-slate-900 mb-3">Mesures de sécurité technique et organisationnelle</h2>
             <p className="mb-4">
-              VisionMed met en œuvre des mesures de sécurité technique et organisationnelle complètes pour protéger vos données personnelles contre l'accès non autorisé, la modification, la divulgation ou la destruction :
+              NeuroScan met en œuvre des mesures de sécurité technique et organisationnelle complètes pour protéger vos données personnelles contre l'accès non autorisé, la modification, la divulgation ou la destruction :
             </p>
             <div className="overflow-x-auto">
               <table className="w-full text-sm border-collapse">
@@ -206,27 +206,27 @@ export default function PrivacyPage({ onBack }) {
                   <tr>
                     <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top font-medium">Droit d'accès</td>
                     <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top">Obtenir une copie de vos données personnelles et des informations sur leur traitement</td>
-                    <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top">E-mail <a href="mailto:privacy@visionmed.com" className="text-blue-600 underline hover:text-blue-700">privacy@visionmed.com</a></td>
+                    <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top">E-mail <a href="mailto:privacy@neuroscan.com" className="text-blue-600 underline hover:text-blue-700">privacy@neuroscan.com</a></td>
                   </tr>
                   <tr>
                     <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top font-medium">Droit de rectification</td>
                     <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top">Corriger les données personnelles inexactes ou incomplètes</td>
-                    <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top">Via les paramètres du compte ou par e-mail à <a href="mailto:privacy@visionmed.com" className="text-blue-600 underline hover:text-blue-700">privacy@visionmed.com</a></td>
+                    <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top">Via les paramètres du compte ou par e-mail à <a href="mailto:privacy@neuroscan.com" className="text-blue-600 underline hover:text-blue-700">privacy@neuroscan.com</a></td>
                   </tr>
                   <tr>
                     <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top font-medium">Droit à l'effacement</td>
                     <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top">Demander la suppression de votre compte et des données associées</td>
-                    <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top">E-mail <a href="mailto:privacy@visionmed.com" className="text-blue-600 underline hover:text-blue-700">privacy@visionmed.com</a></td>
+                    <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top">E-mail <a href="mailto:privacy@neuroscan.com" className="text-blue-600 underline hover:text-blue-700">privacy@neuroscan.com</a></td>
                   </tr>
                   <tr>
                     <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top font-medium">Droit à la portabilité</td>
                     <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top">Recevoir vos données au format JSON/CSV pour transfert à un autre responsable</td>
-                    <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top">E-mail <a href="mailto:privacy@visionmed.com" className="text-blue-600 underline hover:text-blue-700">privacy@visionmed.com</a></td>
+                    <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top">E-mail <a href="mailto:privacy@neuroscan.com" className="text-blue-600 underline hover:text-blue-700">privacy@neuroscan.com</a></td>
                   </tr>
                   <tr>
                     <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top font-medium">Droit d'opposition</td>
                     <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top">Vous opposer à certaines activités de traitement basées sur les intérêts légitimes</td>
-                    <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top">E-mail <a href="mailto:privacy@visionmed.com" className="text-blue-600 underline hover:text-blue-700">privacy@visionmed.com</a></td>
+                    <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top">E-mail <a href="mailto:privacy@neuroscan.com" className="text-blue-600 underline hover:text-blue-700">privacy@neuroscan.com</a></td>
                   </tr>
                   <tr>
                     <td className="px-4 py-3 text-slate-600 border border-slate-300 align-top font-medium">Droit de plainte</td>
@@ -242,7 +242,7 @@ export default function PrivacyPage({ onBack }) {
           <div>
             <h2 className="text-lg font-semibold text-slate-900 mb-3">Cookies et technologies de suivi</h2>
             <p>
-              VisionMed utilise uniquement des cookies techniques strictement nécessaires pour maintenir votre session authentifiée et assurer la fonctionnalité de la plateforme. Nous n'utilisons pas de cookies publicitaires, de cookies d'analyse ou de technologies de suivi tiers. Tous les cookies de session sont chiffrés, ont les drapeaux sécurisé et HTTP-only activés et expirent à la fin de la session. Nous ne vendons, ne partageons et ne commercialisons pas les données de cookies avec un tiers.
+              NeuroScan utilise uniquement des cookies techniques strictement nécessaires pour maintenir votre session authentifiée et assurer la fonctionnalité de la plateforme. Nous n'utilisons pas de cookies publicitaires, de cookies d'analyse ou de technologies de suivi tiers. Tous les cookies de session sont chiffrés, ont les drapeaux sécurisé et HTTP-only activés et expirent à la fin de la session. Nous ne vendons, ne partageons et ne commercialisons pas les données de cookies avec un tiers.
             </p>
           </div>
 
@@ -258,7 +258,7 @@ export default function PrivacyPage({ onBack }) {
           <div>
             <h2 className="text-lg font-semibold text-slate-900 mb-3">Contact et Délégué à la Protection des Données</h2>
             <p>
-              Pour toute demande liée à la confidentialité ou pour exercer vos droits en vertu du RGPD, veuillez contacter notre Délégué à la Protection des Données à <a href="mailto:dpo@visionmed.com" className="text-blue-600 underline hover:text-blue-700">dpo@visionmed.com</a>. Nous nous engageons à répondre à toutes les demandes dans un délai de 72 heures ouvrables. Vous pouvez également contacter notre département juridique général à <a href="mailto:legal@visionmed.com" className="text-blue-600 underline hover:text-blue-700">legal@visionmed.com</a> pour les demandes non liées à la confidentialité.
+              Pour toute demande liée à la confidentialité ou pour exercer vos droits en vertu du RGPD, veuillez contacter notre Délégué à la Protection des Données à <a href="mailto:dpo@neuroscan.com" className="text-blue-600 underline hover:text-blue-700">dpo@neuroscan.com</a>. Nous nous engageons à répondre à toutes les demandes dans un délai de 72 heures ouvrables. Vous pouvez également contacter notre département juridique général à <a href="mailto:legal@neuroscan.com" className="text-blue-600 underline hover:text-blue-700">legal@neuroscan.com</a> pour les demandes non liées à la confidentialité.
             </p>
           </div>
         </div>
@@ -266,7 +266,7 @@ export default function PrivacyPage({ onBack }) {
         {/* Footer */}
         <hr className="border-slate-200 my-16" />
         <div className="text-center text-sm text-slate-400">
-          <p>© 2026 VisionMed. Tous droits réservés. | <a href="#" className="text-blue-600 underline hover:text-blue-700">Conditions d'utilisation</a> | <a href="#" className="text-blue-600 underline hover:text-blue-700">Politique de Confidentialité</a> | <a href="mailto:contact@visionmed.com" className="text-blue-600 underline hover:text-blue-700">Contact</a></p>
+          <p>© 2026 NeuroScan. Tous droits réservés. | <a href="#" className="text-blue-600 underline hover:text-blue-700">Conditions d'utilisation</a> | <a href="#" className="text-blue-600 underline hover:text-blue-700">Politique de Confidentialité</a> | <a href="mailto:contact@neuroscan.com" className="text-blue-600 underline hover:text-blue-700">Contact</a></p>
         </div>
       </div>
     </div>

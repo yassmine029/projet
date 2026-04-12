@@ -1766,10 +1766,35 @@ def manual_align_volume(request):
     entry['selected_slice'] = {'axis': axis, 'index': idx}
 
     fixed = _normalize_u8(_render_slice(atlas_vol, idx, axis))
-    moving = _normalize_u8(_render_slice(patient_vol, idx, axis))
-    moving = _resize_u8_to_shape(moving, fixed.shape)
+    moving_raw = _normalize_u8(_render_slice(patient_vol, idx, axis))
+    fh, fw = int(fixed.shape[0]), int(fixed.shape[1])
+    mh, mw = int(moving_raw.shape[0]), int(moving_raw.shape[1])
 
-    M, _ = cv2.estimateAffinePartial2D(Y, X, method=cv2.RANSAC)
+    # Les clics sont dans l'espace pixel de chaque image servie au navigateur.
+    # On redimensionne le patient pour l'aligner sur l'atlas : il faut ramener Y dans le même repère que X.
+    X = np.asarray(X, dtype=np.float64)
+    Y = np.asarray(Y, dtype=np.float64)
+    if mw > 0 and mh > 0 and (mw != fw or mh != fh):
+        Y = Y.copy()
+        Y[:, 0] = Y[:, 0] * (float(fw) / float(mw))
+        Y[:, 1] = Y[:, 1] * (float(fh) / float(mh))
+
+    moving = _resize_u8_to_shape(moving_raw, fixed.shape)
+
+    M, _ = cv2.estimateAffinePartial2D(
+        Y.astype(np.float32),
+        X.astype(np.float32),
+        method=cv2.RANSAC,
+        ransacReprojThreshold=4.0,
+        maxIters=3000,
+        confidence=0.995,
+    )
+    if M is None:
+        M, _ = cv2.estimateAffinePartial2D(
+            Y.astype(np.float32),
+            X.astype(np.float32),
+            method=cv2.LMEDS,
+        )
     if M is None:
         return JsonResponse({'error': 'manual registration failed', 'message': 'Echec du calcul de transformation affine.'}, status=400)
 
@@ -1820,12 +1845,13 @@ def auto_align_volume(request):
     if entry is None:
         return JsonResponse({'error': 'jobId not found'}, status=404)
 
-    # Let clinician tune registration depth while keeping safe execution bounds.
-    raw_n_iters = payload.get('n_iters', payload.get('iterations', 120))
+    # Default plus court : chaque iter coute L passes multi-resolution (GPU).
+    # Les sorties intermediaires NIfTI (save_extended_outputs) ralentissaient fortement l'I/O disque.
+    raw_n_iters = payload.get('n_iters', payload.get('iterations', 60))
     try:
         n_iters = int(raw_n_iters)
     except (TypeError, ValueError):
-        n_iters = 120
+        n_iters = 60
     n_iters = int(np.clip(n_iters, 30, 1000))
 
     _ensure_atlas()
@@ -1905,8 +1931,13 @@ def auto_align_volume(request):
             output_dir=work_dir,
             n_iters=n_iters,
             max_levels=3,
-            levels_used=3,
-            device_name='auto',
+            levels_used=2,
+            max_samples=16384,
+            device_name='cuda',
+            save_extended_outputs=False,
+            early_stop_patience=22,
+            early_stop_min_iters=35,
+            early_stop_min_delta=5e-4,
         )
     except Exception as e:
         return JsonResponse({

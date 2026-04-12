@@ -1,4 +1,5 @@
 import os
+import html as html_module
 import io
 import sys
 import mimetypes
@@ -39,9 +40,10 @@ from PIL import Image, ImageOps
 from PIL import ImageDraw
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.units import cm
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, PageBreak
 
 from datetime import timedelta
 from django.utils import timezone
@@ -690,15 +692,14 @@ def align(request):
             return JsonResponse({'error': 'job files not found'}, status=404)
         ref_path = os.path.join(UPLOAD_DIR, series.files[0])
         pat_path = os.path.join(UPLOAD_DIR, series.files[1])
+        original_pat_path = pat_path
         print(f"Yassmine now the align LOADED job from DB - job_id: {job_id}")
     except Series.DoesNotExist:
         print(f"Yassmine now the align FAILED - job not found: {job_id}")
         return JsonResponse({'error': 'job not found'}, status=404)
 
-    # ✅ Mode hybride: utiliser l'image déjà recalée par MINE comme point de départ
-    # au lieu de l'image PET originale
     if use_warped:
-        auto_dir = os.path.join(UPLOAD_DIR, 'auto_registration', job_id)
+        auto_dir = os.path.join(UPLOAD_DIR, job_id, 'auto_registration')
         warped_candidates = [f for f in os.listdir(auto_dir) if f.endswith('_warped.png')] if os.path.exists(auto_dir) else []
         if warped_candidates:
             mine_warped_path = os.path.join(auto_dir, sorted(warped_candidates)[-1])
@@ -707,128 +708,135 @@ def align(request):
         else:
             print(f"Yassmine HYBRID: no warped image found, falling back to original")
 
-    X = np.array(X, dtype=np.float64)
-    Y = np.array(Y, dtype=np.float64)
-    if X.shape != Y.shape or X.shape[0] < 3:
-        print(f"Yassmine now the align FAILED - invalid points shape for job_id: {job_id}")
-        return JsonResponse({'error': 'invalid points'}, status=400)
-
-    ref = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
-    pat = cv2.imread(pat_path, cv2.IMREAD_GRAYSCALE)
-    if ref is None or pat is None:
-        print(f"Yassmine now the align FAILED - cannot read images for job_id: {job_id}")
-        return JsonResponse({'error': 'cannot read images'}, status=500)
-
-    # Keep a fixed working canvas but scale clicked landmarks accordingly.
-    # Frontend points are in original image pixel coordinates.
-    ref_h0, ref_w0 = ref.shape[:2]
-    pat_h0, pat_w0 = pat.shape[:2]
-    target_w, target_h = 512, 512
-
-    ref = cv2.resize(ref, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
-    pat = cv2.resize(pat, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
-
-    sx_ref = float(target_w) / float(max(ref_w0, 1))
-    sy_ref = float(target_h) / float(max(ref_h0, 1))
-    sx_pat = float(target_w) / float(max(pat_w0, 1))
-    sy_pat = float(target_h) / float(max(pat_h0, 1))
-
-    X_scaled = X.copy()
-    Y_scaled = Y.copy()
-    X_scaled[:, 0] *= sx_ref
-    X_scaled[:, 1] *= sy_ref
-    Y_scaled[:, 0] *= sx_pat
-    Y_scaled[:, 1] *= sy_pat
-    # ✅ RANSAC estimateAffinePartial2D — plus robuste que procrustes
-    # ignore automatiquement les points mal placés (outliers)
-    src_pts = Y_scaled.astype(np.float32)
-    dst_pts = X_scaled.astype(np.float32)
-    M, inliers = cv2.estimateAffinePartial2D(
-        src_pts, dst_pts,
-        method=cv2.RANSAC,
-        ransacReprojThreshold=3,
-        maxIters=2000,
-        confidence=0.99
-    )
-    if M is None:
-        # fallback procrustes si RANSAC échoue
-        _, Z, tform = procrustes(X_scaled, Y_scaled)
-        M = affine_from_tform(tform)
-        inliers = None
-        print(f"Yassmine RANSAC failed, fallback to procrustes for job_id: {job_id}")
-    else:
-        tform = {'M': M.tolist()}
-        print(f"Yassmine RANSAC OK — inliers: {int(inliers.sum()) if inliers is not None else '?'} for job_id: {job_id}")
-
-    warped = cv2.warpAffine(pat, M, (512, 512), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-    JOBS[job_id]['tform'] = tform
     try:
-        series.tform = tform
-        series.save()
-        print(f"Yassmine now the align SAVED tform to DB for job_id: {job_id}")
-    except Exception as e:
-        print(f"Yassmine now the align WARNING - failed to save tform: {str(e)}")
+        X = np.array(X, dtype=np.float64)
+        Y = np.array(Y, dtype=np.float64)
+        if X.shape != Y.shape or X.shape[0] < 3:
+            print(f"Yassmine now the align FAILED - invalid points shape for job_id: {job_id}")
+            return JsonResponse({'error': 'invalid points'}, status=400)
 
-    fixed_float = ref.astype(np.float32)
-    warped_float = warped.astype(np.float32)
-    mse = np.mean((fixed_float - warped_float) ** 2)
-    rmse = np.sqrt(mse)
-    fixed_flat = fixed_float.flatten()
-    warped_flat = warped_float.flatten()
-    correlation = float(np.corrcoef(fixed_flat, warped_flat)[0, 1])
-    if np.isnan(correlation) or np.isinf(correlation):
-        correlation = 0.0
-    max_val = float(max(fixed_float.max(), warped_float.max()))
-    normalized_rmse = float(rmse / max_val) if max_val > 0 else 0.0
-    quality_score = float((1.0 - normalized_rmse) * correlation)
+        ref = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
+        pat = cv2.imread(pat_path, cv2.IMREAD_GRAYSCALE)
+        if ref is None or pat is None:
+            print(f"Yassmine now the align FAILED - cannot read images for job_id: {job_id}")
+            return JsonResponse({'error': 'cannot read images'}, status=500)
 
-    # ✅ MI précise via histogramme 64 bins (méthode identique à mine_registration.py)
-    try:
-        hist_2d, _, _ = np.histogram2d(
-            fixed_float.flatten(), warped_float.flatten(), bins=64
+        ref_h0, ref_w0 = ref.shape[:2]
+        pat_h0, pat_w0 = pat.shape[:2]
+        target_w, target_h = 512, 512
+
+        ref = cv2.resize(ref, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+        pat = cv2.resize(pat, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+
+        sx_ref = float(target_w) / float(max(ref_w0, 1))
+        sy_ref = float(target_h) / float(max(ref_h0, 1))
+        sx_pat = float(target_w) / float(max(pat_w0, 1))
+        sy_pat = float(target_h) / float(max(pat_h0, 1))
+
+        X_scaled = X.copy()
+        Y_scaled = Y.copy()
+        X_scaled[:, 0] *= sx_ref
+        X_scaled[:, 1] *= sy_ref
+        Y_scaled[:, 0] *= sx_pat
+        Y_scaled[:, 1] *= sy_pat
+
+        src_pts = Y_scaled.astype(np.float32)
+        dst_pts = X_scaled.astype(np.float32)
+        M, inliers = cv2.estimateAffinePartial2D(
+            src_pts, dst_pts,
+            method=cv2.RANSAC,
+            ransacReprojThreshold=3,
+            maxIters=2000,
+            confidence=0.99
         )
-        pxy = hist_2d / float(hist_2d.sum())
-        px  = np.sum(pxy, axis=1)
-        py  = np.sum(pxy, axis=0)
-        px_py = px[:, None] * py[None, :]
-        nz = pxy > 0
-        mi_approx = float(np.sum(pxy[nz] * np.log(pxy[nz] / px_py[nz])))
-        if np.isnan(mi_approx) or np.isinf(mi_approx):
-            mi_approx = 0.0
-        mi_approx = round(min(0.6, max(0.0, mi_approx)), 4)
-        if mi_approx > 0.5:
-            mi_quality = 'Excellent'
-        elif mi_approx > 0.3:
-            mi_quality = 'Bon'
+        if M is None:
+            _, Z, tform = procrustes(X_scaled, Y_scaled)
+            M = affine_from_tform(tform)
+            inliers = None
+            print(f"Yassmine RANSAC failed, fallback to procrustes for job_id: {job_id}")
         else:
+            tform = {'M': M.tolist()}
+            print(f"Yassmine RANSAC OK — inliers: {int(inliers.sum()) if inliers is not None else '?'} for job_id: {job_id}")
+
+        warped = cv2.warpAffine(pat, M, (512, 512), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        if job_id not in JOBS:
+            JOBS[job_id] = {'patient_id': series.patient_id, 'ref': ref_path, 'patient': original_pat_path, 'user': request.user.username}
+        JOBS[job_id]['tform'] = tform
+        try:
+            series.tform = tform
+            series.save()
+            print(f"Yassmine now the align SAVED tform to DB for job_id: {job_id}")
+        except Exception as e:
+            print(f"Yassmine now the align WARNING - failed to save tform: {str(e)}")
+
+        fixed_float = ref.astype(np.float32)
+        warped_float = warped.astype(np.float32)
+        mse = np.mean((fixed_float - warped_float) ** 2)
+        rmse = np.sqrt(mse)
+        fixed_flat = fixed_float.flatten()
+        warped_flat = warped_float.flatten()
+        correlation = float(np.corrcoef(fixed_flat, warped_flat)[0, 1])
+        if np.isnan(correlation) or np.isinf(correlation):
+            correlation = 0.0
+        max_val = float(max(fixed_float.max(), warped_float.max()))
+        normalized_rmse = float(rmse / max_val) if max_val > 0 else 0.0
+        quality_score = float((1.0 - normalized_rmse) * correlation)
+
+        try:
+            hist_2d, _, _ = np.histogram2d(
+                fixed_float.flatten(), warped_float.flatten(), bins=64
+            )
+            pxy = hist_2d / float(hist_2d.sum())
+            px  = np.sum(pxy, axis=1)
+            py  = np.sum(pxy, axis=0)
+            px_py = px[:, None] * py[None, :]
+            nz = pxy > 0
+            mi_approx = float(np.sum(pxy[nz] * np.log(pxy[nz] / px_py[nz])))
+            if np.isnan(mi_approx) or np.isinf(mi_approx):
+                mi_approx = 0.0
+            mi_approx = round(min(0.6, max(0.0, mi_approx)), 4)
+            if mi_approx > 0.5:
+                mi_quality = 'Excellent'
+            elif mi_approx > 0.3:
+                mi_quality = 'Bon'
+            else:
+                mi_quality = 'Faible'
+        except Exception:
+            mi_approx = 0.0
             mi_quality = 'Faible'
-    except Exception:
-        mi_approx = 0.0
-        mi_quality = 'Faible'
 
-    metrics = {
-        'rmse': round(float(rmse), 4),
-        'normalized_rmse': round(float(normalized_rmse), 4),
-        'correlation': round(float(correlation), 4),
-        'quality_score': round(float(quality_score), 4),
-        'mutual_information': mi_approx,   # ✅ affiché dans la gauge
-        'mi_quality': mi_quality,
-        'success': True,
-        'processing_time_ms': 0
-    }
+        metrics = {
+            'rmse': round(float(rmse), 4),
+            'normalized_rmse': round(float(normalized_rmse), 4),
+            'correlation': round(float(correlation), 4),
+            'quality_score': round(float(quality_score), 4),
+            'mutual_information': mi_approx,
+            'mi_quality': mi_quality,
+            'success': True,
+            'processing_time_ms': 0
+        }
 
-    _, buf = cv2.imencode('.png', warped)
-    img_b64 = base64.b64encode(buf).decode('utf-8')
-    img_data = f"data:image/png;base64,{img_b64}"
+        _, buf = cv2.imencode('.png', warped)
+        img_b64 = base64.b64encode(buf).decode('utf-8')
+        img_data = f"data:image/png;base64,{img_b64}"
 
-    print(f"Yassmine now the align SUCCESS - job_id: {job_id}, RMSE: {metrics['rmse']}")
+        print(f"Yassmine now the align SUCCESS - job_id: {job_id}, RMSE: {metrics['rmse']}")
 
-    return JsonResponse({
-        'success': True,
-        'metrics': metrics,
-        'image': img_data,
-        'message': 'Recalage manuel réussi'
-    })
+        return JsonResponse({
+            'success': True,
+            'metrics': metrics,
+            'image': img_data,
+            'message': 'Recalage manuel réussi'
+        })
+
+    except Exception as e:
+        print(f"Yassmine now the align CRITICAL ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({
+            'error': 'Internal Server Error',
+            'message': 'Le recalage manuel a échoué. Veuillez réessayer.',
+        }, status=500)
 
 
 @csrf_exempt
@@ -848,7 +856,13 @@ def auto_align(request):
 
         job_id = data.get('jobId')
         transform_type = data.get('transform', 'SyN')
-        print(f"Yassmine now the auto_align endpoint works - job_id: {job_id}, transform: {transform_type}, user: {request.user.username}")
+        raw_n_iters = data.get('n_iters', 300)
+        try:
+            n_iters = int(raw_n_iters)
+        except (TypeError, ValueError):
+            n_iters = 300
+        n_iters = max(30, min(1000, n_iters))
+        print(f"Yassmine now the auto_align endpoint works - job_id: {job_id}, transform: {transform_type}, n_iters: {n_iters}, user: {request.user.username}")
 
         if not job_id:
             print(f"Yassmine now the auto_align FAILED - missing jobId")
@@ -873,17 +887,15 @@ def auto_align(request):
         job_dir = os.path.join(UPLOAD_DIR, job_id)
         auto_dir = os.path.join(job_dir, 'auto_registration')
 
-        # ✅ Seul algorithme supporté : MINE (Deep Learning)
-        # ANTs supprimé — MINE est plus adapté pour recalage multimodal IRM/PET
-        print(f"Yassmine: Starting MINE registration for job {job_id}...")
+        print(f"Yassmine: Starting MINE registration for job {job_id} with n_iters={n_iters}...")
         os.makedirs(auto_dir, exist_ok=True)
         print(f"AUTO DIR created: {auto_dir}")
         result = run_mine_registration(
             ref_path,
             pat_path,
             os.path.join(auto_dir, f"mine_{job_id}"),
-            n_iters=300,
-            device_name="auto"
+            n_iters=n_iters,
+            device_name="cuda"
         )
 
         if not result.get('success', False):
@@ -898,14 +910,10 @@ def auto_align(request):
         if True:  # bloc conservé pour structure
 
             try:
-                # ✅ Métrique principale : Information Mutuelle (MI)
-                # C'est la seule métrique valide pour recalage multimodal IRM/PET
                 final_mi = result.get('mutual_information', 0.0)
+                if np.isnan(final_mi) or np.isinf(final_mi):
+                    final_mi = 0.0
 
-                # Interprétation de la MI :
-                # MI > 0.5  → excellent recalage
-                # MI 0.3-0.5 → bon recalage
-                # MI < 0.3  → recalage faible
                 if final_mi > 0.5:
                     mi_quality = "Excellent"
                     mi_score = min(1.0, final_mi / 0.6)
@@ -915,11 +923,6 @@ def auto_align(request):
                 else:
                     mi_quality = "Faible"
                     mi_score = final_mi / 0.6
-
-                if np.isnan(final_mi) or np.isinf(final_mi):
-                    final_mi = 0.0
-                    mi_quality = "Faible"
-                    mi_score = 0.0
 
                 metrics = {
                     'mutual_information': round(float(final_mi), 4),
@@ -992,7 +995,6 @@ def auto_align(request):
                 'success': True,
                 'message': 'Recalage automatique réussi',
                 'metrics': metrics,
-                'warped_path': os.path.relpath(warped_path, UPLOAD_DIR)
             })
 
         print(f"Yassmine now the auto_align SUCCESS - job_id: {job_id}, RMSE: {metrics.get('rmse')}")
@@ -1010,8 +1012,7 @@ def auto_align(request):
         traceback.print_exc()
         return JsonResponse({
             'error': 'Internal Server Error',
-            'message': f"Erreur interne du serveur: {str(e)}",
-            'details': str(e)
+            'message': 'Le recalage automatique a échoué. Veuillez réessayer.',
         }, status=500)
 
 
@@ -1853,7 +1854,37 @@ def _make_slice_overlay_png(row, label):
     return tmp.name
 
 
+def _make_slice_thumb_png(row, label, thumb_w=340, thumb_h=240):
+    """Coupes redimensionnees pour grille PDF uniforme."""
+    src = _read_storage_gray(getattr(row, 'source_file', ''))
+    if src is None:
+        return None
+    msk = _read_storage_gray(getattr(row, 'mask_file', ''))
+    if msk is None:
+        vis = cv2.cvtColor(src, cv2.COLOR_GRAY2BGR)
+    else:
+        m = (msk > 127).astype(np.uint8) * 255
+        vis = cv2.cvtColor(src, cv2.COLOR_GRAY2BGR)
+        contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(vis, contours, -1, (13, 148, 136), 2)
+    vis = cv2.resize(vis, (thumb_w, thumb_h), interpolation=cv2.INTER_AREA)
+    bar_h = 28
+    canvas = np.ones((thumb_h + bar_h, thumb_w, 3), dtype=np.uint8) * 255
+    canvas[0:thumb_h, 0:thumb_w] = vis
+    cv2.rectangle(canvas, (0, thumb_h), (thumb_w, thumb_h + bar_h), (240, 245, 244), -1)
+    cv2.line(canvas, (0, thumb_h), (thumb_w, thumb_h), (207, 216, 214), 1)
+    cv2.putText(canvas, label, (8, thumb_h + bar_h - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (45, 55, 54), 1, cv2.LINE_AA)
+    ok, png_buf = cv2.imencode('.png', canvas)
+    if not ok:
+        return None
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+    tmp.write(png_buf.tobytes())
+    tmp.close()
+    return tmp.name
+
+
 def _build_volume_projection_png(rows):
+    """Projections orthogonales du masque — presentation rapport clinique."""
     masks = []
     for row in rows:
         m = _read_storage_gray(getattr(row, 'mask_file', ''))
@@ -1867,63 +1898,109 @@ def _build_volume_projection_png(rows):
     cor = (np.max(vol, axis=1) * 255).astype(np.uint8)
     sag = (np.max(vol, axis=2) * 255).astype(np.uint8)
 
-    h = 220
-    ax = cv2.resize(ax, (260, h), interpolation=cv2.INTER_NEAREST)
-    cor = cv2.resize(cor, (260, h), interpolation=cv2.INTER_NEAREST)
-    sag = cv2.resize(sag, (260, h), interpolation=cv2.INTER_NEAREST)
+    panel_w, panel_h = 300, 240
+    ax = cv2.resize(ax, (panel_w, panel_h), interpolation=cv2.INTER_NEAREST)
+    cor = cv2.resize(cor, (panel_w, panel_h), interpolation=cv2.INTER_NEAREST)
+    sag = cv2.resize(sag, (panel_w, panel_h), interpolation=cv2.INTER_NEAREST)
 
-    canvas = np.zeros((h + 40, 800, 3), dtype=np.uint8)
-    canvas[:] = (244, 248, 255)
-    for i, img in enumerate([ax, cor, sag]):
-        col = cv2.applyColorMap(img, cv2.COLORMAP_OCEAN)
-        x0 = 10 + i * 265
-        canvas[10:10 + h, x0:x0 + 260] = col
+    header_h = 52
+    footer_h = 36
+    gap = 16
+    total_w = gap * 4 + panel_w * 3
+    total_h = header_h + gap + panel_h + footer_h
 
-    cv2.putText(canvas, 'Vue 3D (projections volumiques)', (12, h + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (38, 65, 112), 2, cv2.LINE_AA)
+    bg = (252, 252, 251)
+    header_bg = (15, 74, 71)
+    canvas = np.ones((total_h, total_w, 3), dtype=np.uint8)
+    canvas[:] = bg
+
+    canvas[0:header_h, :] = header_bg
+    cv2.putText(canvas, 'Reconstruction volumetrique — Projections orthogonales', (20, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2, cv2.LINE_AA)
+
+    titles = ['Axiale', 'Coronale', 'Sagittale']
+    y0 = header_h + gap
+    for i, (img, title) in enumerate(zip([ax, cor, sag], titles)):
+        x0 = gap + i * (panel_w + gap)
+        cmap = getattr(cv2, 'COLORMAP_VIRIDIS', cv2.COLORMAP_OCEAN)
+        col = cv2.applyColorMap(img, cmap)
+        canvas[y0:y0 + panel_h, x0:x0 + panel_w] = col
+        cv2.rectangle(canvas, (x0 - 1, y0 - 1), (x0 + panel_w, y0 + panel_h), (180, 190, 188), 1)
+        tx = x0 + (panel_w - len(title) * 9) // 2
+        cv2.putText(canvas, title, (max(x0 + 8, tx), y0 + panel_h + 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (55, 65, 63), 1, cv2.LINE_AA)
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
     ok, png_buf = cv2.imencode('.png', canvas)
     if not ok:
+        tmp.close()
         return None
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
     tmp.write(png_buf.tobytes())
     tmp.close()
     return tmp.name
 
 
-def _build_comparison_chart_png(volumes_mm3, ref_mean, ref_std):
-    w, h = 900, 340
-    im = Image.new('RGB', (w, h), (248, 251, 255))
-    draw = ImageDraw.Draw(im)
+def _build_pdf_volume_grouped_chart(volumes_mm3, reference_values_mm3):
+    """Graphique groupe: patient vs bornes normatives (comme l'apercu web)."""
+    ref = reference_values_mm3 or {}
+    vl = float(volumes_mm3.get('left') or 0)
+    vr = float(volumes_mm3.get('right') or 0)
+    vt = float(volumes_mm3.get('total') or 0)
+    l_min = float(ref.get('left_min_mm3') or 2200)
+    l_max = float(ref.get('left_max_mm3') or 2600)
+    r_min = float(ref.get('right_min_mm3') or 2200)
+    r_max = float(ref.get('right_max_mm3') or 2600)
+    t_min = float(ref.get('total_min_mm3') or 4500)
+    t_max = float(ref.get('total_max_mm3') or 5300)
 
-    labels = ['Gauche', 'Droite', 'Total', 'Norme']
-    values = [
-        float(volumes_mm3.get('left') or 0.0),
-        float(volumes_mm3.get('right') or 0.0),
-        float(volumes_mm3.get('total') or 0.0),
-        float(ref_mean or 0.0),
+    categories = [
+        ('Hippocampe gauche', vl, l_min, l_max),
+        ('Hippocampe droit', vr, r_min, r_max),
+        ('Volume total', vt, t_min, t_max),
     ]
-    colors_bars = [(73, 128, 224), (89, 166, 242), (62, 194, 160), (155, 173, 204)]
+    all_vals = [vl, vr, vt, l_min, l_max, r_min, r_max, t_min, t_max]
+    ymax = max(max(all_vals) * 1.08, 1.0)
 
-    maxv = max(max(values), 1.0)
-    x0, y0 = 70, 60
-    chart_w, chart_h = 760, 220
-    draw.rectangle([x0, y0, x0 + chart_w, y0 + chart_h], outline=(200, 212, 233), width=1)
-    for i in range(6):
-        yy = y0 + int((chart_h / 5) * i)
-        draw.line([x0, yy, x0 + chart_w, yy], fill=(230, 236, 247), width=1)
+    w, h = 1020, 400
+    im = Image.new('RGB', (w, h), (252, 252, 251))
+    draw = ImageDraw.Draw(im)
+    margin_l, margin_r, margin_t, margin_b = 88, 40, 56, 100
+    cw = w - margin_l - margin_r
+    ch = h - margin_t - margin_b
+    x0, y0 = margin_l, margin_t
 
-    bar_w = 110
-    gap = 65
-    start_x = x0 + 75
-    for i, (label, val, c) in enumerate(zip(labels, values, colors_bars)):
-        bx = start_x + i * (bar_w + gap)
-        bh = int((val / maxv) * (chart_h - 16))
-        by = y0 + chart_h - bh
-        draw.rectangle([bx, by, bx + bar_w, y0 + chart_h], fill=c)
-        draw.text((bx, y0 + chart_h + 8), label, fill=(63, 89, 137))
-        draw.text((bx, by - 18), f'{val:.0f}', fill=(32, 58, 104))
+    draw.rectangle([x0, y0, x0 + cw, y0 + ch], outline=(200, 208, 206), width=1)
+    for g in range(5):
+        yy = y0 + int((ch / 4) * g)
+        draw.line([x0, yy, x0 + cw, yy], fill=(236, 240, 239), width=1)
+        val = ymax * (1 - g / 4)
+        draw.text((12, yy - 8), f'{val:.0f}', fill=(100, 110, 108))
 
-    draw.text((x0, 20), 'Graphique comparatif: volumes patient vs norme', fill=(31, 60, 110))
-    draw.text((x0, h - 28), f'Norme totale: {ref_mean:.2f} +/- {ref_std:.2f} mm3', fill=(90, 109, 143))
+    draw.text((x0, 18), 'Volumes hippocampiques (mm3) — patient et plages normatives', fill=(15, 74, 71))
+
+    n_cat = len(categories)
+    group_w = cw / n_cat
+    bar_w = (group_w * 0.65) / 3
+    patient_rgb = (15, 118, 110)
+    min_rgb = (180, 200, 198)
+    max_rgb = (210, 225, 220)
+
+    for gi, (name, pv, nmin, nmax) in enumerate(categories):
+        gx = x0 + gi * group_w + group_w * 0.12
+        for bi, (val, col) in enumerate([(pv, patient_rgb), (nmin, min_rgb), (nmax, max_rgb)]):
+            bh = int((float(val) / ymax) * (ch - 8))
+            bx = int(gx + bi * (bar_w + 4))
+            by = y0 + ch - bh
+            draw.rectangle([bx, by, int(bx + bar_w), y0 + ch], fill=col)
+        draw.text((int(gx), y0 + ch + 10), name[:18], fill=(55, 65, 63))
+
+    legend_y = h - 72
+    for i, (lab, col) in enumerate([
+        ('Patient', patient_rgb),
+        ('Norme min.', min_rgb),
+        ('Norme max.', max_rgb),
+    ]):
+        lx = x0 + i * 200
+        draw.rectangle([lx, legend_y, lx + 14, legend_y + 14], fill=col)
+        draw.text((lx + 22, legend_y - 2), lab, fill=(70, 80, 78))
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
     im.save(tmp.name, format='PNG')
@@ -1931,97 +2008,395 @@ def _build_comparison_chart_png(volumes_mm3, ref_mean, ref_std):
     return tmp.name
 
 
+def _build_pdf_indices_chart(asymmetry_index_percent, normality_index_percent):
+    """IA et IN avec seuils cliniques sur une seule figure."""
+    ia = abs(float(asymmetry_index_percent or 0))
+    ni = float(normality_index_percent or 0)
+
+    w, h = 1020, 340
+    im = Image.new('RGB', (w, h), (252, 252, 251))
+    draw = ImageDraw.Draw(im)
+    draw.text((40, 20), 'Indices cliniques (%) — valeur patient et seuils', fill=(15, 74, 71))
+
+    def draw_gauge(y_base, title, value, vmax, thresholds, bar_color):
+        bw, bh = 880, 36
+        x0, y0 = 70, y_base
+        draw.text((x0, y0 - 22), title, fill=(55, 65, 63))
+        draw.rectangle([x0, y0, x0 + bw, y0 + bh], outline=(190, 198, 196), fill=(248, 250, 249))
+        frac = min(max(value / vmax, 0), 1.0)
+        fill_w = int(frac * bw)
+        if fill_w > 0:
+            draw.rectangle([x0, y0, x0 + fill_w, y0 + bh], fill=bar_color)
+        for t in thresholds:
+            tx = x0 + int(min(t / vmax, 1.0) * bw)
+            draw.line([tx, y0 - 4, tx, y0 + bh + 4], fill=(180, 90, 40), width=2)
+            draw.text((tx + 3, y0 + bh + 6), f'{t:.0f}', fill=(120, 70, 30))
+        draw.text((x0 + bw + 12, y0 + 8), f'{value:.2f} %', fill=(15, 74, 71))
+
+    draw_gauge(70, "Indice d'asymetrie (IA) — reference seuil 10 %", ia, 100.0, [10], (180, 60, 50))
+    draw_gauge(200, 'Indice de normalisation (IN) — reference seuil 90 %', ni, 150.0, [90], (15, 118, 110))
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+    im.save(tmp.name, format='PNG')
+    tmp.close()
+    return tmp.name
+
+
+def _measure_status(name, value):
+    v = float(value or 0)
+    if name == 'left':
+        return 'Normal' if 2200 <= v <= 2600 else 'Alerte'
+    if name == 'right':
+        return 'Normal' if 2200 <= v <= 2600 else 'Alerte'
+    if name == 'total':
+        return 'Normal' if 4500 <= v <= 5300 else 'Alerte'
+    if name == 'ai':
+        return 'Normal' if abs(v) < 10 else 'Alerte'
+    if name == 'ni':
+        return 'Normal' if 90 <= v <= 110 else 'Alerte'
+    if name == 'z':
+        return 'Normal' if -1.5 <= v <= 1.5 else 'Alerte'
+    return '-'
+
+
+def _pdf_safe_text(text):
+    if text is None:
+        return '-'
+    s = html_module.escape(str(text).strip() or '-')
+    return s.replace('\r\n', '\n').replace('\r', '\n').replace('\n', '<br/>')
+
+
 def _build_report_pdf(run, modelisation):
+    """Rapport PDF professionnel: couverture, coupes en grille, 3D, mesures, interpretations, graphiques."""
     cleanup_paths = []
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=1.3 * cm, rightMargin=1.3 * cm, topMargin=1.2 * cm, bottomMargin=1.2 * cm)
+    page_w, _page_h = A4
+    margin = 1.25 * cm
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        leftMargin=margin, rightMargin=margin,
+        topMargin=0.9 * cm, bottomMargin=0.95 * cm,
+    )
+    usable_w = page_w - 2 * margin
     styles = getSampleStyleSheet()
-    story = []
+
+    TEAL = colors.HexColor('#0f4a47')
+    TEAL_MED = colors.HexColor('#15756e')
+    CHARCOAL = colors.HexColor('#1c1917')
+    STONE_600 = colors.HexColor('#57534e')
+    STONE_400 = colors.HexColor('#a8a29e')
+    STONE_200 = colors.HexColor('#e7e5e4')
+    STONE_100 = colors.HexColor('#f5f5f4')
+    PAPER = colors.HexColor('#fafaf9')
+    RUST = colors.HexColor('#9a3412')
+    RUST_BG = colors.HexColor('#fff7ed')
+    TEAL_BG = colors.HexColor('#f0fdfa')
+    WHITE = colors.white
+
+    cover_title = ParagraphStyle(
+        'CovTitle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=26,
+        textColor=CHARCOAL, leading=30, spaceAfter=8,
+    )
+    cover_sub = ParagraphStyle(
+        'CovSub', parent=styles['Normal'], fontName='Helvetica', fontSize=11,
+        textColor=STONE_600, leading=15,
+    )
+    cover_meta = ParagraphStyle(
+        'CovMeta', parent=styles['Normal'], fontName='Helvetica', fontSize=9,
+        textColor=STONE_400, leading=12,
+    )
+    sec_num = ParagraphStyle(
+        'SecNum', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=8,
+        textColor=TEAL_MED, leading=11, spaceBefore=14, spaceAfter=2,
+    )
+    sec_title = ParagraphStyle(
+        'SecTitle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=13,
+        textColor=CHARCOAL, leading=16, spaceAfter=8,
+    )
+    body = ParagraphStyle(
+        'RBody', parent=styles['Normal'], fontName='Helvetica', fontSize=9,
+        textColor=CHARCOAL, leading=13.5,
+    )
+    body_small = ParagraphStyle(
+        'RBodySm', parent=body, fontSize=8, textColor=STONE_600, leading=11,
+    )
+    kpi_val = ParagraphStyle(
+        'KpiVal', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=11,
+        textColor=TEAL_MED, leading=14,
+    )
+    footer = ParagraphStyle(
+        'RFooter', parent=styles['Normal'], fontName='Helvetica', fontSize=7,
+        textColor=STONE_400, leading=10, alignment=TA_CENTER,
+    )
 
     patient = run.patient
     age = _compute_age(getattr(patient, 'date_naissance', None))
-    sex = patient.get_sexe_display() if hasattr(patient, 'get_sexe_display') else (patient.sexe or '-')
+    sex_raw = patient.get_sexe_display() if hasattr(patient, 'get_sexe_display') else (patient.sexe or '-')
+    sex = html_module.escape(str(sex_raw))
     exam_date = (run.completed_at or run.created_at or timezone.now()).date().isoformat()
 
-    story.append(Paragraph('Rapport Clinique - Segmentation Hippocampique', styles['Title']))
-    story.append(Spacer(1, 0.2 * cm))
-    story.append(Paragraph(f'Run #{run.id} | Date: {exam_date}', styles['Normal']))
-    story.append(Spacer(1, 0.2 * cm))
+    ci = modelisation.get('clinical_indices', {}) or {}
+    vols = modelisation.get('volumes_mm3', {}) or {}
+    ref = modelisation.get('reference_values_mm3', {}) or {}
+    interp = modelisation.get('clinical_interpretation', {}) or {}
 
-    patient_table = Table([
-        ['Resume patient (anonyme)', 'Valeur'],
-        ['Age', str(age) if age is not None else '-'],
-        ['Sexe', str(sex or '-')],
-        ['Date examen', exam_date],
-    ], colWidths=[7.5 * cm, 8.5 * cm])
-    patient_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f3a63')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('GRID', (0, 0), (-1, -1), 0.6, colors.HexColor('#d2d9e6')),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+    vol_left = float(vols.get('left') or 0)
+    vol_right = float(vols.get('right') or 0)
+    vol_total = float(vols.get('total') or 0)
+    ai_val = float(ci.get('asymmetry_index_percent') or 0)
+    ni_val = float(ci.get('normality_index_percent') or 0)
+    z_val = float(ci.get('z_score') or 0)
+
+    story = []
+
+    # ——— Page de garde ———
+    band = Table(
+        [[Paragraph(
+            '<b>Document clinique</b> &nbsp;·&nbsp; A usage professionnel &nbsp;·&nbsp; Donnees pseudonymisees',
+            ParagraphStyle('BandT', parent=styles['Normal'], fontName='Helvetica', fontSize=9, textColor=WHITE, alignment=TA_CENTER),
+        )]],
+        colWidths=[usable_w],
+        rowHeights=[1.1 * cm],
+    )
+    band.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), TEAL),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
     ]))
-    story.append(patient_table)
-    story.append(Spacer(1, 0.35 * cm))
+    story.append(band)
+    story.append(Spacer(1, 1.8 * cm))
+    story.append(Paragraph("Rapport d'analyse volumétrique", cover_title))
+    story.append(Paragraph('Segmentation IRM — région hippocampique', cover_sub))
+    story.append(Spacer(1, 0.6 * cm))
+    story.append(Paragraph(f'<b>Référence dossier</b> &nbsp; VOL-HPC-{run.id}', cover_meta))
+    story.append(Paragraph(f'<b>Date du rapport</b> &nbsp; {exam_date}', cover_meta))
+    story.append(Spacer(1, 2.2 * cm))
+    story.append(Paragraph(
+        'Ce document synthétise les volumes dérivés du masque de segmentation, des indices cliniques '
+        "automatiques et des projections volumétriques. L'interprétation finale relève de la "
+        'responsabilité du clinicien.',
+        ParagraphStyle('Legal', parent=cover_sub, fontSize=9, textColor=STONE_400, leading=14),
+    ))
+    story.append(PageBreak())
 
-    ci = modelisation.get('clinical_indices', {})
-    vols = modelisation.get('volumes_mm3', {})
-    measures_table = Table([
-        ['Mesure', 'Valeur'],
-        ['Volume gauche (mm3)', f"{float(vols.get('left') or 0.0):.2f}"],
-        ['Volume droit (mm3)', f"{float(vols.get('right') or 0.0):.2f}"],
-        ['Volume total (mm3)', f"{float(vols.get('total') or 0.0):.2f}"],
-        ['Asymetrie IA (%)', f"{float(ci.get('asymmetry_index_percent') or 0.0):.2f}"],
-        ['Indice IN (%)', f"{float(ci.get('normality_index_percent') or 0.0):.2f}"],
-        ['Z-score', f"{float(ci.get('z_score') or 0.0):.2f}"],
-    ], colWidths=[7.5 * cm, 8.5 * cm])
-    measures_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2e4f9e')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('GRID', (0, 0), (-1, -1), 0.6, colors.HexColor('#d2d9e6')),
+    # ——— 1. Identité dossier + indicateurs ———
+    story.append(Paragraph('SECTION 1', sec_num))
+    story.append(Paragraph('Identité du dossier et indicateurs clés', sec_title))
+    id_rows = [
+        ['Sexe', 'Âge', "Date d'examen"],
+        [
+            Paragraph(f'<b>{sex}</b>', kpi_val),
+            Paragraph(f'<b>{age} ans</b>' if age is not None else '<b>—</b>', kpi_val),
+            Paragraph(f'<b>{exam_date}</b>', kpi_val),
+        ],
+    ]
+    id_tbl = Table(id_rows, colWidths=[usable_w / 3.0] * 3)
+    id_tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), STONE_100),
+        ('TEXTCOLOR', (0, 0), (-1, 0), STONE_600),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 7),
+        ('GRID', (0, 0), (-1, -1), 0.5, STONE_200),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('LEFTPADDING', (0, 0), (-1, -1), 10),
     ]))
-    story.append(measures_table)
+    story.append(id_tbl)
     story.append(Spacer(1, 0.35 * cm))
+    kpi_row = [
+        Paragraph(f'Volume total<br/><b>{vol_total:.0f} mm³</b>', ParagraphStyle('K1', parent=body_small, alignment=TA_CENTER)),
+        Paragraph(f'IA (asymétrie)<br/><b>{abs(ai_val):.2f} %</b>', ParagraphStyle('K2', parent=body_small, alignment=TA_CENTER)),
+        Paragraph(f'IN (normalisation)<br/><b>{ni_val:.2f} %</b>', ParagraphStyle('K3', parent=body_small, alignment=TA_CENTER)),
+        Paragraph(f'Z-score<br/><b>{z_val:.2f}</b>', ParagraphStyle('K4', parent=body_small, alignment=TA_CENTER)),
+    ]
+    kpi_t = Table([kpi_row], colWidths=[usable_w / 4.0] * 4)
+    kpi_t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), PAPER),
+        ('BOX', (0, 0), (-1, -1), 0.75, STONE_200),
+        ('TOPPADDING', (0, 0), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+    ]))
+    story.append(kpi_t)
+    story.append(Spacer(1, 0.45 * cm))
 
-    interp = modelisation.get('clinical_interpretation', {})
-    interp_text = interp.get('summary') or 'Interpretation indisponible.'
-    story.append(Paragraph('Interpretation textuelle automatique', styles['Heading3']))
-    story.append(Paragraph(interp_text, styles['BodyText']))
-    story.append(Spacer(1, 0.3 * cm))
+    measures = [
+        ('Volume hippocampe gauche', f'{vol_left:.0f} mm³', '2200 – 2600 mm³', _measure_status('left', vol_left)),
+        ('Volume hippocampe droit', f'{vol_right:.0f} mm³', '2200 – 2600 mm³', _measure_status('right', vol_right)),
+        ('Volume total', f'{vol_total:.0f} mm³', '4500 – 5300 mm³', _measure_status('total', vol_total)),
+        ("Indice d'asymétrie (IA)", f'{abs(ai_val):.2f} %', '< 10 %', _measure_status('ai', ai_val)),
+        ('Indice de normalisation (IN)', f'{ni_val:.2f} %', '90 – 110 %', _measure_status('ni', ni_val)),
+        ('Z-score', f'{z_val:.2f}', '-1.5 a +1.5', _measure_status('z', z_val)),
+    ]
+    m_rows = [['Mesure', 'Valeur', 'Norme', 'Statut']]
+    for name, val, norm, status in measures:
+        st_col = TEAL_MED if status == 'Normal' else RUST
+        m_rows.append([
+            name,
+            Paragraph(f'<b>{val}</b>', ParagraphStyle('MV', parent=body, fontName='Helvetica-Bold', textColor=TEAL_MED)),
+            norm,
+            Paragraph(f'<b>{status}</b>', ParagraphStyle('MS', parent=body, fontName='Helvetica-Bold', fontSize=8, textColor=st_col)),
+        ])
+    mw = [usable_w * 0.36, usable_w * 0.2, usable_w * 0.24, usable_w * 0.2]
+    mt = Table(m_rows, colWidths=mw)
+    mt_st = [
+        ('BACKGROUND', (0, 0), (-1, 0), TEAL),
+        ('TEXTCOLOR', (0, 0), (-1, 0), WHITE),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 8),
+        ('GRID', (0, 0), (-1, -1), 0.35, STONE_200),
+        ('TOPPADDING', (0, 0), (-1, -1), 7),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ]
+    for ri in range(2, len(m_rows), 2):
+        mt_st.append(('BACKGROUND', (0, ri), (-1, ri), STONE_100))
+    mt.setStyle(TableStyle(mt_st))
+    story.append(mt)
+    story.append(PageBreak())
 
-    rows = list(run.results.all().order_by('slice_index', 'id'))
-    if rows:
-        idxs = [0, len(rows) // 2, len(rows) - 1]
-        used = []
-        for i in idxs:
-            if i not in used and 0 <= i < len(rows):
-                used.append(i)
-        story.append(Paragraph('Images cles - Slices annotes', styles['Heading3']))
-        for i in used:
-            row = rows[i]
-            img_path = _make_slice_overlay_png(row, f'Slice {row.slice_index}')
-            if img_path:
-                cleanup_paths.append(img_path)
-                story.append(RLImage(img_path, width=16.8 * cm, height=5.0 * cm))
-                story.append(Spacer(1, 0.15 * cm))
+    # ——— 2. Coupes en grille (toutes les coupes, ordre croissant) ———
+    result_rows = list(run.results.all().order_by('slice_index', 'id'))
+    if result_rows:
+        story.append(Paragraph('SECTION 2', sec_num))
+        story.append(Paragraph('Coupe IRM et contour de segmentation', sec_title))
+        story.append(Paragraph(
+            f"Séquence ordonnée selon l'index de coupe — <b>{len(result_rows)}</b> image(s). "
+            'Source en niveaux de gris, contour de la structure segmentée en surimpression.',
+            body_small,
+        ))
+        story.append(Spacer(1, 0.25 * cm))
 
-    projection_path = _build_volume_projection_png(rows)
+        cols = 3
+        gap = 0.15 * cm
+        cell_w = (usable_w - gap * (cols - 1)) / cols
+        thumb_ratio = 268.0 / 340.0
+        img_h = cell_w * thumb_ratio
+
+        per_page = 9
+        for batch_start in range(0, len(result_rows), per_page):
+            batch = result_rows[batch_start: batch_start + per_page]
+            grid_rows = []
+            for r in range(0, len(batch), cols):
+                row_cells = []
+                for c in range(cols):
+                    idx = r + c
+                    if idx < len(batch):
+                        srow = batch[idx]
+                        lab = f'Coupe {getattr(srow, "slice_index", idx + 1)}'
+                        pth = _make_slice_thumb_png(srow, lab)
+                        if pth:
+                            cleanup_paths.append(pth)
+                            row_cells.append(RLImage(pth, width=cell_w, height=img_h))
+                        else:
+                            row_cells.append(Paragraph('—', body_small))
+                    else:
+                        row_cells.append('')
+                grid_rows.append(row_cells)
+            gt = Table(grid_rows, colWidths=[cell_w] * cols, rowHeights=[img_h + 0.05 * cm] * len(grid_rows))
+            gt.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                ('RIGHTPADDING', (0, 0), (-1, -1), gap),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ]))
+            story.append(gt)
+            if batch_start + per_page < len(result_rows):
+                story.append(PageBreak())
+
+        story.append(PageBreak())
+
+    # ——— 3. Synthèse volumétrique 3D ———
+    story.append(Paragraph('SECTION 3', sec_num))
+    story.append(Paragraph('Modélisation volumétrique — projections orthogonales', sec_title))
+    story.append(Paragraph(
+        "Représentation dérivée de l'empilement des masques segmentés : maximum "
+        'intensité projeté selon les axes axial, coronal et sagittal (équivalent visuel '
+        'à la reconstruction 3D du volume binaire).',
+        body_small,
+    ))
+    story.append(Spacer(1, 0.2 * cm))
+    projection_path = _build_volume_projection_png(result_rows)
     if projection_path:
         cleanup_paths.append(projection_path)
-        story.append(Spacer(1, 0.2 * cm))
-        story.append(Paragraph('Vue 3D', styles['Heading3']))
-        story.append(RLImage(projection_path, width=16.8 * cm, height=5.0 * cm))
+        story.append(RLImage(projection_path, width=usable_w, height=usable_w * (344.0 / 964.0)))
+    else:
+        story.append(Paragraph('Projections non disponibles (masques absents).', body_small))
 
-    ref = modelisation.get('reference_values_mm3', {})
-    chart_path = _build_comparison_chart_png(
-        volumes_mm3=vols,
-        ref_mean=float(ref.get('normative_total_mean') or 0.0),
-        ref_std=float(ref.get('normative_total_std') or 0.0),
-    )
-    if chart_path:
-        cleanup_paths.append(chart_path)
+    story.append(PageBreak())
+
+    # ——— 4. Interprétation ———
+    story.append(Paragraph('SECTION 4', sec_num))
+    story.append(Paragraph('Interprétation clinique assistée', sec_title))
+    blocks = [
+        ("Épilepsie du lobe temporal mésial (MTLE) — indice d'asymétrie",
+         _pdf_safe_text(interp.get('mtle_message') or interp.get('ai_message')), RUST_BG, RUST),
+        ("Maladie d'Alzheimer — indice de normalisation volumétrique",
+         _pdf_safe_text(interp.get('ni_message')), TEAL_BG, TEAL_MED),
+        ('Écart à la norme statistique — Z-score',
+         _pdf_safe_text(interp.get('z_message')), STONE_100, STONE_600),
+    ]
+    for title, para_html, bg, accent in blocks:
+        title_esc = html_module.escape(title)
+        bt = Table([
+            [Paragraph(f'<b>{title_esc}</b>', ParagraphStyle('BT', parent=body, fontName='Helvetica-Bold', fontSize=8, textColor=accent))],
+            [Paragraph(para_html, body)],
+        ], colWidths=[usable_w])
+        bt.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), bg),
+            ('BOX', (0, 0), (-1, -1), 0.5, STONE_200),
+            ('TOPPADDING', (0, 0), (-1, -1), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+            ('LEFTPADDING', (0, 0), (-1, -1), 12),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+        ]))
+        story.append(bt)
         story.append(Spacer(1, 0.2 * cm))
-        story.append(RLImage(chart_path, width=16.8 * cm, height=6.0 * cm))
+
+    story.append(PageBreak())
+
+    # ——— 5. Graphiques ———
+    story.append(Paragraph('SECTION 5', sec_num))
+    story.append(Paragraph('Graphiques comparatifs', sec_title))
+    vol_chart = _build_pdf_volume_grouped_chart(vols, ref)
+    if vol_chart:
+        cleanup_paths.append(vol_chart)
+        story.append(RLImage(vol_chart, width=usable_w, height=usable_w * (400.0 / 1020.0)))
+        story.append(Spacer(1, 0.35 * cm))
+    idx_chart = _build_pdf_indices_chart(ai_val, ni_val)
+    if idx_chart:
+        cleanup_paths.append(idx_chart)
+        story.append(RLImage(idx_chart, width=usable_w, height=usable_w * (340.0 / 1020.0)))
+
+    story.append(Spacer(1, 0.45 * cm))
+
+    # ——— Conclusion ———
+    story.append(Paragraph('SECTION 6', sec_num))
+    story.append(Paragraph('Conclusion synthétique', sec_title))
+    concl_html = _pdf_safe_text(interp.get('summary'))
+    ct = Table([
+        [Paragraph(concl_html, ParagraphStyle('CBody', parent=body, fontSize=10, leading=15, textColor=CHARCOAL))],
+        [Paragraph(
+            f'<b>Synthèse numérique</b> &nbsp; G={vol_left:.0f} mm³ &nbsp;·&nbsp; D={vol_right:.0f} mm³ &nbsp;·&nbsp; '
+            f'T={vol_total:.0f} mm³ &nbsp;·&nbsp; IA={abs(ai_val):.2f}% &nbsp;·&nbsp; IN={ni_val:.2f}% &nbsp;·&nbsp; Z={z_val:.2f}',
+            body_small,
+        )],
+    ], colWidths=[usable_w])
+    ct.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), STONE_100),
+        ('BOX', (0, 0), (-1, -1), 1, TEAL),
+        ('TOPPADDING', (0, 0), (-1, -1), 14),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 14),
+        ('LEFTPADDING', (0, 0), (-1, -1), 14),
+        ('LINEBELOW', (0, 0), (-1, 0), 0.5, STONE_200),
+    ]))
+    story.append(ct)
+    story.append(Spacer(1, 0.6 * cm))
+    story.append(Paragraph(
+        f'NeuroScan — document généré automatiquement le {exam_date} — à conserver avec le dossier patient.',
+        footer,
+    ))
 
     doc.build(story)
     pdf = buffer.getvalue()

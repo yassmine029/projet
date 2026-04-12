@@ -45,10 +45,10 @@ const defaultSettings = {
     sessionTimeoutMinutes: 30,
     requireTwoFactor: false,
     maskPatientNameInLists: false,
-    auditTrailEmail: 'nadine.hammami@visionmed.tn',
+    auditTrailEmail: 'nadine.hammami@neuroscan.tn',
   },
   integrations: {
-    pacsAeTitle: 'VISIONMED_AE',
+    pacsAeTitle: 'NEUROSCAN_AE',
     pacsHost: '127.0.0.1',
     pacsPort: 104,
     risEndpoint: '',
@@ -76,7 +76,7 @@ function Toggle({ checked, onChange }) {
       type="button"
       onClick={onChange}
       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-        checked ? 'bg-[#4f6ef7]' : 'bg-slate-300'
+        checked ? 'bg-blue-600' : 'bg-slate-300'
       }`}
       aria-pressed={checked}
     >
@@ -93,12 +93,12 @@ function SectionCard({ icon: Icon, title, subtitle, children }) {
   return (
     <section className="bg-white rounded-2xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.04)] p-6">
       <div className="flex items-start gap-3 mb-5">
-        <div className="w-10 h-10 rounded-xl bg-[#eef2ff] text-[#4f6ef7] flex items-center justify-center">
+        <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
           <Icon className="w-5 h-5" />
         </div>
         <div>
-          <h2 className="text-lg font-bold text-[#1a1f3c]">{title}</h2>
-          <p className="text-sm text-[#6b7280]">{subtitle}</p>
+          <h2 className="text-lg font-bold text-slate-900">{title}</h2>
+          <p className="text-sm text-slate-500">{subtitle}</p>
         </div>
       </div>
       <div className="space-y-4">{children}</div>
@@ -110,8 +110,8 @@ function Row({ label, hint, children }) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 lg:gap-4 items-center border border-slate-100 rounded-xl p-4">
       <div>
-        <h3 className="font-semibold text-[#1a1f3c]">{label}</h3>
-        <p className="text-sm text-[#6b7280]">{hint}</p>
+        <h3 className="font-semibold text-slate-900">{label}</h3>
+        <p className="text-sm text-slate-500">{hint}</p>
       </div>
       <div className="w-full lg:w-auto">{children}</div>
     </div>
@@ -194,7 +194,7 @@ export default function DashboardSettings() {
     return (
       <div className="max-w-[1200px]">
         <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.04)]">
-          <p className="text-[#1a1f3c] font-semibold">Chargement des parametres utilisateur...</p>
+          <p className="text-slate-900 font-semibold">Chargement des parametres utilisateur...</p>
         </div>
       </div>
     );
@@ -205,13 +205,13 @@ export default function DashboardSettings() {
       <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-[0_4px_24px_rgba(0,0,0,0.04)]">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div>
-            <h1 className="text-[28px] font-bold text-[#1a1f3c] tracking-tight">Parametres de la plateforme</h1>
-            <p className="text-[#6b7280] mt-1">
+            <h1 className="text-[28px] font-bold text-slate-900 tracking-tight">Parametres de la plateforme</h1>
+            <p className="text-slate-500 mt-1">
               Configurez votre environnement clinique, votre visionneuse MRI et vos regles de securite.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <div className="px-3 py-2 rounded-lg bg-[#eef2ff] text-[#3e59d4] text-sm font-semibold">
+            <div className="px-3 py-2 rounded-lg bg-blue-50 text-blue-600 text-sm font-semibold">
               Score de conformite: {complianceScore}%
             </div>
             <button
@@ -225,13 +225,13 @@ export default function DashboardSettings() {
               type="button"
               onClick={handleSave}
               disabled={isSaving}
-              className="px-4 py-2 rounded-lg bg-[#4f6ef7] text-white font-semibold hover:bg-[#3f5be0] transition-colors"
+              className="px-4 py-2 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 transition-colors"
             >
               {isSaving ? 'Enregistrement...' : 'Enregistrer'}
             </button>
           </div>
         </div>
-        {savedAt ? <p className="text-xs text-[#6b7280] mt-3">Derniere sauvegarde: {savedAt}</p> : null}
+        {savedAt ? <p className="text-xs text-slate-500 mt-3">Derniere sauvegarde: {savedAt}</p> : null}
         {feedback ? <p className="text-xs text-[#334155] mt-2">{feedback}</p> : null}
       </div>
 
@@ -395,7 +395,7 @@ export default function DashboardSettings() {
                 onChange={(e) => update('security', 'sessionTimeoutMinutes', Number(e.target.value) || 5)}
                 className="w-[100px] p-2.5 rounded-lg border border-slate-200 text-sm"
               />
-              <span className="text-sm text-[#6b7280]">minutes</span>
+              <span className="text-sm text-slate-500">minutes</span>
             </div>
           </Row>
 
@@ -472,24 +472,24 @@ export default function DashboardSettings() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white border border-slate-100 rounded-xl p-4 flex items-center gap-3">
-          <MonitorCog className="w-5 h-5 text-[#4f6ef7]" />
+          <MonitorCog className="w-5 h-5 text-blue-600" />
           <div>
             <p className="text-xs text-[#94a3b8] uppercase font-bold">Integrations</p>
-            <p className="text-sm font-semibold text-[#1a1f3c]">PACS / RIS: pret a connecter</p>
+            <p className="text-sm font-semibold text-slate-900">PACS / RIS: pret a connecter</p>
           </div>
         </div>
         <div className="bg-white border border-slate-100 rounded-xl p-4 flex items-center gap-3">
-          <BrainCircuit className="w-5 h-5 text-[#4f6ef7]" />
+          <BrainCircuit className="w-5 h-5 text-blue-600" />
           <div>
             <p className="text-xs text-[#94a3b8] uppercase font-bold">IA Clinique</p>
-            <p className="text-sm font-semibold text-[#1a1f3c]">Overlay + tri automatique actifs</p>
+            <p className="text-sm font-semibold text-slate-900">Overlay + tri automatique actifs</p>
           </div>
         </div>
         <div className="bg-white border border-slate-100 rounded-xl p-4 flex items-center gap-3">
-          <Timer className="w-5 h-5 text-[#4f6ef7]" />
+          <Timer className="w-5 h-5 text-blue-600" />
           <div>
             <p className="text-xs text-[#94a3b8] uppercase font-bold">Session</p>
-            <p className="text-sm font-semibold text-[#1a1f3c]">Timeout a {settings.security.sessionTimeoutMinutes} min</p>
+            <p className="text-sm font-semibold text-slate-900">Timeout a {settings.security.sessionTimeoutMinutes} min</p>
           </div>
         </div>
       </div>

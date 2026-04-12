@@ -88,7 +88,7 @@ function ToggleSwitch({ checked, onToggle }) {
     <button
       type="button"
       onClick={onToggle}
-      className={`relative h-5 w-9 rounded-full transition-colors ${checked ? 'bg-[#185FA5]' : 'bg-slate-300'}`}
+      className={`relative h-5 w-9 rounded-full transition-colors ${checked ? 'bg-blue-600' : 'bg-slate-300'}`}
       aria-pressed={checked}
     >
       <span
@@ -102,14 +102,14 @@ function ToggleSwitch({ checked, onToggle }) {
 
 function SectionCard({ icon: Icon, title, subtitle, iconClassName, children, danger = false }) {
   return (
-    <section className={`${danger ? 'border border-red-200 rounded-xl overflow-hidden' : 'bg-white border border-surface-border rounded-xl overflow-hidden mb-4'}`}>
-      <header className={`flex items-center gap-3 px-5 py-3.5 border-b ${danger ? 'border-red-100' : 'border-surface-border'}`}>
-        <div className={`h-8 w-8 rounded-md flex items-center justify-center ${iconClassName}`}>
+    <section className={`${danger ? 'border border-red-200 rounded-2xl overflow-hidden' : 'bg-white border border-slate-200/60 rounded-2xl overflow-hidden mb-4 shadow-card'}`}>
+      <header className={`flex items-center gap-3 px-5 py-3.5 border-b ${danger ? 'border-red-100 bg-red-50/50' : 'border-slate-100 bg-slate-50/50'}`}>
+        <div className={`h-8 w-8 rounded-xl flex items-center justify-center ${iconClassName}`}>
           <Icon className="h-4 w-4" />
         </div>
         <div>
-          <h3 className={`text-sm font-medium ${danger ? 'text-red-700' : 'text-[#0f2346]'}`}>{title}</h3>
-          <p className="text-[11px] text-gray-500">{subtitle}</p>
+          <h3 className={`text-sm font-semibold ${danger ? 'text-red-700' : 'text-slate-900'}`}>{title}</h3>
+          <p className="text-[10px] text-slate-500 font-medium">{subtitle}</p>
         </div>
       </header>
       <div>{children}</div>
@@ -265,7 +265,7 @@ export default function Parametres() {
                 <option value="utc">UTC</option>
               </SelectControl>
             </SettingRow>
-            <SettingRow label="Format de date" description="Format applique a toutes les dates dans VisionMed.">
+            <SettingRow label="Format de date" description="Format applique a toutes les dates dans NeuroScan.">
               <SelectControl value={settings.formatDate} onChange={(e) => updateSetting('formatDate', e.target.value)}>
                 <option value="ddmmyyyy">JJ/MM/AAAA</option>
                 <option value="mmddyyyy">MM/DD/YYYY</option>
@@ -446,14 +446,14 @@ export default function Parametres() {
   };
 
   return (
-    <div className="bg-[#f5f7ff] rounded-2xl border border-surface-border overflow-hidden min-h-[calc(100vh-10rem)]">
+    <div className="bg-white rounded-2xl border border-slate-200/60 overflow-hidden min-h-[calc(100vh-10rem)] shadow-card animate-fade-in">
       <div className="flex min-h-[calc(100vh-10rem)]">
-        <aside className="w-[200px] shrink-0 bg-white border-r border-surface-border">
-          <nav className="px-2 py-4">
+        <aside className="w-[210px] shrink-0 bg-slate-50/70 border-r border-slate-200/60">
+          <nav className="px-3 py-5">
             {NAV_GROUPS.map((group, groupIndex) => (
-              <div key={group.label} className={groupIndex > 0 ? 'mt-4 pt-4 border-t border-surface-border' : ''}>
-                <p className="px-3 mb-2 text-[11px] tracking-[0.06em] uppercase text-gray-400">{group.label}</p>
-                <div className="space-y-1">
+              <div key={group.label} className={groupIndex > 0 ? 'mt-5 pt-5 border-t border-slate-200/60' : ''}>
+                <p className="px-3 mb-2 text-[9px] font-bold tracking-[0.2em] uppercase text-slate-400">{group.label}</p>
+                <div className="space-y-0.5">
                   {group.items.map((item) => {
                     const Icon = item.icon;
                     const active = activeTab === item.key;
@@ -462,13 +462,14 @@ export default function Parametres() {
                         type="button"
                         key={item.key}
                         onClick={() => setActiveTab(item.key)}
-                        className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-sm border-l-2 transition-colors ${
+                        className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-[13px] rounded-xl transition-all relative ${
                           active
-                            ? 'border-l-2 border-blue-600 bg-blue-50 text-blue-600 font-medium'
-                            : 'border-transparent text-gray-500 hover:bg-[#f5f7ff] hover:text-gray-800'
+                            ? 'bg-blue-50 text-blue-600 font-semibold'
+                            : 'text-slate-500 hover:bg-white hover:text-slate-800 font-medium'
                         }`}
                       >
-                        <Icon className="h-4 w-4" />
+                        {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 bg-blue-500 rounded-r-full" />}
+                        <Icon className="h-4 w-4 flex-shrink-0" />
                         <span>{item.label}</span>
                       </button>
                     );

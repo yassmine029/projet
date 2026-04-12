@@ -216,16 +216,29 @@ def run_mine_registration(
     L: int = 4,
     max_samples: int = 32768,
     lambda_reg: float = 1e-4,
-    device_name: str = "auto"
+    device_name: str = "cuda"
 ) -> dict:
     """
     Complete registration pipeline.
     FIX: Load images as GRAYSCALE (same as Colab notebook).
     """
-    if device_name == "auto":
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    name = (device_name or "cuda").strip().lower()
+    if name in ("auto", "cuda", ""):
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device = torch.device("mps")
+            print("MINE 2D: CUDA indisponible, utilisation du GPU Apple (MPS)")
+        else:
+            print("MINE 2D: Aucun GPU detecte, utilisation du CPU")
+            device = torch.device("cpu")
+    elif name == "cpu":
+        device = torch.device("cpu")
     else:
         device = torch.device(device_name)
+
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = True
 
     print(f"MINE registration using device: {device}")
     start_time = time.time()

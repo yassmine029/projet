@@ -13,7 +13,16 @@ import BrodmannIdentificationView from '../components/BrodmannIdentificationView
 import OrientationPanel from '../components/viewer/OrientationPanel';
 
 type Page = string;
-interface User { username: string; fullName?: string; full_name?: string; specialty?: string; }
+interface User {
+  username: string;
+  fullName?: string;
+  full_name?: string;
+  first_name?: string;
+  last_name?: string;
+  prenom?: string;
+  nom?: string;
+  specialty?: string;
+}
 interface RegistrationPageProps { user: User; accessToken: string | null; onNavigate: (page: Page) => void; }
 interface Point { x: number; y: number; id: number; }
 interface ImageTransform { offsetX: number; offsetY: number; scale: number; baseScale: number; imageWidth: number; imageHeight: number; }
@@ -30,6 +39,20 @@ const POINT_COLORS = ['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899
 const DEFAULT_VIEW: ViewTransform = { scale: 1, panX: 0, panY: 0 };
 
 export function RegistrationPage({ user, accessToken, onNavigate }: RegistrationPageProps) {
+  const doctorDisplayName = React.useMemo(() => {
+    const fromFullName = String(user?.fullName || user?.full_name || '').trim();
+    if (fromFullName && !fromFullName.includes('@')) return fromFullName;
+
+    const firstName = String(user?.first_name || user?.prenom || '').trim();
+    const lastName = String(user?.last_name || user?.nom || '').trim();
+    const merged = `${firstName} ${lastName}`.trim();
+    if (merged) return merged;
+
+    const username = String(user?.username || '').trim();
+    if (!username || username.includes('@')) return 'Medecin';
+    return username;
+  }, [user]);
+
   const [registrationDimension, setRegistrationDimension] = useState<RegistrationDimension | null>(null);
   const [referenceImage, setReferenceImage] = useState<ImageState>({ src: '', points: [] });
   const [patientImage, setPatientImage]     = useState<ImageState>({ src: '', points: [] });
@@ -247,8 +270,13 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         fd.append('ref_image', uploadedFiles.ref);
         fd.append('patient_image', uploadedFiles.patient);
         fd.append('patient_id', 'patient_' + Date.now());
-        const res = await fetch('/api/upload', { method: 'POST', body: fd });
+        const res = await fetch('/api/upload', { method: 'POST', credentials: 'include', body: fd });
         if (res.ok) { const d = await res.json(); setJobId(d.jobId); }
+        else {
+          let errMsg = `Échec de l'envoi (${res.status})`;
+          try { const j = await res.json(); errMsg = j?.message || j?.error || errMsg; } catch { /* non-JSON response */ }
+          setAutoAlignError(errMsg); setAutoAlignStatus('error');
+        }
       } catch (err: any) {
         console.error('❌ Upload failed:', err);
         setAutoAlignError("Échec de l'envoi des images au serveur. Vérifiez votre connexion.");
@@ -628,7 +656,10 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         credentials: 'include',
         body: fd,
       });
-      if (!uploadRes.ok) throw new Error('Upload patient 3D echoue');
+      if (!uploadRes.ok) {
+        const uploadErr = await readApiError(uploadRes, 'Upload patient 3D echoue');
+        throw new Error(uploadErr);
+      }
 
       const uploadData = await uploadRes.json();
       const nextJobId = uploadData.jobId || '';
@@ -652,7 +683,12 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
 
       const atlasRes = await fetch(`/api/volume/atlas_slice?jobId=${nextJobId}&axis=${nextAxis}&index=${nextIndex}&showLabels=0`);
       const patientRes = await fetch(`/api/volume/get-slice?jobId=${nextJobId}&axis=${nextAxis}&index=${nextIndex}`);
-      if (!atlasRes.ok || !patientRes.ok) throw new Error('Chargement des coupes echoue');
+      if (!atlasRes.ok || !patientRes.ok) {
+        const atlasErr = !atlasRes.ok ? await readApiError(atlasRes, 'atlas indisponible') : '';
+        const patientErr = !patientRes.ok ? await readApiError(patientRes, 'patient indisponible') : '';
+        const combined = [atlasErr, patientErr].filter(Boolean).join(' | ');
+        throw new Error(combined || 'Chargement des coupes echoue');
+      }
 
       const atlasData = await atlasRes.json();
       const patientData = await patientRes.json();
@@ -676,14 +712,18 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       setSliceError('');
       setAtlasSliceError('');
       setAxis(nextAxis);
-      setIndex(typeof patientData.index === 'number' ? patientData.index : nextIndex);
-      setMaxIndex(
-        typeof patientData.max_index === 'number'
-          ? patientData.max_index
-          : (typeof atlasData.max_index === 'number'
-            ? atlasData.max_index
-            : (typeof uploadData.max_z === 'number' ? uploadData.max_z : 0))
-      );
+      {
+        const am = typeof atlasData.max_index === 'number' ? atlasData.max_index : null;
+        const pm = typeof patientData.max_index === 'number' ? patientData.max_index : null;
+        let initialMax = typeof uploadData.max_z === 'number' ? uploadData.max_z : 0;
+        if (am !== null && pm !== null) initialMax = Math.min(am, pm);
+        else if (pm !== null) initialMax = pm;
+        else if (am !== null) initialMax = am;
+        const rawIdx = typeof patientData.index === 'number' ? patientData.index : nextIndex;
+        const clampedIdx = Math.min(Math.max(0, rawIdx), Math.max(0, initialMax));
+        setMaxIndex(initialMax);
+        setIndex(clampedIdx);
+      }
 
       setZone(null);
       setInsideBrain(false);
@@ -695,7 +735,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       setPhase(2);
     } catch (err) {
       console.error('Import patient 3D failed:', err);
-      setAutoAlignError("Import patient 3D echoue. Verifiez le fichier et recommencez.");
+      setAutoAlignError((err as any)?.message || 'Import patient 3D echoue. Verifiez le fichier et recommencez.');
       setAutoAlignStatus('error');
     }
   };
@@ -1246,7 +1286,12 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       setAtlasSource((atlas.source === 'custom' ? 'custom' : 'official') as AtlasSourceOption);
       if (patient.image) setPatientImage(p => ({ ...p, src: patient.image }));
       setAxis(nextAxis);
-      const resolvedMax = typeof atlas.max_index === 'number' ? atlas.max_index : axisMax;
+      const am = typeof atlas.max_index === 'number' ? atlas.max_index : null;
+      const pm = typeof patient.max_index === 'number' ? patient.max_index : null;
+      let resolvedMax = axisMax;
+      if (am !== null && pm !== null) resolvedMax = Math.min(am, pm, axisMax);
+      else if (pm !== null) resolvedMax = Math.min(pm, axisMax);
+      else if (am !== null) resolvedMax = Math.min(am, axisMax);
       setMaxIndex(resolvedMax);
       setIndex(Math.max(0, Math.min(clampedIndex, Math.max(0, resolvedMax))));
     } catch (err) {
@@ -1373,9 +1418,12 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         setPatientImage(p => ({ ...p, src: patientData.slice || patientData.image }));
       }
 
-      const nextMax = typeof patientData.max_index === 'number'
-        ? patientData.max_index
-        : (typeof atlasData.max_index === 'number' ? atlasData.max_index : maxIndex);
+      const am = typeof atlasData.max_index === 'number' ? atlasData.max_index : null;
+      const pm = typeof patientData.max_index === 'number' ? patientData.max_index : null;
+      let nextMax = maxIndex;
+      if (am !== null && pm !== null) nextMax = Math.min(am, pm);
+      else if (pm !== null) nextMax = pm;
+      else if (am !== null) nextMax = am;
 
       setAxis(nextAxis);
       setMaxIndex(nextMax);
@@ -1688,7 +1736,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
             </div>
             <div className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"/>
-              <span className="text-[10px] text-slate-500 font-medium truncate max-w-[80px]">{user.username}</span>
+              <span className="text-[10px] text-slate-500 font-medium truncate max-w-[100px]">Dr. {doctorDisplayName}</span>
             </div>
           </div>
         </div>
@@ -1725,7 +1773,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
               </div>
             </div>
             <div className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[10px] font-bold ${pointsStatus==='ready'?'bg-emerald-100 border border-emerald-300 text-emerald-700':pointsStatus==='unbalanced'?'bg-orange-100 border border-orange-300 text-orange-700':pointsStatus==='partial'?'bg-blue-100 border border-blue-300 text-blue-700':'bg-slate-100 border border-slate-300 text-slate-600'}`}>
-              {pointsStatus==='ready'?'✅ Prêt':pointsStatus==='unbalanced'?`⚠️ ${refPts}/${patPts}`:pointsStatus==='partial'?`Encore ${4-Math.min(refPts,patPts)} pts`:'Clic pour ajouter des points'}
+              {pointsStatus==='ready'?'✅ Prêt':pointsStatus==='unbalanced'?`⚠️ ${refPts}/${patPts}`:pointsStatus==='partial'?`Encore ${Math.max(0, 4 - Math.min(refPts, patPts))} paire(s)`:'Clic pour ajouter des points'}
             </div>
 
             <div className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-2 py-2">
@@ -1904,7 +1952,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                   <button onClick={handleAutoAlign} disabled={autoAlignStatus==='processing'}
                     className={`w-full py-3 px-4 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 group relative overflow-hidden ${autoAlignStatus==='processing'?'bg-slate-100 text-slate-400 cursor-not-allowed':'bg-blue-600 text-white hover:bg-blue-700 hover:scale-[1.02] active:scale-95 shadow-xl shadow-blue-600/20'}`}>
                     {autoAlignStatus==='processing'? (
-                      <div className="flex items-center gap-2"><div className="w-3.5 h-3.5 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin"/><span>Analyse GPU...</span></div>
+                      <div className="flex items-center gap-2"><div className="w-3.5 h-3.5 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin"/><span>Recalage MINE…</span></div>
                     ):(<><BrainCircuit className="w-4 h-4 group-hover:rotate-12 transition-transform"/>Lancer Automatique ({autoAlignIters})</>)}
                   </button>
                 </>
@@ -2101,11 +2149,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                             <button
                               key={key}
                               onClick={() => {
-                                const target = key === 'axial'
-                                  ? Math.floor((sliceShape?.z ?? maxIndex + 1) / 2)
-                                  : key === 'coronal'
-                                    ? Math.floor((sliceShape?.y ?? maxIndex + 1) / 2)
-                                    : Math.floor((sliceShape?.x ?? maxIndex + 1) / 2);
+                                const target = Math.floor(getAxisMax(key) / 2);
                                 queuePhase2SliceFetch(key, target);
                               }}
                               className={`rounded-lg border px-2 py-1.5 text-[10px] font-bold transition-colors ${axis===key ? 'border-blue-300 bg-blue-100 text-blue-800' : 'border-slate-300 bg-white text-slate-600 hover:text-slate-800 hover:bg-slate-50'}`}
@@ -2164,11 +2208,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                             <button
                               key={key}
                               onClick={() => {
-                                const target = key === 'axial'
-                                  ? Math.floor((sliceShape?.z ?? maxIndex + 1) / 2)
-                                  : key === 'coronal'
-                                    ? Math.floor((sliceShape?.y ?? maxIndex + 1) / 2)
-                                    : Math.floor((sliceShape?.x ?? maxIndex + 1) / 2);
+                                const target = Math.floor(getAxisMax(key) / 2);
                                 queuePhase2SliceFetch(key, target);
                               }}
                               className={`rounded-lg border px-2 py-1.5 text-[10px] font-bold transition-colors ${axis===key ? 'border-blue-300 bg-blue-100 text-blue-800' : 'border-slate-300 bg-white text-slate-600 hover:text-slate-800 hover:bg-slate-50'}`}
@@ -2299,7 +2339,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
 
                       <div className="text-right">
                         <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-slate-500">Coupe {axis}</p>
-                        <p className="text-sm font-black text-blue-700">Z = {index} / {maxIndex}</p>
+                        <p className="text-sm font-black text-blue-700">Coupe {index + 1} / {maxIndex + 1}</p>
                       </div>
                     </div>
 
@@ -2331,7 +2371,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                           }}
                           className="w-full h-2 rounded-full appearance-none bg-slate-200 accent-blue-500 cursor-pointer"
                         />
-                        <div className="pointer-events-none absolute left-0 right-0 top-1/2 -translate-y-1/2 h-2 rounded-full bg-gradient-to-r from-blue-500/35 via-blue-400/30 to-slate-500/30" style={{ clipPath: `inset(0 ${100 - ((index / Math.max(1, maxIndex)) * 100)}% 0 0)` }} />
+                        <div className="pointer-events-none absolute left-0 right-0 top-1/2 -translate-y-1/2 h-2 rounded-full bg-gradient-to-r from-blue-500/35 via-blue-400/30 to-slate-500/30" style={{ clipPath: `inset(0 ${100 - (maxIndex > 0 ? (index / maxIndex) * 100 : 100)}% 0 0)` }} />
                       </div>
 
                       <button
@@ -2551,8 +2591,16 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
 
                   {autoAlignMetrics?.processing_time_ms>0&&(
                     <div className="rounded-xl p-3.5 bg-blue-50 border border-blue-200">
-                      <span className="text-[9px] font-bold text-blue-700 uppercase tracking-[0.14em]">Temps GPU</span>
+                      <span className="text-[9px] font-bold text-blue-700 uppercase tracking-[0.14em]">Temps total (serveur)</span>
                       <div className="text-xl font-black text-blue-700 mt-1">{(autoAlignMetrics.processing_time_ms/1000).toFixed(1)}s</div>
+                      {autoAlignMetrics?.device != null && autoAlignMetrics.device !== '' && (
+                        <p className="mt-1.5 text-[10px] font-semibold text-slate-600 leading-snug">
+                          PyTorch : <span className="text-blue-800">{String(autoAlignMetrics.device)}</span>
+                          {String(autoAlignMetrics.device).toLowerCase().includes('cpu') && (
+                            <span className="block mt-0.5 text-amber-700">Installez PyTorch avec CUDA pour accélérer (voir pytorch.org).</span>
+                          )}
+                        </p>
+                      )}
                     </div>
                   )}
 

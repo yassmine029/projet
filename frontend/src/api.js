@@ -1,8 +1,7 @@
-// frontend/src/api.js
 import axios from "axios";
 
 const api = axios.create({
-  baseURL: "http://localhost:8000/api",  // ← CHANGÉ : de 5173 à 8000
+  baseURL: "http://localhost:8000/api",
   withCredentials: true,
 });
 
@@ -14,6 +13,8 @@ export const emergencyLogin = (email, orderNumber) => api.post("/emergency_login
 export const checkEmergencyLimit = (email, orderNumber) => api.post("/emergency_check", { email, order_number: orderNumber });
 export const logout = () => api.post("/logout");
 export const checkSession = () => api.get("/check_session");
+export const getUserSettings = () => api.get('/user-settings/');
+export const updateUserSettings = (data) => api.put('/user-settings/', data);
 export const forgotPassword = (email) => api.post("/forgot_password", { email });
 export const validateResetToken = (token) => api.post("/validate_reset_token", { token });
 export const resetPassword = (token, newPassword) => api.post("/reset_password", { token, new_password: newPassword });
@@ -31,54 +32,35 @@ export const uploadTwo = (patientId, refFile, patFile) => {
 export const uploadSeries = (formData) => api.post("/upload_series", formData, { headers: { "Content-Type": "multipart/form-data" } });
 
 // Preprocess / align / tform
-// ⚠️ ATTENTION : ces routes n'existent PAS dans Django, il faudra les créer ou les supprimer
 export const preprocessImage = (jobId, target, method, intensity = 1.0) =>
   api.post("/preprocess", { jobId, target, method, intensity });
-
 export const alignJob = (ct_points, pat_points, jobId) =>
   api.post("/align", { jobId, ct_points, pat_points }, { responseType: "blob" });
-
 export const getJobTform = (jobId) => api.get(`/job/${encodeURIComponent(jobId)}/tform`);
-
-// ⚠️ ATTENTION : cette route n'existe PAS dans Django
 export const applyTform = (jobId, sourceDir, pattern = "*.*") =>
   api.post("/apply_tform", { jobId, source_dir: sourceDir, pattern }, { responseType: "blob" });
 
-// Patients
+// Patients (recalage)
 export const getPatients = () => api.get("/patients");
 export const getPatientSeries = (patientId) => api.get(`/patient/${encodeURIComponent(patientId)}/series`);
-
-// fetch a patient file image as blob
 export const getPatientFile = (jobId, relpath) =>
   api.get("/patient_file", { params: { jobId, relpath }, responseType: "blob" });
-
-// download series / patient
-// ⚠️ ATTENTION : ces routes n'existent PAS dans Django
 export const downloadSeries = (seriesId) => api.get(`/series/${encodeURIComponent(seriesId)}/download`, { responseType: "blob" });
 export const downloadPatient = (patientId) => api.get(`/patient/${encodeURIComponent(patientId)}/download`, { responseType: "blob" });
-
-// delete
-export const deleteSeries = (seriesId) => api.post("/delete_series", { series_id: seriesId });  // ← CHANGÉ : format JSON au lieu de DELETE
-// ⚠️ ATTENTION : cette route n'existe PAS dans Django
+export const deleteSeries = (seriesId) => api.post("/delete_series", { series_id: seriesId });
 export const deletePatient = (patientId) => api.delete(`/patient/${encodeURIComponent(patientId)}`);
 
-// generic helpers
+// Generic helpers
 export const fetchHistory = () => api.get("/history");
 
-// Brain transform (nouvelle route)
+// Brain transform
 export const getBrainTransform = (jobId, relpath) =>
   api.get("/brain_transform", { params: { jobId, relpath } });
 
-// Project Brodmann (nouvelle route)
+// Project Brodmann
 export const projectBrodmann = (atlasJobId, atlasRelpath, patientJobId, patientRelpath, x, y, tolerance = 8) =>
   api.post("/project_brodmann", {
-    atlasJobId,
-    atlasRelpath,
-    patientJobId,
-    patientRelpath,
-    x,
-    y,
-    tolerance
+    atlasJobId, atlasRelpath, patientJobId, patientRelpath, x, y, tolerance
   }, { responseType: "blob" });
 
 // Dashboard Patients
@@ -91,6 +73,12 @@ export const getReclamations = () => api.get("/reclamations/");
 export const createReclamation = (formData) => api.post("/reclamations/", formData, {
   headers: { 'Content-Type': 'multipart/form-data' }
 });
+
+export const downloadSegmentationReportPdf = (runId, payload = {}, config = {}) =>
+  api.post(`/segmentation-runs/${runId}/report-pdf/`, payload, {
+    responseType: 'blob',
+    ...config,
+  });
 
 // Contact requests (landing popup)
 export const createContactRequest = (data) => api.post('/contact_requests/', data);

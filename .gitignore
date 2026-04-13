@@ -14,6 +14,8 @@ __pycache__/
 # Base de données
 *.sqlite3
 db.sqlite3
+backend_django/db_backups/*.json
+backend_django/db_backups/_*.py
 
 # Fichiers uploadés (IMPORTANT!)
 uploads/
@@ -51,3 +53,5 @@ dist/
 
 # MAIS garder le README.md
 !README.md
+# Modeles ONNX
+*.onnx

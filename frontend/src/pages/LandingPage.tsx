@@ -38,6 +38,10 @@ interface User {
   username: string;
   fullName?: string;
   full_name?: string;
+  first_name?: string;
+  last_name?: string;
+  prenom?: string;
+  nom?: string;
   speciality?: string;
   specialty?: string;
   is_staff?: boolean;
@@ -91,6 +95,22 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
       status: 'approved'
     }
   ]);
+
+  const doctorDisplayName = React.useMemo(() => {
+    if (!user) return 'Medecin';
+
+    const fromFullName = String(user.fullName || user.full_name || '').trim();
+    if (fromFullName && !fromFullName.includes('@')) return fromFullName;
+
+    const firstName = String(user.first_name || user.prenom || '').trim();
+    const lastName = String(user.last_name || user.nom || '').trim();
+    const merged = `${firstName} ${lastName}`.trim();
+    if (merged) return merged;
+
+    const username = String(user.username || '').trim();
+    if (!username || username.includes('@')) return 'Medecin';
+    return username;
+  }, [user]);
 
   React.useEffect(() => {
     const loadApprovedTestimonials = async () => {
@@ -214,25 +234,25 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
       title: "Segmentation Volumétrique",
       description: "Segmentation automatique de l'hippocampe gauche et droit par deep learning ; avec calcul des volumes et index d'asymétrie pour la détection de l'atrophie et de la sclérose hippocampique.",
       icon: <Brain className="w-6 h-6 text-blue-600" />,
-      target: 'dashboard'
+      target: '/segmentation/nouvelle'
     },
     {
       title: "Reconstruction 3D",
       description: "Visualisation 3D interactive de l'hippocampe segmenté ; explorez la structure sous tous les angles pour une interprétation anatomique intuitive.",
       icon: <Layers className="w-6 h-6 text-blue-600" />,
-      target: 'dashboard'
+      target: '/segmentation/nouvelle'
     },
     {
       title: "Rapports Cliniques",
       description: "Génération automatique de rapports personnalisés par patient ; mesures volumétriques, comparaisons aux normes de référence et suivi longitudinal intégré.",
       icon: <FileText className="w-6 h-6 text-blue-600" />,
-      target: 'dashboard'
+      target: '/dashboard/analysesMRI'
     },
     {
       title: "Recalage d'Images",
       description: "Recalage 2D et 3D d'images multimodales (IRM/IRM, TEP/IRM) avec identification automatique des zones corticales pour une interprétation fonctionnelle précise.",
       icon: <GitMerge className="w-6 h-6 text-blue-600" />,
-      target: 'registration'
+      target: '/registration'
     }
   ];
 
@@ -281,7 +301,7 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
             {user ? (
               <>
                 <div className="hidden xl:flex flex-col items-end pr-3 border-r border-slate-100">
-                  <span className="text-[11px] font-bold text-slate-900 leading-tight">Dr. {user.fullName || user.full_name || user.username}</span>
+                  <span className="text-[11px] font-bold text-slate-900 leading-tight">Dr. {doctorDisplayName}</span>
                   <span className="text-[9px] text-blue-600 font-bold uppercase tracking-widest opacity-80">{user.speciality || user.specialty || 'Neurologie'}</span>
                 </div>
                 <button

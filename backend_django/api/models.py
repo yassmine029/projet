@@ -8,6 +8,57 @@ import uuid
 
 User = get_user_model()
 
+
+
+def default_user_settings():
+    return {
+        'general': {
+            'language': 'Francais',
+            'timezone': 'Africa/Tunis (UTC+1)',
+            'dateFormat': 'DD/MM/YYYY',
+            'numberFormat': 'fr-TN',
+        },
+        'viewer': {
+            'defaultPreset': 'Brain - T1',
+            'interpolationEnabled': True,
+            'autoMprSync': True,
+            'showOrientationLabels': True,
+            'enableAiOverlayByDefault': True,
+            'cineLoopFps': 18,
+        },
+        'workflow': {
+            'autoAssignUrgentCases': True,
+            'enableDoubleReadForCritical': False,
+            'autoOpenLastStudyContext': True,
+            'reportTemplate': 'Neuro MRI Standard',
+            'defaultPriority': 'Normale',
+        },
+        'notifications': {
+            'studyCompleted': True,
+            'aiAnomaly': True,
+            'pendingReports': True,
+            'reclamationUpdates': True,
+            'weeklyDigest': False,
+        },
+        'security': {
+            'sessionTimeoutMinutes': 30,
+            'requireTwoFactor': False,
+            'maskPatientNameInLists': False,
+            'auditTrailEmail': '',
+        },
+        'integrations': {
+            'pacsAeTitle': '',
+            'pacsHost': '',
+            'pacsPort': 104,
+            'risEndpoint': '',
+            'modalityWorklistEnabled': False,
+            'dicomTlsEnabled': False,
+        },
+    }
+
+
+
+
 class Series(models.Model):
     job_id = models.CharField(max_length=64, unique=True)
     patient_id = models.CharField(max_length=256, db_index=True)
@@ -133,13 +184,28 @@ dossier_number_regex = RegexValidator(
 )
 
 class Patient(models.Model):
-    SEX_CHOICES = [('M', 'Masculin'), ('F', 'Féminin')]
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    SEX_CHOICES = [
+        ('M', 'Masculin'),
+        ('F', 'Féminin'),
+    ]
+
+    id = models.BigAutoField(primary_key=True)
+
+    
+    
+
     dossier_number = models.CharField(max_length=50, unique=True, validators=[dossier_number_regex])
     nom = models.CharField(max_length=100)
     prenom = models.CharField(max_length=100)
     date_naissance = models.DateField()
     sexe = models.CharField(max_length=1, choices=SEX_CHOICES)
+    telephone = models.CharField(max_length=30, blank=True, null=True)
+    email = models.EmailField(blank=True, null=True)
+    pathologie = models.CharField(max_length=120, blank=True, null=True)
+    stade = models.CharField(max_length=80, blank=True, null=True)
+    antecedents = models.CharField(max_length=80, blank=True, null=True)
+    notes = models.TextField(blank=True, null=True)
     autres_maladies = models.TextField(blank=True, null=True)
     doctor = models.ForeignKey(User, on_delete=models.CASCADE, related_name='patients')
     created_at = models.DateTimeField(auto_now_add=True)
@@ -152,10 +218,53 @@ class MRIFile(models.Model):
     patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='mri_files')
     file = models.FileField(upload_to='patients_mri_files/')
     original_filename = models.CharField(max_length=255)
+    relative_path = models.CharField(max_length=512, blank=True)
+    file_size = models.BigIntegerField(default=0)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"{self.original_filename} for {self.patient.dossier_number}"
+
+
+class SegmentationRun(models.Model):
+    STATUS_CHOICES = [
+        ('running', 'Running'),
+        ('done', 'Done'),
+        ('failed', 'Failed'),
+    ]
+
+    patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='segmentation_runs')
+    doctor = models.ForeignKey(User, on_delete=models.CASCADE, related_name='segmentation_runs')
+    model_key = models.CharField(max_length=40, default='unetpp')
+    threshold = models.FloatField(default=0.25)
+    selected_count = models.IntegerField(default=0)
+    processed_count = models.IntegerField(default=0)
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default='running')
+    error_message = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(blank=True, null=True)
+
+    def __str__(self):
+        return f"Run #{self.id} - Patient {self.patient_id} - {self.model_key}"
+
+
+class SegmentationMaskResult(models.Model):
+    run = models.ForeignKey(SegmentationRun, on_delete=models.CASCADE, related_name='results')
+    patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='segmentation_masks')
+    mri_file = models.ForeignKey(MRIFile, on_delete=models.CASCADE, related_name='segmentation_masks')
+    slice_index = models.IntegerField(default=1)
+    source_filename = models.CharField(max_length=255)
+    source_file = models.CharField(max_length=512)
+    source_url = models.CharField(max_length=1024, blank=True, null=True)
+    mask_file = models.CharField(max_length=512)
+    mask_url = models.CharField(max_length=1024, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['slice_index', 'id']
+
+    def __str__(self):
+        return f"Mask #{self.id} - Run {self.run_id} - MRIFile {self.mri_file_id}"
 
 
 class Reclamation(models.Model):
@@ -180,6 +289,16 @@ class Reclamation(models.Model):
     def __str__(self):
         return f"Réclamation {self.numero} - {self.user.username}"
 
+
+
+class UserSettings(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='settings')
+    settings = models.JSONField(default=default_user_settings)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Settings for {self.user.username}"
 
 class ContactRequest(models.Model):
     SUBJECT_CHOICES = [

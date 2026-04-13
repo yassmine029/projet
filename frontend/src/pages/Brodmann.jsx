@@ -20,7 +20,7 @@ export default function BrodmannPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
-  const [autoAlignIters, setAutoAlignIters] = useState(120);
+  const [autoAlignIters, setAutoAlignIters] = useState(60);
   const [alignRuns, setAlignRuns] = useState([]);
 
   const [uploadFile, setUploadFile] = useState(null);
@@ -295,7 +295,7 @@ export default function BrodmannPage() {
         <header className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_10px_45px_rgba(2,6,23,0.6)] backdrop-blur">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-emerald-300/80">VisionMed Workflow</p>
+              <p className="text-xs uppercase tracking-[0.24em] text-emerald-300/80">NeuroScan Workflow</p>
               <h1 className="mt-2 text-2xl font-semibold text-white md:text-3xl">Recalage Atlas et Identification Brodmann</h1>
               <p className="mt-2 max-w-3xl text-sm text-slate-300">
                 Pipeline clinique: chargez le volume, lancez le recalage automatique, puis confirmez ou rejetez le resultat avant l'identification precise des zones.

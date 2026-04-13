@@ -1,6 +1,9 @@
 import os
+import html as html_module
 import io
 import sys
+import mimetypes
+import posixpath
 import zipfile
 import tempfile
 import shutil
@@ -12,6 +15,7 @@ import threading
 import re
 from urllib.parse import urlparse
 from html import escape
+import textwrap
 from datetime import datetime
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
@@ -26,18 +30,23 @@ from rest_framework.permissions import AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework import status
-from .models import Series, PatientImageOrientation, PatientImage
-from .serializers import OrientationSerializer, PatientImageSerializer
-from django.shortcuts import get_object_or_404
-from django.core.validators import RegexValidator
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from .models import Series
 from django.shortcuts import get_object_or_404, Http404
+from django.core.validators import RegexValidator
+from django.core.files.storage import default_storage
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
+from rest_framework.authentication import SessionAuthentication
+from rest_framework.permissions import AllowAny, IsAuthenticated
 
 import numpy as np
 import cv2
 from PIL import Image, ImageOps
+from PIL import ImageDraw
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.units import cm
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, PageBreak
 
 from datetime import timedelta
 from django.utils import timezone
@@ -47,8 +56,30 @@ from django.db.models import Q
 from .models import Series, PasswordResetToken, AccountActivationToken, EmergencyLoginAttempt, Patient, Reclamation, MRIFile, ContactRequest, DoctorProfile, Testimonial
 from .serializers import ReclamationSerializer, PatientSerializer, MRIFileSerializer, ContactRequestSerializer
 
+from .models import (
+    Series,
+    PasswordResetToken,
+    EmergencyLoginAttempt,
+    Patient,
+    Reclamation,
+    MRIFile,
+    UserSettings,
+    default_user_settings,
+    ContactRequest,
+    PatientImage,
+    PatientImageOrientation,
+    SegmentationRun,
+    SegmentationMaskResult,
+)
+from .serializers import (
+    ReclamationSerializer, PatientSerializer, MRIFileSerializer, SegmentationRunSerializer,
+    ProfileSerializer, ChangePasswordSerializer, UserSettingsSerializer, ContactRequestSerializer,
+    PatientImageSerializer, OrientationSerializer
+)
 # auto_registration (ANTs) supprimé — MINE uniquement
 from .mine_registration import run_mine_registration
+from .segmentation_inference import run_segmentation_on_files
+from .modelisation_3d import run_modelisation_3d, parse_spacing, parse_reference_values
 
 # Setup logging - just flush stdout for real-time output
 sys.stdout.flush()
@@ -293,6 +324,11 @@ L'équipe NeuroScan
         recipient_list=[email],
         html_message=html_message,
     )
+
+
+class CsrfExemptSessionAuthentication(SessionAuthentication):
+    def enforce_csrf(self, request):
+        return
 
 
 def send_email_async(subject, message, from_email, recipient_list, html_message=None):
@@ -639,6 +675,102 @@ def _flood_mask_gray(img_u8, seed_x, seed_y, tol):
     return (filled > 0).astype(np.uint8) * 255
 
 
+def _resolve_series_file_for_user(user, job_id, relpath):
+    try:
+        series = Series.objects.get(job_id=job_id, user=user)
+    except Series.DoesNotExist:
+        return None, None
+
+    if not relpath:
+        return series, None
+
+    relpath = relpath.replace('\\', '/').lstrip('/')
+    if series.files and relpath in series.files:
+        return series, os.path.join(UPLOAD_DIR, relpath)
+
+    candidate = os.path.normpath(os.path.join(UPLOAD_DIR, relpath))
+    upload_root = os.path.normpath(UPLOAD_DIR)
+    if candidate.startswith(upload_root + os.sep) and os.path.exists(candidate):
+        return series, candidate
+
+    return series, None
+
+
+def _encode_png_b64(img_u8):
+    ok, buf = cv2.imencode('.png', img_u8)
+    if not ok:
+        return None
+    return base64.b64encode(buf.tobytes()).decode('ascii')
+
+
+def _apply_preprocess_method(img_u8, method, intensity):
+    method = (method or 'none').strip().lower()
+    intensity = float(intensity) if intensity is not None else 1.0
+    intensity = max(0.1, min(5.0, intensity))
+
+    if method in ('none', ''):
+        return img_u8
+    if method in ('equalize',):
+        return cv2.equalizeHist(img_u8)
+    if method in ('normalize',):
+        return cv2.normalize(img_u8, None, 0, 255, cv2.NORM_MINMAX)
+    if method in ('blur', 'gaussian'):
+        sigma = max(0.2, intensity * 1.2)
+        out = cv2.GaussianBlur(img_u8, (0, 0), sigmaX=sigma, sigmaY=sigma)
+        return np.clip(out, 0, 255).astype(np.uint8)
+    if method in ('brightness',):
+        beta = (intensity - 1.0) * 60.0
+        return cv2.convertScaleAbs(img_u8, alpha=1.0, beta=beta)
+    if method in ('contrast',):
+        alpha = max(0.2, min(3.0, intensity))
+        return cv2.convertScaleAbs(img_u8, alpha=alpha, beta=0)
+    if method in ('sharpen',):
+        base = cv2.GaussianBlur(img_u8, (0, 0), sigmaX=1.0)
+        out = cv2.addWeighted(img_u8, 1.0 + intensity, base, -intensity, 0)
+        return np.clip(out, 0, 255).astype(np.uint8)
+    if method in ('edge',):
+        t1 = int(max(10, 40 * intensity))
+        t2 = int(max(t1 + 5, 120 * intensity))
+        return cv2.Canny(img_u8, t1, t2)
+    return img_u8
+
+
+def _segmentation_model_label(model_key):
+    key = str(model_key or '').strip().lower()
+    if key == 'nnunet':
+        return 'nnU-Net fold0 2D ONNX'
+    if key == 'unetpp':
+        return 'U-Net++ ONNX'
+    if key == 'swinunetr':
+        return 'SwinUNETR ONNX'
+    return key or 'Modele inconnu'
+
+
+def _safe_relative_path(raw_path, fallback_name):
+    path = (raw_path or fallback_name or '').replace('\\', '/').strip()
+    path = path.lstrip('/')
+    if not path:
+        return os.path.basename(fallback_name or 'file.bin')
+
+    normalized = posixpath.normpath(path)
+    if normalized in ('', '.'):
+        normalized = os.path.basename(fallback_name or 'file.bin')
+    if normalized.startswith('../') or normalized == '..':
+        normalized = os.path.basename(fallback_name or 'file.bin')
+    return normalized
+
+
+def _next_dossier_number():
+    year = timezone.now().year
+    prefix = f"DOS-{year}-"
+    seq = Patient.objects.filter(dossier_number__startswith=prefix).count() + 1
+    while True:
+        candidate = f"{prefix}{seq:04d}"
+        if not Patient.objects.filter(dossier_number=candidate).exists():
+            return candidate
+        seq += 1
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def register(request):
@@ -677,6 +809,12 @@ def register(request):
                 return JsonResponse({'ok': False, 'error': 'username exists'}, status=400)
             if DoctorProfile.objects.filter(order_number__iexact=order_number).exists():
                 return JsonResponse({'ok': False, 'error': "Ce numéro d'ordre existe déjà."}, status=400)
+
+            # Bootstrap rule: only the first-ever account can become admin.
+            # This avoids opening direct access for later registrations.
+            has_admin = User.objects.filter(Q(is_staff=True) | Q(is_superuser=True)).exists()
+            has_any_user = User.objects.exists()
+            is_bootstrap_admin = (not has_admin) and (not has_any_user)
             # Keep username=email convention and also persist email for robust lookup.
             user = User.objects.create_user(
                 username=username,
@@ -684,7 +822,9 @@ def register(request):
                 password=password,
                 first_name=prenom,
                 last_name=nom,
-                is_active=False,
+                is_active=is_bootstrap_admin,
+                is_staff=is_bootstrap_admin,
+                is_superuser=is_bootstrap_admin,
             )
             DoctorProfile.objects.create(
                 user=user,
@@ -695,10 +835,15 @@ def register(request):
                 specialty=specialty,
                 grade=grade,
                 telephone=telephone,
-                status='en_attente',
+                status='actif' if is_bootstrap_admin else 'en_attente',
             )
-            transaction.on_commit(lambda: send_pending_registration_email(username, nom, prenom))
+            if is_bootstrap_admin:
+                transaction.on_commit(lambda: send_account_approved_email(username, nom, prenom))
+            else:
+                transaction.on_commit(lambda: send_pending_registration_email(username, nom, prenom))
             print(f"Yassmine now the register SUCCESS for user: {username}")
+            if is_bootstrap_admin:
+                return JsonResponse({'ok': True, 'message': 'Compte admin initial créé avec succès'})
             return JsonResponse({'ok': True, 'message': 'Compte créé avec succès'})
     except IntegrityError as e:
         print(f"Yassmine now the register FAILED - IntegrityError for username: {username}, error: {str(e)}")
@@ -725,6 +870,33 @@ def login_view(request):
             return JsonResponse({'ok': False, 'error': 'Compte introuvable', 'error_type': 'user_not_found'}, status=401)
 
         profile = DoctorProfile.objects.filter(user=account).first()
+        has_admin = User.objects.filter(Q(is_staff=True) | Q(is_superuser=True)).exists()
+        total_users = User.objects.count()
+
+        # Safety fallback: only if there is exactly one account in the platform.
+        # This prevents bypassing admin approval for later accounts.
+        if profile and profile.status == 'en_attente' and not has_admin and total_users == 1:
+            if not account.check_password(password):
+                print(f"Nadine Yassmine - bootstrap admin login failed - invalid password for: {account.username}")
+                return JsonResponse({'ok': False, 'error': 'Mot de passe incorrect', 'error_type': 'invalid_password'}, status=401)
+
+            account.is_active = True
+            account.is_staff = True
+            account.is_superuser = True
+            account.save(update_fields=['is_active', 'is_staff', 'is_superuser'])
+
+            profile.status = 'actif'
+            profile.refusal_reason = ''
+            profile.reviewed_by = account
+            profile.reviewed_at = timezone.now()
+            profile.save(update_fields=['status', 'refusal_reason', 'reviewed_by', 'reviewed_at'])
+
+            send_account_approved_email(
+                email=account.email or account.username,
+                nom=profile.nom or account.last_name,
+                prenom=profile.prenom or account.first_name,
+            )
+
         if profile and profile.status == 'en_attente':
             return JsonResponse({'ok': False, 'error': 'Votre compte est en attente de validation admin.', 'error_type': 'pending_approval'}, status=403)
         if profile and profile.status == 'refuse':
@@ -738,8 +910,31 @@ def login_view(request):
 
         login(request, user)
         request.session['username'] = user.username
+
+        profile = DoctorProfile.objects.filter(user=user).first()
+        if profile and ((profile.nom or '').strip() or (profile.prenom or '').strip()):
+            full_name = f"{(profile.prenom or '').strip()} {(profile.nom or '').strip()}".strip()
+        else:
+            full_name = (user.get_full_name() or '').strip()
+
+        if not full_name:
+            username_prefix = (user.username or '').split('@')[0].replace('.', ' ').replace('_', ' ').strip()
+            full_name = username_prefix.title() if username_prefix else 'Medecin'
+
         print(f"Nadine Yassmine - login success - user: {user.username}")
-        return JsonResponse({'ok': True, 'message': 'Connexion réussie', 'user': user.username})
+        return JsonResponse({
+            'ok': True,
+            'message': 'Connexion réussie',
+            'user': {
+                'username': user.username,
+                'fullName': full_name,
+                'full_name': full_name,
+                'first_name': (user.first_name or '').strip(),
+                'last_name': (user.last_name or '').strip(),
+                'specialty': (profile.specialty if profile else ''),
+                'is_staff': user.is_staff,
+            }
+        })
     except Exception as e:
         import traceback
         print(f"Nadine Yassmine - Error in login: {e}")
@@ -761,9 +956,27 @@ def logout_view(request):
 def check_session(request):
     if request.user and request.user.is_authenticated:
         print(f"Yassmine now the check_session works - user: {request.user.username}")
+        profile = DoctorProfile.objects.filter(user=request.user).first()
+        if profile and ((profile.nom or '').strip() or (profile.prenom or '').strip()):
+            full_name = f"{(profile.prenom or '').strip()} {(profile.nom or '').strip()}".strip()
+        else:
+            full_name = (request.user.get_full_name() or '').strip()
+
+        if not full_name:
+            username_prefix = (request.user.username or '').split('@')[0].replace('.', ' ').replace('_', ' ').strip()
+            full_name = username_prefix.title() if username_prefix else 'Medecin'
+
         return JsonResponse({
             'logged_in': True, 
-            'user': request.user.username,
+            'user': {
+                'username': request.user.username,
+                'fullName': full_name,
+                'full_name': full_name,
+                'first_name': (request.user.first_name or '').strip(),
+                'last_name': (request.user.last_name or '').strip(),
+                'specialty': (profile.specialty if profile else ''),
+                'is_staff': request.user.is_staff,
+            },
             'is_staff': request.user.is_staff
         })
     print(f"Yassmine now the check_session works - no authenticated user")
@@ -830,15 +1043,14 @@ def align(request):
             return JsonResponse({'error': 'job files not found'}, status=404)
         ref_path = os.path.join(UPLOAD_DIR, series.files[0])
         pat_path = os.path.join(UPLOAD_DIR, series.files[1])
+        original_pat_path = pat_path
         print(f"Yassmine now the align LOADED job from DB - job_id: {job_id}")
     except Series.DoesNotExist:
         print(f"Yassmine now the align FAILED - job not found: {job_id}")
         return JsonResponse({'error': 'job not found'}, status=404)
 
-    # ✅ Mode hybride: utiliser l'image déjà recalée par MINE comme point de départ
-    # au lieu de l'image PET originale
     if use_warped:
-        auto_dir = os.path.join(UPLOAD_DIR, 'auto_registration', job_id)
+        auto_dir = os.path.join(UPLOAD_DIR, job_id, 'auto_registration')
         warped_candidates = [f for f in os.listdir(auto_dir) if f.endswith('_warped.png')] if os.path.exists(auto_dir) else []
         if warped_candidates:
             mine_warped_path = os.path.join(auto_dir, sorted(warped_candidates)[-1])
@@ -909,72 +1121,134 @@ def align(request):
         }
     JOBS[job_id]['tform'] = tform
     try:
-        series.tform = tform
-        series.save()
-        print(f"Yassmine now the align SAVED tform to DB for job_id: {job_id}")
-    except Exception as e:
-        print(f"Yassmine now the align WARNING - failed to save tform: {str(e)}")
+        X = np.array(X, dtype=np.float64)
+        Y = np.array(Y, dtype=np.float64)
+        if X.shape != Y.shape or X.shape[0] < 3:
+            print(f"Yassmine now the align FAILED - invalid points shape for job_id: {job_id}")
+            return JsonResponse({'error': 'invalid points'}, status=400)
 
-    fixed_float = ref.astype(np.float32)
-    warped_float = warped.astype(np.float32)
-    mse = np.mean((fixed_float - warped_float) ** 2)
-    rmse = np.sqrt(mse)
-    fixed_flat = fixed_float.flatten()
-    warped_flat = warped_float.flatten()
-    correlation = float(np.corrcoef(fixed_flat, warped_flat)[0, 1])
-    if np.isnan(correlation) or np.isinf(correlation):
-        correlation = 0.0
-    max_val = float(max(fixed_float.max(), warped_float.max()))
-    normalized_rmse = float(rmse / max_val) if max_val > 0 else 0.0
-    quality_score = float((1.0 - normalized_rmse) * correlation)
+        ref = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
+        pat = cv2.imread(pat_path, cv2.IMREAD_GRAYSCALE)
+        if ref is None or pat is None:
+            print(f"Yassmine now the align FAILED - cannot read images for job_id: {job_id}")
+            return JsonResponse({'error': 'cannot read images'}, status=500)
 
-    # ✅ MI précise via histogramme 64 bins (méthode identique à mine_registration.py)
-    try:
-        hist_2d, _, _ = np.histogram2d(
-            fixed_float.flatten(), warped_float.flatten(), bins=64
+        ref_h0, ref_w0 = ref.shape[:2]
+        pat_h0, pat_w0 = pat.shape[:2]
+        target_w, target_h = 512, 512
+
+        ref = cv2.resize(ref, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+        pat = cv2.resize(pat, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+
+        sx_ref = float(target_w) / float(max(ref_w0, 1))
+        sy_ref = float(target_h) / float(max(ref_h0, 1))
+        sx_pat = float(target_w) / float(max(pat_w0, 1))
+        sy_pat = float(target_h) / float(max(pat_h0, 1))
+
+        X_scaled = X.copy()
+        Y_scaled = Y.copy()
+        X_scaled[:, 0] *= sx_ref
+        X_scaled[:, 1] *= sy_ref
+        Y_scaled[:, 0] *= sx_pat
+        Y_scaled[:, 1] *= sy_pat
+
+        src_pts = Y_scaled.astype(np.float32)
+        dst_pts = X_scaled.astype(np.float32)
+        M, inliers = cv2.estimateAffinePartial2D(
+            src_pts, dst_pts,
+            method=cv2.RANSAC,
+            ransacReprojThreshold=3,
+            maxIters=2000,
+            confidence=0.99
         )
-        pxy = hist_2d / float(hist_2d.sum())
-        px  = np.sum(pxy, axis=1)
-        py  = np.sum(pxy, axis=0)
-        px_py = px[:, None] * py[None, :]
-        nz = pxy > 0
-        mi_approx = float(np.sum(pxy[nz] * np.log(pxy[nz] / px_py[nz])))
-        if np.isnan(mi_approx) or np.isinf(mi_approx):
-            mi_approx = 0.0
-        mi_approx = round(min(0.6, max(0.0, mi_approx)), 4)
-        if mi_approx > 0.5:
-            mi_quality = 'Excellent'
-        elif mi_approx > 0.3:
-            mi_quality = 'Bon'
+        if M is None:
+            _, Z, tform = procrustes(X_scaled, Y_scaled)
+            M = affine_from_tform(tform)
+            inliers = None
+            print(f"Yassmine RANSAC failed, fallback to procrustes for job_id: {job_id}")
         else:
+            tform = {'M': M.tolist()}
+            print(f"Yassmine RANSAC OK — inliers: {int(inliers.sum()) if inliers is not None else '?'} for job_id: {job_id}")
+
+        warped = cv2.warpAffine(pat, M, (512, 512), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        if job_id not in JOBS:
+            JOBS[job_id] = {'patient_id': series.patient_id, 'ref': ref_path, 'patient': original_pat_path, 'user': request.user.username}
+        JOBS[job_id]['tform'] = tform
+        try:
+            series.tform = tform
+            series.save()
+            print(f"Yassmine now the align SAVED tform to DB for job_id: {job_id}")
+        except Exception as e:
+            print(f"Yassmine now the align WARNING - failed to save tform: {str(e)}")
+
+        fixed_float = ref.astype(np.float32)
+        warped_float = warped.astype(np.float32)
+        mse = np.mean((fixed_float - warped_float) ** 2)
+        rmse = np.sqrt(mse)
+        fixed_flat = fixed_float.flatten()
+        warped_flat = warped_float.flatten()
+        correlation = float(np.corrcoef(fixed_flat, warped_flat)[0, 1])
+        if np.isnan(correlation) or np.isinf(correlation):
+            correlation = 0.0
+        max_val = float(max(fixed_float.max(), warped_float.max()))
+        normalized_rmse = float(rmse / max_val) if max_val > 0 else 0.0
+        quality_score = float((1.0 - normalized_rmse) * correlation)
+
+        try:
+            hist_2d, _, _ = np.histogram2d(
+                fixed_float.flatten(), warped_float.flatten(), bins=64
+            )
+            pxy = hist_2d / float(hist_2d.sum())
+            px  = np.sum(pxy, axis=1)
+            py  = np.sum(pxy, axis=0)
+            px_py = px[:, None] * py[None, :]
+            nz = pxy > 0
+            mi_approx = float(np.sum(pxy[nz] * np.log(pxy[nz] / px_py[nz])))
+            if np.isnan(mi_approx) or np.isinf(mi_approx):
+                mi_approx = 0.0
+            mi_approx = round(min(0.6, max(0.0, mi_approx)), 4)
+            if mi_approx > 0.5:
+                mi_quality = 'Excellent'
+            elif mi_approx > 0.3:
+                mi_quality = 'Bon'
+            else:
+                mi_quality = 'Faible'
+        except Exception:
+            mi_approx = 0.0
             mi_quality = 'Faible'
-    except Exception:
-        mi_approx = 0.0
-        mi_quality = 'Faible'
 
-    metrics = {
-        'rmse': round(float(rmse), 4),
-        'normalized_rmse': round(float(normalized_rmse), 4),
-        'correlation': round(float(correlation), 4),
-        'quality_score': round(float(quality_score), 4),
-        'mutual_information': mi_approx,   # ✅ affiché dans la gauge
-        'mi_quality': mi_quality,
-        'success': True,
-        'processing_time_ms': 0
-    }
+        metrics = {
+            'rmse': round(float(rmse), 4),
+            'normalized_rmse': round(float(normalized_rmse), 4),
+            'correlation': round(float(correlation), 4),
+            'quality_score': round(float(quality_score), 4),
+            'mutual_information': mi_approx,
+            'mi_quality': mi_quality,
+            'success': True,
+            'processing_time_ms': 0
+        }
 
-    _, buf = cv2.imencode('.png', warped)
-    img_b64 = base64.b64encode(buf).decode('utf-8')
-    img_data = f"data:image/png;base64,{img_b64}"
+        _, buf = cv2.imencode('.png', warped)
+        img_b64 = base64.b64encode(buf).decode('utf-8')
+        img_data = f"data:image/png;base64,{img_b64}"
 
-    print(f"Yassmine now the align SUCCESS - job_id: {job_id}, RMSE: {metrics['rmse']}")
+        print(f"Yassmine now the align SUCCESS - job_id: {job_id}, RMSE: {metrics['rmse']}")
 
-    return JsonResponse({
-        'success': True,
-        'metrics': metrics,
-        'image': img_data,
-        'message': 'Recalage manuel réussi'
-    })
+        return JsonResponse({
+            'success': True,
+            'metrics': metrics,
+            'image': img_data,
+            'message': 'Recalage manuel réussi'
+        })
+
+    except Exception as e:
+        print(f"Yassmine now the align CRITICAL ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({
+            'error': 'Internal Server Error',
+            'message': 'Le recalage manuel a échoué. Veuillez réessayer.',
+        }, status=500)
 
 
 @csrf_exempt
@@ -994,13 +1268,13 @@ def auto_align(request):
 
         job_id = data.get('jobId')
         transform_type = data.get('transform', 'SyN')
-        requested_iters = data.get('n_iters', 300)
+        raw_n_iters = data.get('n_iters', 300)
         try:
-            mine_iters = int(requested_iters)
+            n_iters = int(raw_n_iters)
         except (TypeError, ValueError):
-            mine_iters = 300
-        mine_iters = max(30, min(1000, mine_iters))
-        print(f"Yassmine now the auto_align endpoint works - job_id: {job_id}, transform: {transform_type}, user: {request.user.username}")
+            n_iters = 300
+        n_iters = max(30, min(1000, n_iters))
+        print(f"Yassmine now the auto_align endpoint works - job_id: {job_id}, transform: {transform_type}, n_iters: {n_iters}, user: {request.user.username}")
 
         if not job_id:
             print(f"Yassmine now the auto_align FAILED - missing jobId")
@@ -1025,9 +1299,7 @@ def auto_align(request):
         job_dir = os.path.join(UPLOAD_DIR, job_id)
         auto_dir = os.path.join(job_dir, 'auto_registration')
 
-        # ✅ Seul algorithme supporté : MINE (Deep Learning)
-        # ANTs supprimé — MINE est plus adapté pour recalage multimodal IRM/PET
-        print(f"Yassmine: Starting MINE registration for job {job_id}...")
+        print(f"Yassmine: Starting MINE registration for job {job_id} with n_iters={n_iters}...")
         os.makedirs(auto_dir, exist_ok=True)
         print(f"AUTO DIR created: {auto_dir}")
         result = run_mine_registration(
@@ -1050,14 +1322,10 @@ def auto_align(request):
         if True:  # bloc conservé pour structure
 
             try:
-                # ✅ Métrique principale : Information Mutuelle (MI)
-                # C'est la seule métrique valide pour recalage multimodal IRM/PET
                 final_mi = result.get('mutual_information', 0.0)
+                if np.isnan(final_mi) or np.isinf(final_mi):
+                    final_mi = 0.0
 
-                # Interprétation de la MI :
-                # MI > 0.5  → excellent recalage
-                # MI 0.3-0.5 → bon recalage
-                # MI < 0.3  → recalage faible
                 if final_mi > 0.5:
                     mi_quality = "Excellent"
                     mi_score = min(1.0, final_mi / 0.6)
@@ -1067,11 +1335,6 @@ def auto_align(request):
                 else:
                     mi_quality = "Faible"
                     mi_score = final_mi / 0.6
-
-                if np.isnan(final_mi) or np.isinf(final_mi):
-                    final_mi = 0.0
-                    mi_quality = "Faible"
-                    mi_score = 0.0
 
                 metrics = {
                     'mutual_information': round(float(final_mi), 4),
@@ -1146,7 +1409,6 @@ def auto_align(request):
                 'success': True,
                 'message': 'Recalage automatique réussi',
                 'metrics': metrics,
-                'warped_path': os.path.relpath(warped_path, UPLOAD_DIR)
             })
 
         print(f"Yassmine now the auto_align SUCCESS - job_id: {job_id}, RMSE: {metrics.get('rmse')}")
@@ -1164,8 +1426,7 @@ def auto_align(request):
         traceback.print_exc()
         return JsonResponse({
             'error': 'Internal Server Error',
-            'message': f"Erreur interne du serveur: {str(e)}",
-            'details': str(e)
+            'message': 'Le recalage automatique a échoué. Veuillez réessayer.',
         }, status=500)
 
 
@@ -1318,6 +1579,26 @@ def history(request):
         })
     print(f"Yassmine now the history SUCCESS - returned {len(out)} jobs")
     return JsonResponse(out, safe=False)
+
+
+@csrf_exempt
+@api_view(['GET', 'PATCH', 'DELETE'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def patient_detail_update_delete(request, patient_id):
+    print(f"Nadine Yassmine - patient_detail_update_delete - id: {patient_id}, user: {request.user.username}")
+    patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
+
+    if request.method == 'GET':
+        serializer = PatientSerializer(patient, context={'request': request})
+        return JsonResponse({'ok': True, 'patient': serializer.data})
+
+    elif request.method == 'PATCH':
+        serializer = PatientSerializer(patient, data=request.data, partial=True, context={'request': request})
+        if serializer.is_valid():
+            serializer.save()
+            return JsonResponse({'ok': True, 'patient': serializer.data, 'message': 'Patient mis à jour avec succès'})
+        return JsonResponse({'ok': False, 'errors': serializer.errors}, status=400)
 
 
 @api_view(['GET'])
@@ -1628,7 +1909,6 @@ def delete_series(request):
     return JsonResponse({'message': 'series deleted successfully'})
 
 
-@csrf_exempt
 @require_http_methods(["POST"])
 def preprocess_image(request):
     if not request.user or not request.user.is_authenticated:
@@ -1703,6 +1983,929 @@ def preprocess_image(request):
     except Exception as e:
         print(f"Yassmine now the preprocess FAILED - error: {str(e)}")
         return JsonResponse({'error': f'preprocessing failed: {str(e)}'}, status=500)
+
+
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def mri_file_preview(request, file_id):
+    mri_file = get_object_or_404(
+        MRIFile.objects.select_related('patient'),
+        id=file_id,
+        patient__doctor=request.user,
+    )
+
+    abs_path = getattr(mri_file.file, 'path', None)
+    if not abs_path or not os.path.exists(abs_path):
+        return JsonResponse({'ok': False, 'error': 'Fichier introuvable.'}, status=404)
+
+    image = read_gray_image(abs_path)
+    if image is None:
+        return JsonResponse({'ok': False, 'error': 'Impossible de lire l\'image.'}, status=500)
+
+    image_u8 = np.clip(image, 0, 255).astype(np.uint8)
+    ok, encoded = cv2.imencode('.png', image_u8)
+    if not ok:
+        return JsonResponse({'ok': False, 'error': 'Echec encodage preview PNG.'}, status=500)
+
+    return HttpResponse(encoded.tobytes(), content_type='image/png')
+
+
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def launch_patient_segmentation(request, patient_id):
+    """
+    Launch synchronous ONNX segmentation for selected MRI files.
+    Request body:
+            {
+                "model": "unetpp" | "nnunet",
+                "file_ids": [1,2,3],
+                "threshold": 0.25
+            }
+    """
+    patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
+
+    model = (request.data.get('model') or 'unetpp').strip().lower()
+    threshold = request.data.get('threshold', 0.25)
+
+    try:
+        threshold = float(threshold)
+    except (TypeError, ValueError):
+        return JsonResponse({'ok': False, 'error': 'threshold invalide'}, status=400)
+
+    if threshold < 0.0 or threshold > 1.0:
+        return JsonResponse({'ok': False, 'error': 'threshold doit etre entre 0 et 1'}, status=400)
+
+    file_ids = request.data.get('file_ids') or []
+    if isinstance(file_ids, str):
+        try:
+            file_ids = json.loads(file_ids)
+        except Exception:
+            return JsonResponse({'ok': False, 'error': 'file_ids invalide'}, status=400)
+    if not isinstance(file_ids, list):
+        return JsonResponse({'ok': False, 'error': 'file_ids doit etre une liste'}, status=400)
+
+    queryset = MRIFile.objects.filter(patient=patient).order_by('uploaded_at')
+    if file_ids:
+        queryset = queryset.filter(id__in=file_ids)
+
+    mri_files = list(queryset)
+    if not mri_files:
+        return JsonResponse({'ok': False, 'error': 'Aucune coupe IRM selectionnee'}, status=400)
+
+    run = SegmentationRun.objects.create(
+        patient=patient,
+        doctor=request.user,
+        model_key=model,
+        threshold=threshold,
+        selected_count=len(mri_files),
+        status='running',
+    )
+
+    try:
+        results = run_segmentation_on_files(mri_files, model_key=model, threshold=threshold)
+
+        created_results = []
+        with transaction.atomic():
+            for item in results:
+                seg_row = SegmentationMaskResult.objects.create(
+                    run=run,
+                    patient=patient,
+                    mri_file_id=item['file_id'],
+                    slice_index=int(item.get('index') or 1),
+                    source_filename=item.get('source_filename') or '',
+                    source_file=item.get('source_file') or '',
+                    source_url=item.get('source_url') or '',
+                    mask_file=item.get('mask_file') or '',
+                    mask_url=item.get('mask_url') or '',
+                )
+                created_results.append(seg_row)
+
+            run.status = 'done'
+            run.processed_count = len(created_results)
+            run.completed_at = timezone.now()
+            run.error_message = ''
+            run.save(update_fields=['status', 'processed_count', 'completed_at', 'error_message'])
+
+    except FileNotFoundError as e:
+        run.status = 'failed'
+        run.error_message = str(e)
+        run.completed_at = timezone.now()
+        run.save(update_fields=['status', 'error_message', 'completed_at'])
+        return JsonResponse({'ok': False, 'error': str(e), 'run_id': run.id}, status=500)
+    except ValueError as e:
+        run.status = 'failed'
+        run.error_message = str(e)
+        run.completed_at = timezone.now()
+        run.save(update_fields=['status', 'error_message', 'completed_at'])
+        return JsonResponse({'ok': False, 'error': str(e), 'run_id': run.id}, status=400)
+    except RuntimeError as e:
+        run.status = 'failed'
+        run.error_message = str(e)
+        run.completed_at = timezone.now()
+        run.save(update_fields=['status', 'error_message', 'completed_at'])
+        return JsonResponse({'ok': False, 'error': str(e), 'run_id': run.id}, status=500)
+    except Exception as e:
+        run.status = 'failed'
+        run.error_message = f'Echec segmentation: {str(e)}'
+        run.completed_at = timezone.now()
+        run.save(update_fields=['status', 'error_message', 'completed_at'])
+        return JsonResponse({'ok': False, 'error': f'Echec segmentation: {str(e)}', 'run_id': run.id}, status=500)
+
+    return JsonResponse(
+        {
+            'ok': True,
+            'run_id': run.id,
+            'patient_id': patient.id,
+            'model': model,
+            'model_version': _segmentation_model_label(model),
+            'threshold': threshold,
+            'count': len(results),
+            'results': results,
+        },
+        status=200,
+    )
+
+
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def segmentation_runs_list(request):
+    limit_raw = request.GET.get('limit', 20)
+    try:
+        limit = int(limit_raw)
+    except (TypeError, ValueError):
+        limit = 20
+    limit = max(1, min(limit, 100))
+
+    runs_qs = (
+        SegmentationRun.objects
+        .filter(doctor=request.user)
+        .select_related('patient')
+        .order_by('-created_at')[:limit]
+    )
+
+    runs = []
+    for run in runs_qs:
+        patient = run.patient
+        full_name = f"{(patient.prenom or '').strip()} {(patient.nom or '').strip()}".strip()
+        runs.append({
+            'id': run.id,
+            'patient_id': patient.id,
+            'patient_name': full_name or f'Patient #{patient.id}',
+            'model_key': run.model_key,
+            'model_version': _segmentation_model_label(run.model_key),
+            'status': run.status,
+            'selected_count': run.selected_count,
+            'processed_count': run.processed_count,
+            'created_at': run.created_at.isoformat() if run.created_at else None,
+            'completed_at': run.completed_at.isoformat() if run.completed_at else None,
+            'error_message': run.error_message,
+        })
+
+    return JsonResponse({'ok': True, 'runs': runs}, status=200)
+
+
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def segmentation_run_detail(request, run_id):
+    run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
+    serializer = SegmentationRunSerializer(run)
+    return JsonResponse({'ok': True, 'run': serializer.data}, status=200)
+
+
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def segmentation_run_modelisation_3d(request, run_id):
+    run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
+
+    if run.status != 'done':
+        return JsonResponse({'ok': False, 'error': 'Le run doit etre termine avant la modelisation 3D.'}, status=400)
+
+    structure = str(request.data.get('structure') or 'both').strip().lower()
+    quality = str(request.data.get('quality') or 'standard').strip().lower()
+    smoothing = str(request.data.get('smoothing') or 'low').strip().lower()
+
+    spacing = parse_spacing(
+        {
+            'spacing_z': request.data.get('spacing_z'),
+            'spacing_y': request.data.get('spacing_y'),
+            'spacing_x': request.data.get('spacing_x'),
+        }
+    )
+    normative_total_mean_mm3, normative_total_std_mm3 = parse_reference_values(
+        {
+            'normative_total_mean_mm3': request.data.get('normative_total_mean_mm3'),
+            'normative_total_std_mm3': request.data.get('normative_total_std_mm3'),
+        }
+    )
+
+    try:
+        result = run_modelisation_3d(
+            run=run,
+            structure=structure,
+            quality=quality,
+            smoothing=smoothing,
+            spacing=spacing,
+            normative_total_mean_mm3=normative_total_mean_mm3,
+            normative_total_std_mm3=normative_total_std_mm3,
+        )
+        return JsonResponse({'ok': True, 'modelisation': result}, status=200)
+    except FileNotFoundError as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=404)
+    except ValueError as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=400)
+    except Exception as e:
+        return JsonResponse({'ok': False, 'error': f'Echec modelisation 3D: {str(e)}'}, status=500)
+
+
+def _compute_age(date_naissance):
+    if not date_naissance:
+        return None
+    today = timezone.now().date()
+    years = today.year - date_naissance.year
+    if (today.month, today.day) < (date_naissance.month, date_naissance.day):
+        years -= 1
+    return max(0, years)
+
+
+def _read_storage_gray(path):
+    if not path or not default_storage.exists(path):
+        return None
+    with default_storage.open(path, 'rb') as fp:
+        raw = fp.read()
+    arr = np.frombuffer(raw, dtype=np.uint8)
+    return cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
+
+
+def _make_slice_overlay_png(row, label):
+    src = _read_storage_gray(getattr(row, 'source_file', ''))
+    msk = _read_storage_gray(getattr(row, 'mask_file', ''))
+    if src is None:
+        return None
+
+    if msk is None:
+        vis = cv2.cvtColor(src, cv2.COLOR_GRAY2BGR)
+    else:
+        m = (msk > 127).astype(np.uint8) * 255
+        vis = cv2.cvtColor(src, cv2.COLOR_GRAY2BGR)
+        contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(vis, contours, -1, (40, 40, 255), 2)
+
+    cv2.putText(vis, label, (14, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(vis, label, (14, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (30, 60, 120), 1, cv2.LINE_AA)
+    ok, png_buf = cv2.imencode('.png', vis)
+    if not ok:
+        return None
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+    tmp.write(png_buf.tobytes())
+    tmp.close()
+    return tmp.name
+
+
+def _make_slice_thumb_png(row, label, thumb_w=340, thumb_h=240):
+    """Coupes redimensionnees pour grille PDF uniforme."""
+    src = _read_storage_gray(getattr(row, 'source_file', ''))
+    if src is None:
+        return None
+    msk = _read_storage_gray(getattr(row, 'mask_file', ''))
+    if msk is None:
+        vis = cv2.cvtColor(src, cv2.COLOR_GRAY2BGR)
+    else:
+        m = (msk > 127).astype(np.uint8) * 255
+        vis = cv2.cvtColor(src, cv2.COLOR_GRAY2BGR)
+        contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(vis, contours, -1, (13, 148, 136), 2)
+    vis = cv2.resize(vis, (thumb_w, thumb_h), interpolation=cv2.INTER_AREA)
+    bar_h = 28
+    canvas = np.ones((thumb_h + bar_h, thumb_w, 3), dtype=np.uint8) * 255
+    canvas[0:thumb_h, 0:thumb_w] = vis
+    cv2.rectangle(canvas, (0, thumb_h), (thumb_w, thumb_h + bar_h), (240, 245, 244), -1)
+    cv2.line(canvas, (0, thumb_h), (thumb_w, thumb_h), (207, 216, 214), 1)
+    cv2.putText(canvas, label, (8, thumb_h + bar_h - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (45, 55, 54), 1, cv2.LINE_AA)
+    ok, png_buf = cv2.imencode('.png', canvas)
+    if not ok:
+        return None
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+    tmp.write(png_buf.tobytes())
+    tmp.close()
+    return tmp.name
+
+
+def _build_volume_projection_png(rows):
+    """Projections orthogonales du masque — presentation rapport clinique."""
+    masks = []
+    for row in rows:
+        m = _read_storage_gray(getattr(row, 'mask_file', ''))
+        if m is not None:
+            masks.append((m > 127).astype(np.uint8))
+    if not masks:
+        return None
+
+    vol = np.stack(masks, axis=0)
+    ax = (np.max(vol, axis=0) * 255).astype(np.uint8)
+    cor = (np.max(vol, axis=1) * 255).astype(np.uint8)
+    sag = (np.max(vol, axis=2) * 255).astype(np.uint8)
+
+    panel_w, panel_h = 300, 240
+    ax = cv2.resize(ax, (panel_w, panel_h), interpolation=cv2.INTER_NEAREST)
+    cor = cv2.resize(cor, (panel_w, panel_h), interpolation=cv2.INTER_NEAREST)
+    sag = cv2.resize(sag, (panel_w, panel_h), interpolation=cv2.INTER_NEAREST)
+
+    header_h = 52
+    footer_h = 36
+    gap = 16
+    total_w = gap * 4 + panel_w * 3
+    total_h = header_h + gap + panel_h + footer_h
+
+    bg = (252, 252, 251)
+    header_bg = (15, 74, 71)
+    canvas = np.ones((total_h, total_w, 3), dtype=np.uint8)
+    canvas[:] = bg
+
+    canvas[0:header_h, :] = header_bg
+    cv2.putText(canvas, 'Reconstruction volumetrique — Projections orthogonales', (20, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2, cv2.LINE_AA)
+
+    titles = ['Axiale', 'Coronale', 'Sagittale']
+    y0 = header_h + gap
+    for i, (img, title) in enumerate(zip([ax, cor, sag], titles)):
+        x0 = gap + i * (panel_w + gap)
+        cmap = getattr(cv2, 'COLORMAP_VIRIDIS', cv2.COLORMAP_OCEAN)
+        col = cv2.applyColorMap(img, cmap)
+        canvas[y0:y0 + panel_h, x0:x0 + panel_w] = col
+        cv2.rectangle(canvas, (x0 - 1, y0 - 1), (x0 + panel_w, y0 + panel_h), (180, 190, 188), 1)
+        tx = x0 + (panel_w - len(title) * 9) // 2
+        cv2.putText(canvas, title, (max(x0 + 8, tx), y0 + panel_h + 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (55, 65, 63), 1, cv2.LINE_AA)
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+    ok, png_buf = cv2.imencode('.png', canvas)
+    if not ok:
+        tmp.close()
+        return None
+    tmp.write(png_buf.tobytes())
+    tmp.close()
+    return tmp.name
+
+
+def _build_pdf_volume_grouped_chart(volumes_mm3, reference_values_mm3):
+    """Graphique groupe: patient vs bornes normatives (comme l'apercu web)."""
+    ref = reference_values_mm3 or {}
+    vl = float(volumes_mm3.get('left') or 0)
+    vr = float(volumes_mm3.get('right') or 0)
+    vt = float(volumes_mm3.get('total') or 0)
+    l_min = float(ref.get('left_min_mm3') or 2200)
+    l_max = float(ref.get('left_max_mm3') or 2600)
+    r_min = float(ref.get('right_min_mm3') or 2200)
+    r_max = float(ref.get('right_max_mm3') or 2600)
+    t_min = float(ref.get('total_min_mm3') or 4500)
+    t_max = float(ref.get('total_max_mm3') or 5300)
+
+    categories = [
+        ('Hippocampe gauche', vl, l_min, l_max),
+        ('Hippocampe droit', vr, r_min, r_max),
+        ('Volume total', vt, t_min, t_max),
+    ]
+    all_vals = [vl, vr, vt, l_min, l_max, r_min, r_max, t_min, t_max]
+    ymax = max(max(all_vals) * 1.08, 1.0)
+
+    w, h = 1020, 400
+    im = Image.new('RGB', (w, h), (252, 252, 251))
+    draw = ImageDraw.Draw(im)
+    margin_l, margin_r, margin_t, margin_b = 88, 40, 56, 100
+    cw = w - margin_l - margin_r
+    ch = h - margin_t - margin_b
+    x0, y0 = margin_l, margin_t
+
+    draw.rectangle([x0, y0, x0 + cw, y0 + ch], outline=(200, 208, 206), width=1)
+    for g in range(5):
+        yy = y0 + int((ch / 4) * g)
+        draw.line([x0, yy, x0 + cw, yy], fill=(236, 240, 239), width=1)
+        val = ymax * (1 - g / 4)
+        draw.text((12, yy - 8), f'{val:.0f}', fill=(100, 110, 108))
+
+    draw.text((x0, 18), 'Volumes hippocampiques (mm3) — patient et plages normatives', fill=(15, 74, 71))
+
+    n_cat = len(categories)
+    group_w = cw / n_cat
+    bar_w = (group_w * 0.65) / 3
+    patient_rgb = (15, 118, 110)
+    min_rgb = (180, 200, 198)
+    max_rgb = (210, 225, 220)
+
+    for gi, (name, pv, nmin, nmax) in enumerate(categories):
+        gx = x0 + gi * group_w + group_w * 0.12
+        for bi, (val, col) in enumerate([(pv, patient_rgb), (nmin, min_rgb), (nmax, max_rgb)]):
+            bh = int((float(val) / ymax) * (ch - 8))
+            bx = int(gx + bi * (bar_w + 4))
+            by = y0 + ch - bh
+            draw.rectangle([bx, by, int(bx + bar_w), y0 + ch], fill=col)
+        draw.text((int(gx), y0 + ch + 10), name[:18], fill=(55, 65, 63))
+
+    legend_y = h - 72
+    for i, (lab, col) in enumerate([
+        ('Patient', patient_rgb),
+        ('Norme min.', min_rgb),
+        ('Norme max.', max_rgb),
+    ]):
+        lx = x0 + i * 200
+        draw.rectangle([lx, legend_y, lx + 14, legend_y + 14], fill=col)
+        draw.text((lx + 22, legend_y - 2), lab, fill=(70, 80, 78))
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+    im.save(tmp.name, format='PNG')
+    tmp.close()
+    return tmp.name
+
+
+def _build_pdf_indices_chart(asymmetry_index_percent, normality_index_percent):
+    """IA et IN avec seuils cliniques sur une seule figure."""
+    ia = abs(float(asymmetry_index_percent or 0))
+    ni = float(normality_index_percent or 0)
+
+    w, h = 1020, 340
+    im = Image.new('RGB', (w, h), (252, 252, 251))
+    draw = ImageDraw.Draw(im)
+    draw.text((40, 20), 'Indices cliniques (%) — valeur patient et seuils', fill=(15, 74, 71))
+
+    def draw_gauge(y_base, title, value, vmax, thresholds, bar_color):
+        bw, bh = 880, 36
+        x0, y0 = 70, y_base
+        draw.text((x0, y0 - 22), title, fill=(55, 65, 63))
+        draw.rectangle([x0, y0, x0 + bw, y0 + bh], outline=(190, 198, 196), fill=(248, 250, 249))
+        frac = min(max(value / vmax, 0), 1.0)
+        fill_w = int(frac * bw)
+        if fill_w > 0:
+            draw.rectangle([x0, y0, x0 + fill_w, y0 + bh], fill=bar_color)
+        for t in thresholds:
+            tx = x0 + int(min(t / vmax, 1.0) * bw)
+            draw.line([tx, y0 - 4, tx, y0 + bh + 4], fill=(180, 90, 40), width=2)
+            draw.text((tx + 3, y0 + bh + 6), f'{t:.0f}', fill=(120, 70, 30))
+        draw.text((x0 + bw + 12, y0 + 8), f'{value:.2f} %', fill=(15, 74, 71))
+
+    draw_gauge(70, "Indice d'asymetrie (IA) — reference seuil 10 %", ia, 100.0, [10], (180, 60, 50))
+    draw_gauge(200, 'Indice de normalisation (IN) — reference seuil 90 %', ni, 150.0, [90], (15, 118, 110))
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+    im.save(tmp.name, format='PNG')
+    tmp.close()
+    return tmp.name
+
+
+def _measure_status(name, value):
+    v = float(value or 0)
+    if name == 'left':
+        return 'Normal' if 2200 <= v <= 2600 else 'Alerte'
+    if name == 'right':
+        return 'Normal' if 2200 <= v <= 2600 else 'Alerte'
+    if name == 'total':
+        return 'Normal' if 4500 <= v <= 5300 else 'Alerte'
+    if name == 'ai':
+        return 'Normal' if abs(v) < 10 else 'Alerte'
+    if name == 'ni':
+        return 'Normal' if 90 <= v <= 110 else 'Alerte'
+    if name == 'z':
+        return 'Normal' if -1.5 <= v <= 1.5 else 'Alerte'
+    return '-'
+
+
+def _pdf_safe_text(text):
+    if text is None:
+        return '-'
+    s = html_module.escape(str(text).strip() or '-')
+    return s.replace('\r\n', '\n').replace('\r', '\n').replace('\n', '<br/>')
+
+
+def _build_report_pdf(run, modelisation):
+    """Rapport PDF professionnel: couverture, coupes en grille, 3D, mesures, interpretations, graphiques."""
+    cleanup_paths = []
+    buffer = io.BytesIO()
+    page_w, _page_h = A4
+    margin = 1.25 * cm
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        leftMargin=margin, rightMargin=margin,
+        topMargin=0.9 * cm, bottomMargin=0.95 * cm,
+    )
+    usable_w = page_w - 2 * margin
+    styles = getSampleStyleSheet()
+
+    TEAL = colors.HexColor('#0f4a47')
+    TEAL_MED = colors.HexColor('#15756e')
+    CHARCOAL = colors.HexColor('#1c1917')
+    STONE_600 = colors.HexColor('#57534e')
+    STONE_400 = colors.HexColor('#a8a29e')
+    STONE_200 = colors.HexColor('#e7e5e4')
+    STONE_100 = colors.HexColor('#f5f5f4')
+    PAPER = colors.HexColor('#fafaf9')
+    RUST = colors.HexColor('#9a3412')
+    RUST_BG = colors.HexColor('#fff7ed')
+    TEAL_BG = colors.HexColor('#f0fdfa')
+    WHITE = colors.white
+
+    cover_title = ParagraphStyle(
+        'CovTitle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=26,
+        textColor=CHARCOAL, leading=30, spaceAfter=8,
+    )
+    cover_sub = ParagraphStyle(
+        'CovSub', parent=styles['Normal'], fontName='Helvetica', fontSize=11,
+        textColor=STONE_600, leading=15,
+    )
+    cover_meta = ParagraphStyle(
+        'CovMeta', parent=styles['Normal'], fontName='Helvetica', fontSize=9,
+        textColor=STONE_400, leading=12,
+    )
+    sec_num = ParagraphStyle(
+        'SecNum', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=8,
+        textColor=TEAL_MED, leading=11, spaceBefore=14, spaceAfter=2,
+    )
+    sec_title = ParagraphStyle(
+        'SecTitle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=13,
+        textColor=CHARCOAL, leading=16, spaceAfter=8,
+    )
+    body = ParagraphStyle(
+        'RBody', parent=styles['Normal'], fontName='Helvetica', fontSize=9,
+        textColor=CHARCOAL, leading=13.5,
+    )
+    body_small = ParagraphStyle(
+        'RBodySm', parent=body, fontSize=8, textColor=STONE_600, leading=11,
+    )
+    kpi_val = ParagraphStyle(
+        'KpiVal', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=11,
+        textColor=TEAL_MED, leading=14,
+    )
+    footer = ParagraphStyle(
+        'RFooter', parent=styles['Normal'], fontName='Helvetica', fontSize=7,
+        textColor=STONE_400, leading=10, alignment=TA_CENTER,
+    )
+
+    patient = run.patient
+    age = _compute_age(getattr(patient, 'date_naissance', None))
+    sex_raw = patient.get_sexe_display() if hasattr(patient, 'get_sexe_display') else (patient.sexe or '-')
+    sex = html_module.escape(str(sex_raw))
+    exam_date = (run.completed_at or run.created_at or timezone.now()).date().isoformat()
+
+    ci = modelisation.get('clinical_indices', {}) or {}
+    vols = modelisation.get('volumes_mm3', {}) or {}
+    ref = modelisation.get('reference_values_mm3', {}) or {}
+    interp = modelisation.get('clinical_interpretation', {}) or {}
+
+    vol_left = float(vols.get('left') or 0)
+    vol_right = float(vols.get('right') or 0)
+    vol_total = float(vols.get('total') or 0)
+    ai_val = float(ci.get('asymmetry_index_percent') or 0)
+    ni_val = float(ci.get('normality_index_percent') or 0)
+    z_val = float(ci.get('z_score') or 0)
+
+    story = []
+
+    # ——— Page de garde ———
+    band = Table(
+        [[Paragraph(
+            '<b>Document clinique</b> &nbsp;·&nbsp; A usage professionnel &nbsp;·&nbsp; Donnees pseudonymisees',
+            ParagraphStyle('BandT', parent=styles['Normal'], fontName='Helvetica', fontSize=9, textColor=WHITE, alignment=TA_CENTER),
+        )]],
+        colWidths=[usable_w],
+        rowHeights=[1.1 * cm],
+    )
+    band.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), TEAL),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    story.append(band)
+    story.append(Spacer(1, 1.8 * cm))
+    story.append(Paragraph("Rapport d'analyse volumétrique", cover_title))
+    story.append(Paragraph('Segmentation IRM — région hippocampique', cover_sub))
+    story.append(Spacer(1, 0.6 * cm))
+    story.append(Paragraph(f'<b>Référence dossier</b> &nbsp; VOL-HPC-{run.id}', cover_meta))
+    story.append(Paragraph(f'<b>Date du rapport</b> &nbsp; {exam_date}', cover_meta))
+    story.append(Spacer(1, 2.2 * cm))
+    story.append(Paragraph(
+        'Ce document synthétise les volumes dérivés du masque de segmentation, des indices cliniques '
+        "automatiques et des projections volumétriques. L'interprétation finale relève de la "
+        'responsabilité du clinicien.',
+        ParagraphStyle('Legal', parent=cover_sub, fontSize=9, textColor=STONE_400, leading=14),
+    ))
+    story.append(PageBreak())
+
+    # ——— 1. Identité dossier + indicateurs ———
+    story.append(Paragraph('SECTION 1', sec_num))
+    story.append(Paragraph('Identité du dossier et indicateurs clés', sec_title))
+    id_rows = [
+        ['Sexe', 'Âge', "Date d'examen"],
+        [
+            Paragraph(f'<b>{sex}</b>', kpi_val),
+            Paragraph(f'<b>{age} ans</b>' if age is not None else '<b>—</b>', kpi_val),
+            Paragraph(f'<b>{exam_date}</b>', kpi_val),
+        ],
+    ]
+    id_tbl = Table(id_rows, colWidths=[usable_w / 3.0] * 3)
+    id_tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), STONE_100),
+        ('TEXTCOLOR', (0, 0), (-1, 0), STONE_600),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 7),
+        ('GRID', (0, 0), (-1, -1), 0.5, STONE_200),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('LEFTPADDING', (0, 0), (-1, -1), 10),
+    ]))
+    story.append(id_tbl)
+    story.append(Spacer(1, 0.35 * cm))
+    kpi_row = [
+        Paragraph(f'Volume total<br/><b>{vol_total:.0f} mm³</b>', ParagraphStyle('K1', parent=body_small, alignment=TA_CENTER)),
+        Paragraph(f'IA (asymétrie)<br/><b>{abs(ai_val):.2f} %</b>', ParagraphStyle('K2', parent=body_small, alignment=TA_CENTER)),
+        Paragraph(f'IN (normalisation)<br/><b>{ni_val:.2f} %</b>', ParagraphStyle('K3', parent=body_small, alignment=TA_CENTER)),
+        Paragraph(f'Z-score<br/><b>{z_val:.2f}</b>', ParagraphStyle('K4', parent=body_small, alignment=TA_CENTER)),
+    ]
+    kpi_t = Table([kpi_row], colWidths=[usable_w / 4.0] * 4)
+    kpi_t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), PAPER),
+        ('BOX', (0, 0), (-1, -1), 0.75, STONE_200),
+        ('TOPPADDING', (0, 0), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+    ]))
+    story.append(kpi_t)
+    story.append(Spacer(1, 0.45 * cm))
+
+    measures = [
+        ('Volume hippocampe gauche', f'{vol_left:.0f} mm³', '2200 – 2600 mm³', _measure_status('left', vol_left)),
+        ('Volume hippocampe droit', f'{vol_right:.0f} mm³', '2200 – 2600 mm³', _measure_status('right', vol_right)),
+        ('Volume total', f'{vol_total:.0f} mm³', '4500 – 5300 mm³', _measure_status('total', vol_total)),
+        ("Indice d'asymétrie (IA)", f'{abs(ai_val):.2f} %', '< 10 %', _measure_status('ai', ai_val)),
+        ('Indice de normalisation (IN)', f'{ni_val:.2f} %', '90 – 110 %', _measure_status('ni', ni_val)),
+        ('Z-score', f'{z_val:.2f}', '-1.5 a +1.5', _measure_status('z', z_val)),
+    ]
+    m_rows = [['Mesure', 'Valeur', 'Norme', 'Statut']]
+    for name, val, norm, status in measures:
+        st_col = TEAL_MED if status == 'Normal' else RUST
+        m_rows.append([
+            name,
+            Paragraph(f'<b>{val}</b>', ParagraphStyle('MV', parent=body, fontName='Helvetica-Bold', textColor=TEAL_MED)),
+            norm,
+            Paragraph(f'<b>{status}</b>', ParagraphStyle('MS', parent=body, fontName='Helvetica-Bold', fontSize=8, textColor=st_col)),
+        ])
+    mw = [usable_w * 0.36, usable_w * 0.2, usable_w * 0.24, usable_w * 0.2]
+    mt = Table(m_rows, colWidths=mw)
+    mt_st = [
+        ('BACKGROUND', (0, 0), (-1, 0), TEAL),
+        ('TEXTCOLOR', (0, 0), (-1, 0), WHITE),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 8),
+        ('GRID', (0, 0), (-1, -1), 0.35, STONE_200),
+        ('TOPPADDING', (0, 0), (-1, -1), 7),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ]
+    for ri in range(2, len(m_rows), 2):
+        mt_st.append(('BACKGROUND', (0, ri), (-1, ri), STONE_100))
+    mt.setStyle(TableStyle(mt_st))
+    story.append(mt)
+    story.append(PageBreak())
+
+    # ——— 2. Coupes en grille (toutes les coupes, ordre croissant) ———
+    result_rows = list(run.results.all().order_by('slice_index', 'id'))
+    if result_rows:
+        story.append(Paragraph('SECTION 2', sec_num))
+        story.append(Paragraph('Coupe IRM et contour de segmentation', sec_title))
+        story.append(Paragraph(
+            f"Séquence ordonnée selon l'index de coupe — <b>{len(result_rows)}</b> image(s). "
+            'Source en niveaux de gris, contour de la structure segmentée en surimpression.',
+            body_small,
+        ))
+        story.append(Spacer(1, 0.25 * cm))
+
+        cols = 3
+        gap = 0.15 * cm
+        cell_w = (usable_w - gap * (cols - 1)) / cols
+        thumb_ratio = 268.0 / 340.0
+        img_h = cell_w * thumb_ratio
+
+        per_page = 9
+        for batch_start in range(0, len(result_rows), per_page):
+            batch = result_rows[batch_start: batch_start + per_page]
+            grid_rows = []
+            for r in range(0, len(batch), cols):
+                row_cells = []
+                for c in range(cols):
+                    idx = r + c
+                    if idx < len(batch):
+                        srow = batch[idx]
+                        lab = f'Coupe {getattr(srow, "slice_index", idx + 1)}'
+                        pth = _make_slice_thumb_png(srow, lab)
+                        if pth:
+                            cleanup_paths.append(pth)
+                            row_cells.append(RLImage(pth, width=cell_w, height=img_h))
+                        else:
+                            row_cells.append(Paragraph('—', body_small))
+                    else:
+                        row_cells.append('')
+                grid_rows.append(row_cells)
+            gt = Table(grid_rows, colWidths=[cell_w] * cols, rowHeights=[img_h + 0.05 * cm] * len(grid_rows))
+            gt.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                ('RIGHTPADDING', (0, 0), (-1, -1), gap),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ]))
+            story.append(gt)
+            if batch_start + per_page < len(result_rows):
+                story.append(PageBreak())
+
+        story.append(PageBreak())
+
+    # ——— 3. Synthèse volumétrique 3D ———
+    story.append(Paragraph('SECTION 3', sec_num))
+    story.append(Paragraph('Modélisation volumétrique — projections orthogonales', sec_title))
+    story.append(Paragraph(
+        "Représentation dérivée de l'empilement des masques segmentés : maximum "
+        'intensité projeté selon les axes axial, coronal et sagittal (équivalent visuel '
+        'à la reconstruction 3D du volume binaire).',
+        body_small,
+    ))
+    story.append(Spacer(1, 0.2 * cm))
+    projection_path = _build_volume_projection_png(result_rows)
+    if projection_path:
+        cleanup_paths.append(projection_path)
+        story.append(RLImage(projection_path, width=usable_w, height=usable_w * (344.0 / 964.0)))
+    else:
+        story.append(Paragraph('Projections non disponibles (masques absents).', body_small))
+
+    story.append(PageBreak())
+
+    # ——— 4. Interprétation ———
+    story.append(Paragraph('SECTION 4', sec_num))
+    story.append(Paragraph('Interprétation clinique assistée', sec_title))
+    blocks = [
+        ("Épilepsie du lobe temporal mésial (MTLE) — indice d'asymétrie",
+         _pdf_safe_text(interp.get('mtle_message') or interp.get('ai_message')), RUST_BG, RUST),
+        ("Maladie d'Alzheimer — indice de normalisation volumétrique",
+         _pdf_safe_text(interp.get('ni_message')), TEAL_BG, TEAL_MED),
+        ('Écart à la norme statistique — Z-score',
+         _pdf_safe_text(interp.get('z_message')), STONE_100, STONE_600),
+    ]
+    for title, para_html, bg, accent in blocks:
+        title_esc = html_module.escape(title)
+        bt = Table([
+            [Paragraph(f'<b>{title_esc}</b>', ParagraphStyle('BT', parent=body, fontName='Helvetica-Bold', fontSize=8, textColor=accent))],
+            [Paragraph(para_html, body)],
+        ], colWidths=[usable_w])
+        bt.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), bg),
+            ('BOX', (0, 0), (-1, -1), 0.5, STONE_200),
+            ('TOPPADDING', (0, 0), (-1, -1), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+            ('LEFTPADDING', (0, 0), (-1, -1), 12),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+        ]))
+        story.append(bt)
+        story.append(Spacer(1, 0.2 * cm))
+
+    story.append(PageBreak())
+
+    # ——— 5. Graphiques ———
+    story.append(Paragraph('SECTION 5', sec_num))
+    story.append(Paragraph('Graphiques comparatifs', sec_title))
+    vol_chart = _build_pdf_volume_grouped_chart(vols, ref)
+    if vol_chart:
+        cleanup_paths.append(vol_chart)
+        story.append(RLImage(vol_chart, width=usable_w, height=usable_w * (400.0 / 1020.0)))
+        story.append(Spacer(1, 0.35 * cm))
+    idx_chart = _build_pdf_indices_chart(ai_val, ni_val)
+    if idx_chart:
+        cleanup_paths.append(idx_chart)
+        story.append(RLImage(idx_chart, width=usable_w, height=usable_w * (340.0 / 1020.0)))
+
+    story.append(Spacer(1, 0.45 * cm))
+
+    # ——— Conclusion ———
+    story.append(Paragraph('SECTION 6', sec_num))
+    story.append(Paragraph('Conclusion synthétique', sec_title))
+    concl_html = _pdf_safe_text(interp.get('summary'))
+    ct = Table([
+        [Paragraph(concl_html, ParagraphStyle('CBody', parent=body, fontSize=10, leading=15, textColor=CHARCOAL))],
+        [Paragraph(
+            f'<b>Synthèse numérique</b> &nbsp; G={vol_left:.0f} mm³ &nbsp;·&nbsp; D={vol_right:.0f} mm³ &nbsp;·&nbsp; '
+            f'T={vol_total:.0f} mm³ &nbsp;·&nbsp; IA={abs(ai_val):.2f}% &nbsp;·&nbsp; IN={ni_val:.2f}% &nbsp;·&nbsp; Z={z_val:.2f}',
+            body_small,
+        )],
+    ], colWidths=[usable_w])
+    ct.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), STONE_100),
+        ('BOX', (0, 0), (-1, -1), 1, TEAL),
+        ('TOPPADDING', (0, 0), (-1, -1), 14),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 14),
+        ('LEFTPADDING', (0, 0), (-1, -1), 14),
+        ('LINEBELOW', (0, 0), (-1, 0), 0.5, STONE_200),
+    ]))
+    story.append(ct)
+    story.append(Spacer(1, 0.6 * cm))
+    story.append(Paragraph(
+        f'NeuroScan — document généré automatiquement le {exam_date} — à conserver avec le dossier patient.',
+        footer,
+    ))
+
+    doc.build(story)
+    pdf = buffer.getvalue()
+    buffer.close()
+
+    for p in cleanup_paths:
+        try:
+            os.remove(p)
+        except Exception:
+            pass
+
+    return pdf
+
+
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def segmentation_run_report_pdf(request, run_id):
+    run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
+    if run.status != 'done':
+        return JsonResponse({'ok': False, 'error': 'Le run doit etre termine avant generation du rapport PDF.'}, status=400)
+
+    structure = str(request.data.get('structure') or 'both').strip().lower()
+    quality = str(request.data.get('quality') or 'standard').strip().lower()
+    smoothing = str(request.data.get('smoothing') or 'low').strip().lower()
+    spacing = parse_spacing(
+        {
+            'spacing_z': request.data.get('spacing_z'),
+            'spacing_y': request.data.get('spacing_y'),
+            'spacing_x': request.data.get('spacing_x'),
+        }
+    )
+    ref_mean, ref_std = parse_reference_values(
+        {
+            'normative_total_mean_mm3': request.data.get('normative_total_mean_mm3'),
+            'normative_total_std_mm3': request.data.get('normative_total_std_mm3'),
+        }
+    )
+
+    try:
+        modelisation = run_modelisation_3d(
+            run=run,
+            structure=structure,
+            quality=quality,
+            smoothing=smoothing,
+            spacing=spacing,
+            normative_total_mean_mm3=ref_mean,
+            normative_total_std_mm3=ref_std,
+        )
+        pdf_data = _build_report_pdf(run, modelisation)
+        filename = f"rapport_segmentation_run_{run.id}.pdf"
+        response = HttpResponse(pdf_data, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+    except Exception as e:
+        return JsonResponse({'ok': False, 'error': f'Echec generation rapport PDF: {str(e)}'}, status=500)
+
+
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def patient_files_download_zip(request, patient_id):
+    patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
+    mri_files = MRIFile.objects.filter(patient=patient).order_by('uploaded_at')
+
+    if not mri_files.exists():
+        return JsonResponse({'ok': False, 'error': 'Aucun fichier MRI disponible pour ce patient.'}, status=404)
+
+    zip_buffer = io.BytesIO()
+    written = 0
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for mri in mri_files:
+            stored_name = getattr(mri.file, 'name', '')
+            if not stored_name or not default_storage.exists(stored_name):
+                continue
+
+            fallback_name = os.path.basename(stored_name)
+            arcname = _safe_relative_path(mri.relative_path or mri.original_filename, fallback_name)
+            if not arcname:
+                arcname = fallback_name or f"file_{mri.id}"
+
+            with default_storage.open(stored_name, 'rb') as file_handle:
+                zip_file.writestr(arcname, file_handle.read())
+                written += 1
+
+    if written == 0:
+        return JsonResponse({'ok': False, 'error': 'Aucun fichier lisible n\'a ete trouve.'}, status=404)
+
+    zip_buffer.seek(0)
+    filename = f"{patient.dossier_number}_dossier.zip"
+    response = HttpResponse(zip_buffer.getvalue(), content_type='application/zip')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    response['Content-Length'] = str(len(response.content))
+    return response
 
 
 @csrf_exempt
@@ -2222,9 +3425,191 @@ def activate_account(request):
         return JsonResponse({'ok': False, 'error': 'invalid JSON'}, status=400)
     except Exception:
         return JsonResponse({'ok': False, 'error': 'Internal Server Error'}, status=500)
+PROFILE_DEFAULTS = {
+    'phone': '',
+    'birthDate': '',
+    'gender': 'Femme',
+    'nationality': 'Tunisienne',
+    'cin': 'MED-000000-TN',
+    'specialty': 'Neurologue',
+    'subSpecialty': 'Epileptologie',
+    'institution': 'CHU Monastir',
+    'department': 'Service de Neurologie',
+    'orderNumber': 'ONM-0000-00000',
+    'experienceYears': 0,
+    'languages': ['Francais', 'Arabe', 'Anglais'],
+    'bio': '',
+}
+
+
+def _derive_names_from_username(username):
+    raw = (username or '').strip()
+    if not raw:
+        return '', ''
+
+    local_part = raw.split('@', 1)[0]
+    cleaned = ''.join(ch if (ch.isalpha() or ch in '._- ') else ' ' for ch in local_part)
+    for sep in ['.', '_', '-']:
+        cleaned = cleaned.replace(sep, ' ')
+
+    parts = [p for p in cleaned.split() if p]
+    if not parts:
+        return '', ''
+
+    first_name = parts[0].capitalize()
+    last_name = ' '.join(p.capitalize() for p in parts[1:])
+    return first_name, last_name
+
+
+def _decode_bearer_payload(token):
+    parts = (token or '').split('.')
+    if len(parts) != 3:
+        return None
+    payload = parts[1]
+    padding = '=' * (-len(payload) % 4)
+    try:
+        raw = base64.urlsafe_b64decode((payload + padding).encode('utf-8'))
+        return json.loads(raw.decode('utf-8'))
+    except Exception:
+        return None
+
+
+def _get_request_user(request):
+    if request.user and request.user.is_authenticated:
+        return request.user
+
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        return None
+
+    token = auth_header.split(' ', 1)[1].strip()
+    payload = _decode_bearer_payload(token)
+    if not payload:
+        return None
+
+    user_id = payload.get('user_id') or payload.get('id') or payload.get('sub')
+    if user_id is None:
+        return None
+
+    try:
+        return User.objects.get(id=int(user_id))
+    except (ValueError, User.DoesNotExist):
+        return None
+
+
+def _profile_payload_for_user(user):
+    derived_first, derived_last = _derive_names_from_username(user.username)
+    first_name = (user.first_name or '').strip() or derived_first
+    last_name = (user.last_name or '').strip() or derived_last
+    return {
+        'firstName': first_name,
+        'lastName': last_name,
+        'email': user.email or user.username or '',
+        **PROFILE_DEFAULTS,
+    }
+
+
+def _deep_merge_settings(base, patch):
+    merged = dict(base)
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_settings(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+@api_view(['GET', 'PUT'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([AllowAny])
+def profile_view(request):
+    user = _get_request_user(request)
+    if not user:
+        return JsonResponse({'detail': 'Authentication credentials were not provided.'}, status=401)
+
+    if request.method == 'GET':
+        return JsonResponse(_profile_payload_for_user(user))
+
+    serializer = ProfileSerializer(data=request.data, partial=True)
+    if not serializer.is_valid():
+        return JsonResponse({'errors': serializer.errors}, status=400)
+
+    data = serializer.validated_data
+    if 'firstName' in data:
+        user.first_name = data['firstName']
+    if 'lastName' in data:
+        user.last_name = data['lastName']
+    if 'email' in data:
+        user.email = data['email']
+    user.save(update_fields=['first_name', 'last_name', 'email'])
+
+    response_data = _profile_payload_for_user(user)
+    response_data.update(data)
+    response_data['email'] = user.email or user.username or ''
+    return JsonResponse(response_data)
+
+
+@api_view(['GET', 'PUT'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([AllowAny])
+def user_settings_view(request):
+    user = _get_request_user(request)
+    if not user:
+        return JsonResponse({'detail': 'Authentication credentials were not provided.'}, status=401)
+
+    settings_obj, _ = UserSettings.objects.get_or_create(user=user)
+
+    if request.method == 'GET':
+        payload = settings_obj.settings or default_user_settings()
+        return JsonResponse(payload)
+
+    serializer = UserSettingsSerializer(data=request.data, partial=True)
+    if not serializer.is_valid():
+        return JsonResponse({'errors': serializer.errors}, status=400)
+
+    current = settings_obj.settings or default_user_settings()
+    merged = _deep_merge_settings(current, serializer.validated_data)
+    settings_obj.settings = merged
+    settings_obj.save(update_fields=['settings', 'updated_at'])
+    return JsonResponse(settings_obj.settings)
+
+
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([AllowAny])
+def change_password_view(request):
+    user = _get_request_user(request)
+    if not user:
+        return JsonResponse({'detail': 'Authentication credentials were not provided.'}, status=401)
+
+    serializer = ChangePasswordSerializer(data=request.data)
+    if not serializer.is_valid():
+        return JsonResponse({'errors': serializer.errors}, status=400)
+
+    data = serializer.validated_data
+    if data['newPassword'] != data['confirmPassword']:
+        return JsonResponse({'error': 'Les mots de passe ne correspondent pas.'}, status=400)
+
+    if not user.check_password(data['currentPassword']):
+        return JsonResponse({'error': 'Mot de passe actuel incorrect.'}, status=400)
+
+    user.set_password(data['newPassword'])
+    user.save()
+
+    return JsonResponse({'ok': True, 'message': 'Mot de passe mis a jour avec succes.'})
 
 
 def _dashboard_patient_payload(patient):
+    mri_files = list(patient.mri_files.all())
+    slices_count = len(mri_files)
+    last_exam = None
+    if slices_count > 0:
+        # Use latest uploaded MRI file as last exam proxy for dashboard cards.
+        dated_rows = [row for row in mri_files if row.uploaded_at]
+        if dated_rows:
+            last_row = max(dated_rows, key=lambda row: row.uploaded_at)
+            last_exam = last_row.uploaded_at.isoformat()
+
     return {
         'id': str(patient.id),
         'num_dossier': patient.dossier_number,
@@ -2233,6 +3618,8 @@ def _dashboard_patient_payload(patient):
         'date_naissance': patient.date_naissance.isoformat() if patient.date_naissance else None,
         'sexe': patient.sexe,
         'autres_maladies': patient.autres_maladies,
+        'slices_count': slices_count,
+        'last_exam': last_exam,
         'created_at': patient.created_at.isoformat() if patient.created_at else None,
     }
 
@@ -2242,7 +3629,7 @@ def _dashboard_patient_payload(patient):
 @login_required
 def patients_list_create(request):
     if request.method == 'GET':
-        qs = Patient.objects.filter(doctor=request.user).order_by('-created_at')
+        qs = Patient.objects.filter(doctor=request.user).prefetch_related('mri_files').order_by('-created_at')
 
         # Dashboard filters from query params
         search = (request.GET.get('id') or '').strip()
@@ -2271,41 +3658,79 @@ def patients_list_create(request):
         return JsonResponse({'ok': True, 'patients': data})
 
     try:
-        if request.content_type and 'application/json' in request.content_type:
+        is_json = bool(request.content_type and 'application/json' in request.content_type)
+        if is_json:
             raw_data = json.loads(request.body or '{}')
+            files = []
+            relative_paths = []
         else:
-            raw_data = request.POST.dict()
+            raw_data = request.POST
+            files = request.FILES.getlist('files')
+            relative_paths = request.POST.getlist('relative_paths')
+
+        dossier_number = (raw_data.get('dossier_number') or raw_data.get('num_dossier') or '').strip()
+        if not dossier_number:
+            return JsonResponse({'ok': False, 'error': 'Le numero de dossier est obligatoire.'}, status=400)
 
         payload = {
-            'dossier_number': raw_data.get('dossier_number') or raw_data.get('num_dossier') or '',
-            'nom': raw_data.get('nom') or '',
-            'prenom': raw_data.get('prenom') or '',
-            'date_naissance': raw_data.get('date_naissance') or '',
-            'sexe': raw_data.get('sexe') or '',
-            'autres_maladies': raw_data.get('autres_maladies') or '',
+            'dossier_number': dossier_number,
+            # Keep compatibility with current creation UI that only asks for dossier/date/sexe.
+            'nom': (raw_data.get('nom') or 'Patient').strip(),
+            'prenom': (raw_data.get('prenom') or dossier_number).strip(),
+            'date_naissance': raw_data.get('date_naissance') or '1900-01-01',
+            'sexe': raw_data.get('sexe') or 'M',
+            'telephone': raw_data.get('telephone') or None,
+            'email': raw_data.get('email') or None,
+            'pathologie': raw_data.get('pathologie') or None,
+            'stade': raw_data.get('stade') or None,
+            'antecedents': raw_data.get('antecedents') or None,
+            'notes': raw_data.get('notes') or None,
+            'autres_maladies': raw_data.get('autres_maladies') or raw_data.get('notes') or None,
         }
 
-        serializer = PatientSerializer(data=payload)
-        if serializer.is_valid():
-            patient = serializer.save(doctor=request.user)
-            return JsonResponse(
-                {
-                    'ok': True,
-                    'message': 'Patient created successfully',
-                    'patient': _dashboard_patient_payload(patient),
-                },
-                status=201,
-            )
+        serializer = PatientSerializer(data=payload, context={'request': request})
+        if not serializer.is_valid():
+            first_error = 'Invalid patient data'
+            if serializer.errors:
+                first_key = next(iter(serializer.errors))
+                first_value = serializer.errors[first_key]
+                if isinstance(first_value, list) and first_value:
+                    first_error = str(first_value[0])
+                else:
+                    first_error = str(first_value)
+            return JsonResponse({'ok': False, 'error': first_error, 'errors': serializer.errors}, status=400)
 
-        first_error = 'Invalid patient data'
-        if serializer.errors:
-            first_key = next(iter(serializer.errors))
-            first_value = serializer.errors[first_key]
-            if isinstance(first_value, list) and first_value:
-                first_error = str(first_value[0])
-            else:
-                first_error = str(first_value)
-        return JsonResponse({'ok': False, 'error': first_error, 'errors': serializer.errors}, status=400)
+        with transaction.atomic():
+            patient = serializer.save(doctor=request.user)
+
+            # Optional in JSON mode, mandatory in multipart mode from NewPatient screen.
+            if not is_json and not files:
+                transaction.set_rollback(True)
+                return JsonResponse({'ok': False, 'error': 'Un dossier contenant au moins un fichier est obligatoire.'}, status=400)
+
+            for index, uploaded_file in enumerate(files):
+                rel_from_client = relative_paths[index] if index < len(relative_paths) else ''
+                safe_rel = _safe_relative_path(rel_from_client, uploaded_file.name)
+                storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
+                saved_path = default_storage.save(storage_path, uploaded_file)
+
+                MRIFile.objects.create(
+                    patient=patient,
+                    file=saved_path,
+                    original_filename=uploaded_file.name,
+                    relative_path=safe_rel,
+                    file_size=int(getattr(uploaded_file, 'size', 0) or 0),
+                )
+
+        out_serializer = PatientSerializer(patient, context={'request': request})
+        return JsonResponse(
+            {
+                'ok': True,
+                'message': 'Patient créé avec succès',
+                'patient': out_serializer.data,
+            },
+            status=201,
+        )
     except json.JSONDecodeError:
         return JsonResponse({'ok': False, 'error': 'Invalid JSON payload'}, status=400)
     except Exception as e:
@@ -2313,7 +3738,7 @@ def patients_list_create(request):
 
 
 @login_required
-def patient_detail_update_delete(request, patient_id: uuid.UUID):
+def patient_detail_update_delete_legacy(request, patient_id: uuid.UUID):
     print(f"Nadine Yassmine - patient_detail_update_delete endpoint works - patient_id: {patient_id}, method: {request.method}, user: {request.user.username}")
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
 
@@ -2377,7 +3802,7 @@ def patient_detail_update_delete(request, patient_id: uuid.UUID):
 @csrf_exempt
 @require_http_methods(["POST"])
 @login_required
-def upload_mri_files(request, patient_id: uuid.UUID):
+def upload_mri_files(request, patient_id: int):
     print(f"Nadine Yassmine - upload_mri_files endpoint works - patient_id: {patient_id}, user: {request.user.username}")
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
 
@@ -2385,22 +3810,23 @@ def upload_mri_files(request, patient_id: uuid.UUID):
     if not files:
         return JsonResponse({'ok': False, 'error': 'No files provided'}, status=400)
 
-    patient_mri_dir = os.path.join(settings.MEDIA_ROOT, 'patients', str(patient.id), 'mri_files')
-    os.makedirs(patient_mri_dir, exist_ok=True)
-
     uploaded_count = 0
     errors = []
-    for f in files:
+    relative_paths = request.POST.getlist('relative_paths')
+
+    for index, f in enumerate(files):
         try:
-            file_path = os.path.join(patient_mri_dir, f.name)
-            with open(file_path, 'wb+') as destination:
-                for chunk in f.chunks():
-                    destination.write(chunk)
+            rel_from_client = relative_paths[index] if index < len(relative_paths) else ''
+            safe_rel = _safe_relative_path(rel_from_client, f.name)
+            storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
+            saved_path = default_storage.save(storage_path, f)
             
             MRIFile.objects.create(
                 patient=patient,
-                file=os.path.relpath(file_path, settings.MEDIA_ROOT),
-                original_filename=f.name
+                file=saved_path,
+                original_filename=f.name,
+                relative_path=safe_rel,
+                file_size=int(getattr(f, 'size', 0) or 0),
             )
             uploaded_count += 1
         except Exception as e:
@@ -2414,18 +3840,18 @@ def upload_mri_files(request, patient_id: uuid.UUID):
 
 @api_view(['GET'])
 @login_required
-def list_mri_files(request, patient_id: uuid.UUID):
+def list_mri_files(request, patient_id: int):
     print(f"Nadine Yassmine - list_mri_files endpoint works - patient_id: {patient_id}, user: {request.user.username}")
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
     mri_files = MRIFile.objects.filter(patient=patient).order_by('-uploaded_at')
-    serializer = MRIFileSerializer(mri_files, many=True)
+    serializer = MRIFileSerializer(mri_files, many=True, context={'request': request})
     return JsonResponse({'ok': True, 'mri_files': serializer.data})
 
 
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
 @login_required
-def mri_files_list_upload(request, patient_id: uuid.UUID):
+def mri_files_list_upload(request, patient_id: int):
     if request.method == 'GET':
         return list_mri_files(request, patient_id)
     return upload_mri_files(request, patient_id)
@@ -2480,10 +3906,57 @@ def reclamation_detail(request, reclamation_id):
         reclamation = Reclamation.objects.get(id=reclamation_id, user=user)
     except Reclamation.DoesNotExist:
         return JsonResponse({'ok': False, 'error': 'Reclamation not found'}, status=404)
+
     if request.method == 'GET':
         rec_data = ReclamationSerializer(reclamation).data
         rec_data['fichier_url'] = reclamation.fichier.url if reclamation.fichier else None
         return JsonResponse({'ok': True, 'reclamation': rec_data})
+
+    if request.method in ['PATCH', 'PUT', 'POST']:
+        payload = {}
+        if request.method == 'POST':
+            payload = request.POST or {}
+        else:
+            try:
+                payload = json.loads(request.body.decode('utf-8') or '{}')
+            except Exception:
+                payload = {}
+
+        description = payload.get('description')
+        etat = payload.get('etat')
+        fichier = request.FILES.get('fichier') if hasattr(request, 'FILES') else None
+
+        if description is not None:
+            description = str(description).strip()
+            if not description:
+                return JsonResponse({'ok': False, 'error': 'description required'}, status=400)
+            reclamation.description = description
+
+        if etat is not None:
+            allowed = {'en_attente', 'payee', 'rejetee'}
+            if etat not in allowed:
+                return JsonResponse({'ok': False, 'error': 'etat invalide'}, status=400)
+            reclamation.etat = etat
+
+        if fichier is not None:
+            if reclamation.fichier:
+                try:
+                    reclamation.fichier.delete(save=False)
+                except Exception:
+                    pass
+            reclamation.fichier = fichier
+
+        reclamation.save()
+        rec_data = ReclamationSerializer(reclamation).data
+        rec_data['fichier_url'] = reclamation.fichier.url if reclamation.fichier else None
+        return JsonResponse({'ok': True, 'reclamation': rec_data, 'message': 'Reclamation modifiee avec succes'})
+
+    if request.method == 'DELETE':
+        reclamation.delete()
+        return JsonResponse({'ok': True, 'message': 'Reclamation supprimee avec succes'})
+
+    return JsonResponse({'ok': False, 'error': 'Method not allowed'}, status=405)
+
 
 
 @api_view(['POST'])
@@ -2915,7 +4388,7 @@ def admin_dashboard_accounts(request):
             'refusal_reason': refusal_reason,
         })
 
-    pending_count = sum(1 for a in accounts if str(a.get('status', '')).lower() == 'en attente')
+    pending_count = sum(1 for a in accounts if str(a.get('status', '')).lower().startswith('en attente'))
     return JsonResponse({'ok': True, 'count': len(accounts), 'pending_count': pending_count, 'accounts': accounts})
 
 

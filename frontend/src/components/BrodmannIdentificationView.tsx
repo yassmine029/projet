@@ -179,7 +179,7 @@ export default function BrodmannIdentificationView({
       {/* Footer Branding */}
       <div className="px-6 py-4 bg-slate-50 border-t border-slate-200">
         <div className="flex items-center justify-between opacity-70 group shadow-lg">
-          <span className="text-[8px] font-black text-slate-600 tracking-[0.3em] uppercase">VisionMed Engine v2.0</span>
+          <span className="text-[8px] font-black text-slate-600 tracking-[0.3em] uppercase">NeuroScan Engine v2.0</span>
           <Minimize2 className="w-3 h-3 text-slate-600" />
         </div>
       </div>

@@ -22,18 +22,28 @@ from scipy.ndimage import gaussian_filter, sobel, zoom as scipy_zoom
 
 
 # ============================================================
-# Initialize device
+# Initialize device (GPU par défaut : CUDA, puis MPS Apple, puis CPU)
 # ============================================================
-def _get_device(device_name: str = 'auto') -> torch.device:
-    if device_name == 'auto':
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+def _get_device(device_name: str = 'cuda') -> torch.device:
+    name = (device_name or 'cuda').strip().lower()
+    if name in ('auto', 'cuda', ''):
+        if torch.cuda.is_available():
+            device = torch.device('cuda')
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            device = torch.device('mps')
+            print('[MINE-3D] CUDA indisponible, utilisation du GPU Apple (MPS)')
+        else:
+            print('[MINE-3D] Aucun GPU (CUDA/MPS) detecte, recalage sur CPU')
+            device = torch.device('cpu')
+    elif name == 'cpu':
+        device = torch.device('cpu')
     else:
         device = torch.device(device_name)
 
-    # Speed options
-    torch.backends.cudnn.benchmark = True
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True
+    if device.type == 'cuda':
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
     return device
 
@@ -293,8 +303,11 @@ def run_mine_3d_nifti(
     levels_used: int = 3,
     max_samples: int = 32768,
     lambda_reg: float = 1e-4,
-    device_name: str = 'auto',
+    device_name: str = 'cuda',
     save_extended_outputs: bool = True,
+    early_stop_patience: int = 0,
+    early_stop_min_delta: float = 5e-4,
+    early_stop_min_iters: int = 35,
 ) -> dict:
     """
     Complete 3D MINE registration pipeline for NIfTI volumes.
@@ -308,8 +321,12 @@ def run_mine_3d_nifti(
         levels_used: Number of levels to use in multi-resolution (default 3)
         max_samples: Max voxels per MINE forward pass (default 32768)
         lambda_reg: Regularization weight (default 1e-4)
-        device_name: 'auto', 'cuda', 'cpu' (default 'auto')
+        device_name: 'cuda' (defaut, puis MPS si Apple, sinon CPU), 'auto' idem, 'cpu' force CPU
         save_extended_outputs: Whether to save all intermediate results (default True)
+        early_stop_patience: Si > 0, arrete si la metrique (-loss) ne progresse plus
+            pendant ce nombre d'iterations (apres early_stop_min_iters).
+        early_stop_min_delta: Amelioration minimale pour compter comme progres.
+        early_stop_min_iters: Minimum d'iterations avant early stopping.
 
     Returns:
         dict with keys:
@@ -329,6 +346,8 @@ def run_mine_3d_nifti(
     # ──── Load NIfTI images ────────────────────────────────────────────────
     I_nib = nib.load(fixed_path)
     J_nib = nib.load(moving_path)
+    I_nib = nib.as_closest_canonical(I_nib)
+    J_nib = nib.as_closest_canonical(J_nib)
 
     I_raw = I_nib.get_fdata(dtype=np.float32)
     J_raw = J_nib.get_fdata(dtype=np.float32)
@@ -418,6 +437,10 @@ def run_mine_3d_nifti(
 
     # ──── Training loop ────────────────────────────────────────────────────
     mi_curve = []
+    best_metric = float('-inf')
+    stagnant = 0
+    log_every = max(1, min(50, n_iters // 8))
+
     for itr in range(n_iters):
         optimizer.zero_grad(set_to_none=True)
 
@@ -434,9 +457,23 @@ def run_mine_3d_nifti(
         scaler.step(optimizer)
         scaler.update()
 
-        mi_curve.append((-loss).item())
+        metric = float(-loss.detach())
+        mi_curve.append(metric)
 
-        if (itr + 1) % 50 == 0 or itr == 0:
+        if early_stop_patience > 0 and itr + 1 >= early_stop_min_iters:
+            if metric > best_metric + early_stop_min_delta:
+                best_metric = metric
+                stagnant = 0
+            else:
+                stagnant += 1
+                if stagnant >= early_stop_patience:
+                    print(
+                        f"  early stop iter {itr+1}/{n_iters} | MI proxy: {metric:.4f} "
+                        f"(pas de progres > {early_stop_min_delta} depuis {early_stop_patience} iter)"
+                    )
+                    break
+
+        if (itr + 1) % log_every == 0 or itr == 0:
             print(f"  iter {itr+1}/{n_iters} | MI proxy: {mi_curve[-1]:.4f}")
 
     # ──── Warp full resolution ─────────────────────────────────────────────
@@ -530,7 +567,8 @@ def run_mine_3d_nifti(
                 'name': 'mine_3d',
                 'device': str(device),
                 'levels': L,
-                'iterations': n_iters,
+                'iterations': len(mi_curve),
+                'iterations_planned': n_iters,
             },
         },
         'processing_time_ms': elapsed_ms,

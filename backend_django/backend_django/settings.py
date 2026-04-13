@@ -3,7 +3,6 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Ensure proper encoding for paths with accented characters (Windows)
 if sys.platform == 'win32':
     os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
 
@@ -23,7 +22,6 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'channels',
     'rest_framework',
     'corsheaders',
     'api',
@@ -42,7 +40,6 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = 'backend_django.urls'
-ASGI_APPLICATION = 'backend_django.asgi.application'
 
 TEMPLATES = [
     {
@@ -72,7 +69,6 @@ DATABASES = {
         'PORT': os.getenv('DB_PORT', '5432'),
         'OPTIONS': {
             'client_encoding': 'UTF8',
-
         }
     }
 }
@@ -87,8 +83,6 @@ USE_TZ = True
 
 STATIC_URL = '/static/'
 
-# Use existing backend uploads folder for media (ensure proper path encoding)
-# Place MEDIA_ROOT outside the project tree to avoid triggering autoreload
 MEDIA_ROOT = os.getenv('MEDIA_ROOT', str(Path.home() / 'recalage_uploads'))
 os.makedirs(MEDIA_ROOT, exist_ok=True)
 MEDIA_URL = '/media/'
@@ -101,10 +95,8 @@ CORS_ALLOWED_ORIGINS = [
     'http://127.0.0.1:3000',
 ]
 
-# Allow CORS credentials
 CORS_ALLOW_CREDENTIALS = True
 
-# Allow all methods
 CORS_ALLOW_METHODS = [
     'DELETE',
     'GET',
@@ -114,7 +106,6 @@ CORS_ALLOW_METHODS = [
     'PUT',
 ]
 
-# Allow headers
 CORS_ALLOW_HEADERS = [
     'accept',
     'accept-encoding',
@@ -137,20 +128,11 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework.authentication.SessionAuthentication',
     ),
-    'DEFAULT_PERMISSION_CLASSES': (),  # Empty tuple = no permission checking by default
+    'DEFAULT_PERMISSION_CLASSES': (),
 }
 
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels.layers.InMemoryChannelLayer',
-    }
-}
-
-# File upload limits - allow large medical imaging series with many files
-DATA_UPLOAD_MAX_NUMBER_FILES = 10000  # Allow up to 10,000 files per request
-DATA_UPLOAD_MAX_MEMORY_SIZE = 10737418240  # 10 GB
-
-# Logging removed - rely on stdout prints or environment-specific logging
+DATA_UPLOAD_MAX_NUMBER_FILES = 10000
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10737418240
 
 # Email Configuration
 EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
@@ -159,8 +141,20 @@ EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
 EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
-# Gmail and many SMTP providers require sender = authenticated account.
-DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'noreply@visionmed.com')
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'noreply@visionmed.com')
 
 # Frontend URL (for password reset links)
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+
+# ONNX model configuration
+UNETPP_MODEL_PATH = os.getenv('UNETPP_MODEL_PATH', str(BASE_DIR / 'models' / 'unetpp.onnx'))
+SWINUNETR_MODEL_PATH = os.getenv('SWINUNETR_MODEL_PATH', str(BASE_DIR / 'models' / 'swinunetr_best_fold1.onnx'))
+_nnunet_final_default = str(BASE_DIR / 'models' / 'nnunet_fold0_final_2026-04-05.onnx')
+_nnunet_v2_default = str(BASE_DIR / 'models' / 'nnunet_fold0_v2.onnx')
+_nnunet_legacy_default = str(BASE_DIR / 'models' / 'model_fold0_2d.onnx')
+NNUNET_MODEL_PATH = (
+    os.getenv('NNUNET_MODEL_PATH')
+    or (_nnunet_final_default if os.path.exists(_nnunet_final_default) else None)
+    or (_nnunet_v2_default if os.path.exists(_nnunet_v2_default) else None)
+    or _nnunet_legacy_default
+)

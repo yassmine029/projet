@@ -236,8 +236,8 @@ function DashboardHome() {
                   <Sparkles className="h-3 w-3" /> IA
                 </span>
               </div>
-              <h3 className="text-lg font-bold text-slate-900 tracking-tight mb-1">Segmentation Volumétrique</h3>
-              <p className="text-[12px] text-slate-500 leading-relaxed mb-4">Segmentation automatique de l'hippocampe gauche et droit par deep learning. Calcul des volumes et index d'asymétrie.</p>
+              <h3 className="text-lg font-bold text-slate-900 tracking-tight mb-1">Segmentation et reconstruction 3D de l'hippocampe</h3>
+              <p className="text-[12px] text-slate-500 leading-relaxed mb-4">Segmentation automatique par deep learning, volumes, index d'asymétrie et modèle 3D interactif.</p>
               <div className="flex items-center gap-4">
                 {['Volume L/R', 'Asymétrie', 'Reconstruction 3D'].map((t) => (
                   <span key={t} className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400">
@@ -354,7 +354,7 @@ function DashboardHome() {
                 </div>
                 <p className="text-sm font-bold text-slate-500 mb-1">Aucune analyse récente</p>
                 <p className="text-[11px] text-slate-400 max-w-xs leading-relaxed mb-4">
-                  Lancez votre première segmentation volumétrique pour voir apparaître vos analyses ici.
+                  Lancez votre première analyse hippocampique pour voir apparaître vos analyses ici.
                 </p>
                 <button
                   onClick={() => navigate('/segmentation/nouvelle')}

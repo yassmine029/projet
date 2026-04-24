@@ -4,7 +4,11 @@ const TOTAL_SLICES = 12;
 
 export default function SliceSelector({ patient, onBack, onConfirm }) {
   const slices = useMemo(
-    () => Array.from({ length: TOTAL_SLICES }, (_, i) => ({ index: i + 1, name: `Coupe N°${i + 1}` })),
+    () =>
+      Array.from({ length: TOTAL_SLICES }, (_, i) => ({
+        index: i + 1,
+        name: `Coupe ${i + 1}/${TOTAL_SLICES}`,
+      })),
     []
   );
 

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 // Le paquet n'exporte pas l'objet racine : il attache les namespaces sur window.vtk
 import '@kitware/vtk.js';
+import { attachSceneAxesAndGrid, detachSceneAxesAndGrid } from './vtkOrientationAxes.js';
 
 const vtk = typeof window !== 'undefined' ? window.vtk : null;
 
@@ -135,6 +136,7 @@ export default function MeshViewerVTK({ objUrl, stlUrl, variant = 'full', classN
     const disposables = [fullScreenRenderer, mapper, actor, istyle];
 
     let cancelled = false;
+    let orientationBundle = null;
 
     (async () => {
       try {
@@ -167,6 +169,13 @@ export default function MeshViewerVTK({ objUrl, stlUrl, variant = 'full', classN
         camera.modified();
         renderer.resetCameraClippingRange();
         renderWindow.render();
+
+        if (!cancelled) {
+          orientationBundle = attachSceneAxesAndGrid(vtk, {
+            renderer,
+            renderWindow,
+          });
+        }
       } catch {
         if (!cancelled) setViewerError('Impossible de charger le modele 3D (VTK).');
       }
@@ -180,6 +189,8 @@ export default function MeshViewerVTK({ objUrl, stlUrl, variant = 'full', classN
 
     return () => {
       cancelled = true;
+      detachSceneAxesAndGrid(orientationBundle);
+      orientationBundle = null;
       window.removeEventListener('resize', handleResize);
       if (rafRotateRef.current) {
         cancelAnimationFrame(rafRotateRef.current);
@@ -301,12 +312,27 @@ export default function MeshViewerVTK({ objUrl, stlUrl, variant = 'full', classN
             {navBtn(false, 'Reset', resetView)}
           </div>
           <p className="text-[10px] text-slate-500 px-0.5">
-            Clic gauche : tourner · Molette : zoom · Clic droit : déplacer
+            Clic gauche : tourner · Molette : zoom · Clic droit : déplacer · Axes au centre, grille au sol
           </p>
         </>
       )}
 
-      <div ref={mountRef} className={containerClass} />
+      <div className="relative w-full">
+        <div ref={mountRef} className={containerClass} />
+        <div
+          className={`pointer-events-none absolute z-10 rounded-md border border-slate-200/90 bg-white/90 px-2 py-1.5 font-semibold text-slate-700 shadow-sm backdrop-blur-sm ${variant === 'mini' ? 'bottom-1 left-1 text-[8px] leading-tight' : 'bottom-2 left-2 text-[10px] leading-tight'}`}
+        >
+          <div>
+            <span className="text-red-600">X</span> (R → L)
+          </div>
+          <div>
+            <span className="text-emerald-600">Y</span>
+          </div>
+          <div>
+            <span className="text-blue-600">Z</span> (Sup.)
+          </div>
+        </div>
+      </div>
 
       {variant === 'full' && viewerError ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-medium text-amber-800">

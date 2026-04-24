@@ -77,6 +77,21 @@ urlpatterns = [
     path('patients/<int:patient_id>/segment/', views.launch_patient_segmentation, name='launch_patient_segmentation'),
     path('segmentation-runs/', views.segmentation_runs_list, name='segmentation_runs_list'),
     path('segmentation-runs/<int:run_id>/', views.segmentation_run_detail, name='segmentation_run_detail'),
+    path(
+        'segmentation-runs/<int:run_id>/masks/<int:mask_id>/review/',
+        views.segmentation_mask_review,
+        name='segmentation_mask_review',
+    ),
+    path(
+        'segmentation-runs/<int:run_id>/masks/<int:mask_id>/adopt-reference/',
+        views.segmentation_mask_adopt_reference,
+        name='segmentation_mask_adopt_reference',
+    ),
+    path(
+        'segmentation-runs/<int:run_id>/resegment/',
+        views.segmentation_run_resegment_masks,
+        name='segmentation_run_resegment_masks',
+    ),
     path('segmentation-runs/<int:run_id>/modelisation-3d/', views.segmentation_run_modelisation_3d, name='segmentation_run_modelisation_3d'),
     path('segmentation-runs/<int:run_id>/report-pdf/', views.segmentation_run_report_pdf, name='segmentation_run_report_pdf'),
     path('patients/<int:patient_id>/download-zip/', views.patient_files_download_zip, name='patient_files_download_zip'),

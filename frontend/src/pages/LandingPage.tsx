@@ -2,7 +2,6 @@ import React from 'react';
 import { createContactRequest } from '../api';
 import {
   Brain,
-  Layers,
   FileText,
   GitMerge,
   ShieldCheck,
@@ -179,26 +178,16 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
 
   const features = [
     {
-      title: "Segmentation Volumétrique",
-      description: "Segmentation automatique de l'hippocampe gauche et droit par deep learning ; avec calcul des volumes et index d'asymétrie pour la détection de l'atrophie et de la sclérose hippocampique.",
+      title: "Segmentation de l'hippocampe et reconstruction 3D",
+      description:
+        "Segmentation automatique gauche/droite par apprentissage profond ; volumes, asymétrie, reconstruction 3D interactive et visualisation pour l'atrophie et la sclérose hippocampique.",
       icon: <Brain className="w-6 h-6 text-blue-600" />,
       target: '/segmentation/nouvelle'
     },
     {
-      title: "Reconstruction 3D",
-      description: "Visualisation 3D interactive de l'hippocampe segmenté ; explorez la structure sous tous les angles pour une interprétation anatomique intuitive.",
-      icon: <Layers className="w-6 h-6 text-blue-600" />,
-      target: '/segmentation/nouvelle'
-    },
-    {
-      title: "Rapports Cliniques",
-      description: "Génération automatique de rapports personnalisés par patient ; mesures volumétriques, comparaisons aux normes de référence et suivi longitudinal intégré.",
-      icon: <FileText className="w-6 h-6 text-blue-600" />,
-      target: '/dashboard/analysesMRI'
-    },
-    {
-      title: "Recalage d'Images",
-      description: "Recalage 2D et 3D d'images multimodales (IRM/IRM, TEP/IRM) avec identification automatique des zones corticales pour une interprétation fonctionnelle précise.",
+      title: "Recalage multimodal",
+      description:
+        "Recalage spatial 2D/3D entre séquences IRM et TEP/IRM ; modes automatique et manuel pour une interprétation anatomique et fonctionnelle alignée.",
       icon: <GitMerge className="w-6 h-6 text-blue-600" />,
       target: '/registration'
     }
@@ -206,7 +195,7 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
 
   const handleFeatureAccess = (target: string) => {
     if (!user) {
-      setFeatureAccessHint('Accès restreint: créez un compte ou connectez-vous pour ouvrir les modules Segmentation, Reconstruction, Rapports et Recalage.');
+      setFeatureAccessHint('Accès restreint : créez un compte ou connectez-vous pour ouvrir les modules Segmentation et Recalage.');
       return;
     }
     setFeatureAccessHint('');
@@ -235,8 +224,7 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
 
             <div className="flex items-center gap-5 pr-5 border-r border-slate-100">
               <button onClick={() => scrollToSection('axe1')} className="text-[13px] font-bold text-slate-500 hover:text-blue-600 transition-colors">Segmentation</button>
-              <button onClick={() => scrollToSection('axe2')} className="text-[13px] font-bold text-slate-500 hover:text-blue-600 transition-colors">Nucléaire</button>
-              <button onClick={() => scrollToSection('rapports')} className="text-[13px] font-bold text-slate-500 hover:text-blue-600 transition-colors">Rapports</button>
+              <button onClick={() => scrollToSection('axe2')} className="text-[13px] font-bold text-slate-500 hover:text-blue-600 transition-colors">Recalage</button>
             </div>
 
             <div className="flex items-center gap-5">
@@ -281,8 +269,70 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
         </div>
       </nav>
 
+      {/* Services : titre + deux cartes (mise en page type capture « plateforme simple ») */}
+      <section
+        id="features"
+        className="relative z-10 pt-24 pb-14 md:pb-20 lg:pt-28 lg:pb-24 overflow-hidden bg-white border-b border-slate-100"
+        aria-label="Services"
+      >
+        <div className="max-w-7xl mx-auto px-4 md:px-8">
+          <div className="text-center mb-14 md:mb-20 space-y-4">
+            <h2 className="text-3xl md:text-5xl font-bold text-slate-900 tracking-tight">
+              Une plateforme simple,{' '}
+              <span className="text-blue-600">pour vos analyses d&apos;imagerie</span>
+            </h2>
+            <p className="text-slate-600 text-lg md:text-xl max-w-3xl mx-auto font-medium leading-relaxed">
+              Rassemblez vos outils au même endroit et avancez plus sereinement au quotidien, seul ou en équipe.
+            </p>
+            {!user && (
+              <p className="mx-auto mt-3 max-w-3xl rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-700">
+                Modules protégés : Segmentation et Recalage nécessitent un compte actif.
+              </p>
+            )}
+            {featureAccessHint && (
+              <p className="mx-auto mt-2 max-w-3xl rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-700">
+                {featureAccessHint}
+              </p>
+            )}
+          </div>
+
+          <div className="max-w-5xl mx-auto grid md:grid-cols-2 gap-8 md:gap-10 reveal reveal-up">
+            {features.map((feature: any, i) => (
+              <div
+                key={i}
+                role="button"
+                tabIndex={0}
+                onClick={() => handleFeatureAccess(feature.target)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleFeatureAccess(feature.target);
+                  }
+                }}
+                className={`relative p-10 bg-white border border-slate-100 rounded-[2.5rem] shadow-sm hover:shadow-2xl hover:-translate-y-2 transition-all duration-500 group feature-card-pop cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${!user ? 'opacity-95' : ''}`}
+                style={{ animationDelay: `${i * 120}ms` }}
+              >
+                {!user && (
+                  <div className="absolute right-5 top-5 inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-700">
+                    <Lock className="h-3 w-3" /> Compte requis
+                  </div>
+                )}
+                <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mb-8 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors duration-500 shadow-inner">
+                  {React.cloneElement(feature.icon as React.ReactElement, { className: 'w-8 h-8' })}
+                </div>
+                <h3 className="text-2xl font-bold text-slate-900 mb-4 tracking-tight">{feature.title}</h3>
+                <p className="text-slate-500 text-base leading-relaxed font-medium">{feature.description}</p>
+                <div className="mt-8 flex items-center gap-2 text-blue-600 font-bold text-xs uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity translate-y-2 group-hover:translate-y-0 duration-500">
+                  {user ? 'Ouvrir le module' : 'Connexion requise'} <ArrowRight className="w-3 h-3" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* Hero Section */}
-      <section className="relative pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden bg-white">
+      <section className="relative pt-16 pb-20 lg:pt-24 lg:pb-32 overflow-hidden bg-white">
         <div className="pointer-events-none absolute left-8 top-24 h-44 w-44 rounded-full bg-cyan-100/60 blur-3xl hero-orb"></div>
         <div className="pointer-events-none absolute right-12 bottom-12 h-52 w-52 rounded-full bg-blue-100/60 blur-3xl hero-orb hero-orb-delay"></div>
         <div className="absolute top-0 right-0 -z-10 w-1/2 h-full bg-gradient-to-l from-blue-50/30 to-transparent"></div>
@@ -293,10 +343,11 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
                 NEUROIMAGERIE CLINIQUE ASSISTÉE PAR IA
               </div>
               <h1 className="text-4xl md:text-6xl font-bold tracking-tight text-slate-900 leading-tight hero-title">
-                L'intelligence au service du <span className="text-blue-600">cerveau</span>
+                <span className="block">On ne devine plus.</span>
+                <span className="block text-blue-600">On mesure.</span>
               </h1>
               <p className="text-lg text-slate-500 leading-relaxed max-w-xl mx-auto lg:mx-0 hero-subtitle">
-                De la segmentation volumétrique de l'hippocampe à l'identification des zones corticales ; une plateforme unifiée pour objectiver vos diagnostics en neurologie et médecine nucléaire.
+                Segmentation de l&apos;hippocampe et recalage volumétrique — pour les cas où votre intuition clinique mérite d&apos;être confirmée par des chiffres.
               </p>
               <div className="flex flex-col sm:flex-row gap-4 pt-4 justify-center lg:justify-start hero-actions">
                 <button
@@ -323,83 +374,43 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
         </div>
       </section>
 
-      {/* Features Grid */}
-      <section id="features" className="py-24 bg-slate-50/50 border-y border-slate-100 relative overflow-hidden">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-blue-100/30 blur-[120px] rounded-full -z-10"></div>
-
-        <div className="max-w-7xl mx-auto px-4 md:px-8">
-          <div className="text-center mb-20 space-y-4">
-            <span className="text-blue-600 font-bold uppercase tracking-widest text-[10px] block">SERVICES NUMÉRIQUES</span>
-            <h2 className="text-3xl md:text-5xl font-bold text-slate-900 tracking-tight">Une suite clinique <span className="text-blue-600">spécialisée</span></h2>
-            <p className="text-slate-500 text-lg max-w-2xl mx-auto font-medium">4 outils fondamentaux pour une neurologie de précision.</p>
-            {!user && (
-              <p className="mx-auto mt-3 max-w-3xl rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-700">
-                Modules protégés: Segmentation, Reconstruction 3D, Rapports et Recalage nécessitent un compte actif.
-              </p>
-            )}
-            {featureAccessHint && (
-              <p className="mx-auto mt-2 max-w-3xl rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-700">
-                {featureAccessHint}
-              </p>
-            )}
-          </div>
-
-          <div className="max-w-5xl mx-auto grid md:grid-cols-2 gap-10 reveal reveal-up">
-            {features.map((feature: any, i) => (
-              <div 
-                key={i} 
-                onClick={() => handleFeatureAccess(feature.target)}
-                className={`relative p-10 bg-white border border-slate-100 rounded-[2.5rem] shadow-sm hover:shadow-2xl hover:-translate-y-2 transition-all duration-500 group feature-card-pop cursor-pointer ${!user ? 'opacity-95' : ''}`}
-                style={{ animationDelay: `${i * 120}ms` }}
-              >
-                {!user && (
-                  <div className="absolute right-5 top-5 inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-700">
-                    <Lock className="h-3 w-3" /> Compte requis
-                  </div>
-                )}
-                <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mb-8 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors duration-500 shadow-inner">
-                  {React.cloneElement(feature.icon as React.ReactElement, { className: "w-8 h-8" })}
-                </div>
-                <h3 className="text-2xl font-bold text-slate-900 mb-4 tracking-tight">{feature.title}</h3>
-                <p className="text-slate-500 text-base leading-relaxed font-medium">{feature.description}</p>
-                <div className="mt-8 flex items-center gap-2 text-blue-600 font-bold text-xs uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity translate-y-2 group-hover:translate-y-0 duration-500">
-                  {user ? 'Ouvrir le module' : 'Connexion requise'} <ArrowRight className="w-3 h-3" />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
       {/* Axe 1 - Neuroimagerie */}
       <section id="axe1" className="py-24 bg-white">
         <div className="max-w-7xl mx-auto px-4 md:px-8">
-          <div className="grid lg:grid-cols-2 gap-20 items-center">
-            <div className="order-2 lg:order-1 relative reveal reveal-left">
-              <div className="absolute -inset-10 bg-blue-50 rounded-full blur-3xl opacity-50"></div>
-              <img
-                src="/images/hero_brain.png"
-                alt="3D Brain Visualization"
-                className="rounded-3xl shadow-xl border border-slate-100"
-              />
+          <div className="grid items-center gap-12 lg:grid-cols-12 lg:gap-14">
+            <div className="order-2 flex justify-center lg:order-1 lg:col-span-4">
+              <div className="relative w-full max-w-xs reveal reveal-left sm:max-w-sm md:max-w-md">
+                <div className="absolute -inset-6 bg-blue-50 rounded-full blur-3xl opacity-50 lg:-inset-8"></div>
+                <img
+                  src="/images/hero_brain.png"
+                  alt="3D Brain Visualization"
+                  className="relative rounded-3xl border border-slate-100 shadow-xl"
+                />
+              </div>
             </div>
 
-            <div className="order-1 lg:order-2 space-y-8 reveal reveal-up">
-              <span className="text-blue-600 font-bold uppercase tracking-widest text-[10px]">AXE 1 : NEUROIMAGERIE</span>
-              <h2 className="text-3xl md:text-4xl font-bold text-slate-900 leading-tight">Segmentation Volumétrique de l'hippocampe</h2>
-              <p className="text-lg text-slate-500 leading-relaxed">
-                Quantifiez avec précision les structures hippocampiques gauche et droite à partir d'IRM cérébrales ; pour une détection objective de l'atrophie liée à la maladie d'Alzheimer et de la sclérose hippocampique dans l'épilepsie.
+            <div className="order-1 space-y-6 reveal reveal-up md:space-y-8 lg:order-2 lg:col-span-8">
+              <span className="text-blue-600 font-bold uppercase tracking-widest text-[11px] md:text-xs">
+                AXE 1 : NEUROIMAGERIE
+              </span>
+              <h2 className="text-3xl font-bold leading-tight text-slate-900 md:text-4xl lg:text-5xl">
+                Segmentation et reconstruction 3D de l&apos;hippocampe
+              </h2>
+              <p className="text-lg leading-relaxed text-slate-600 md:text-xl md:leading-relaxed">
+                Quantifiez avec précision les structures hippocampiques gauche et droite à partir d&apos;IRM cérébrales ; pour une
+                détection objective de l&apos;atrophie liée à la maladie d&apos;Alzheimer et de la sclérose hippocampique dans
+                l&apos;épilepsie.
               </p>
-              <div className="space-y-4">
+              <div className="space-y-4 md:space-y-5">
                 {[
-                  "Calcul automatique du volume hippocampique gauche et droit",
-                  "Comparaison avec les bases normatives",
-                  "Reconstruction 3D interactive haute définition",
-                  "Génération automatique du rapport de segmentation par patient"
+                  'Calcul automatique du volume hippocampique gauche et droit',
+                  'Comparaison avec les bases normatives',
+                  'Reconstruction 3D interactive haute définition',
+                  'Génération automatique du rapport de segmentation par patient',
                 ].map((item, i) => (
-                  <div key={i} className="flex items-center gap-3">
-                    <CheckCircle2 className="w-5 h-5 text-blue-500" />
-                    <span className="text-sm font-semibold text-slate-700">{item}</span>
+                  <div key={i} className="flex items-start gap-3 md:gap-4">
+                    <CheckCircle2 className="mt-0.5 h-6 w-6 shrink-0 text-blue-500 md:h-7 md:w-7" />
+                    <span className="text-base font-semibold leading-snug text-slate-800 md:text-lg">{item}</span>
                   </div>
                 ))}
               </div>
@@ -412,34 +423,39 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
       <section id="axe2" className="py-20 lg:py-24 bg-blue-50/50 border-y border-blue-100 rounded-[2.5rem] mx-4 md:mx-8 mb-24 overflow-hidden relative">
         <div className="absolute top-0 right-0 w-1/3 h-full bg-gradient-to-l from-blue-100/20 to-transparent -z-0"></div>
         <div className="max-w-7xl mx-auto px-8 lg:px-12 relative z-10">
-          <div className="grid lg:grid-cols-2 gap-20 items-center">
-            <div className="space-y-8 reveal reveal-up">
-              <span className="text-blue-600 font-bold uppercase tracking-widest text-[10px]">AXE 2 : MÉDECINE NUCLÉAIRE</span>
-              <h2 className="text-3xl md:text-4xl font-bold text-slate-900 leading-tight">Recalage Multimodal</h2>
-              <p className="text-lg text-slate-500 leading-relaxed">
-                Alignez avec précision vos images IRM/IRM et TEP/IRM en 2D et 3D ; pour une localisation fiable des zones corticales et une interprétation fonctionnelle rigoureuse.
+          <div className="grid items-center gap-12 lg:grid-cols-12 lg:gap-14">
+            <div className="space-y-6 reveal reveal-up md:space-y-8 lg:col-span-8">
+              <span className="text-blue-600 font-bold uppercase tracking-widest text-[11px] md:text-xs">
+                AXE 2 : RECALAGE
+              </span>
+              <h2 className="text-3xl font-bold leading-tight text-slate-900 md:text-4xl lg:text-5xl">Recalage multimodal</h2>
+              <p className="text-lg leading-relaxed text-slate-600 md:text-xl md:leading-relaxed">
+                Alignez avec précision vos images IRM/IRM et TEP/IRM en 2D et 3D ; pour une localisation fiable des zones corticales
+                et une interprétation fonctionnelle rigoureuse.
               </p>
-              <div className="space-y-4">
+              <div className="space-y-4 md:space-y-5">
                 {[
-                  "Recalage automatique et manuel IRM/IRM et TEP/IRM en 2D et 3D",
+                  'Recalage automatique et manuel IRM/IRM et TEP/IRM en 2D et 3D',
                   "Identification automatique des zones corticales d'intérêt",
-                  "Superposition précise des données fonctionnelles sur l'anatomie du patient"
+                  "Superposition précise des données fonctionnelles sur l'anatomie du patient",
                 ].map((item, i) => (
-                  <div key={i} className="flex items-center gap-3">
-                    <CheckCircle2 className="w-5 h-5 text-blue-500" />
-                    <span className="text-sm font-semibold text-slate-700">{item}</span>
+                  <div key={i} className="flex items-start gap-3 md:gap-4">
+                    <CheckCircle2 className="mt-0.5 h-6 w-6 shrink-0 text-blue-500 md:h-7 md:w-7" />
+                    <span className="text-base font-semibold leading-snug text-slate-800 md:text-lg">{item}</span>
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="relative group reveal reveal-right">
-              <div className="absolute -inset-10 bg-blue-200/20 rounded-full blur-3xl opacity-50"></div>
-              <img
-                src="/images/axe2_brain.png"
-                alt="Multimodal Registration Detail"
-                className="rounded-[2rem] w-full border border-blue-100 shadow-2xl relative z-10"
-              />
+            <div className="relative flex justify-center group reveal reveal-right lg:col-span-4">
+              <div className="relative w-full max-w-xs sm:max-w-sm md:max-w-md">
+                <div className="absolute -inset-6 bg-blue-200/20 rounded-full blur-3xl opacity-50 lg:-inset-8"></div>
+                <img
+                  src="/images/axe2_brain.png"
+                  alt="Multimodal Registration Detail"
+                  className="relative z-10 w-full rounded-[2rem] border border-blue-100 shadow-2xl"
+                />
+              </div>
             </div>
           </div>
         </div>

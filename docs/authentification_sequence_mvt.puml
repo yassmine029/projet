@@ -1,0 +1,178 @@
+@startuml
+title Authentification - MVT (NeuroScan / API Django)
+
+skinparam sequenceArrowThickness 2
+skinparam roundcorner 10
+skinparam sequenceParticipant underline
+
+actor "Utilisateur" as U
+participant "Template\n(React: login, forgot, reset, register)" as T #FFFACD
+participant "View\n(api/views.py)" as V #ADD8E6
+participant "Form\n(validation logique cible,\ninline dans les vues)" as F #90EE90
+participant "Model\n(User, PasswordResetToken)" as M #FFB6C1
+participant "PostgreSQL" as DB #E0E0E0
+participant "Email Service\n(send_mail ou send_email_async)" as E #D3D3D3
+
+== FLUX 1 - Connexion POST /api/login ==
+
+U -> T : Saisit identifiant pro et mot de passe
+T -> V : POST /api/login\nJSON username, password\n(login_view)
+
+activate V
+V -> F : Valider champs obligatoires
+activate F
+F --> V : resultat validation
+
+alt [Champs manquants]
+  V --> T : 400 JSON email et mot de passe requis
+  T --> U : Afficher erreur
+else [Champs presents]
+  F -> M : User.objects.filter username ou email\n.first()
+  activate M
+  M -> DB : SELECT ORM
+  DB --> M : ligne ou vide
+  M --> F : account ou None
+
+  alt [Compte introuvable]
+    F --> V : aucun compte
+    V --> T : 401 JSON user_not_found
+    T --> U : Message erreur
+  else [Compte trouve]
+    F -> M : authenticate(username, password)
+    M -> DB : lecture hash
+    DB --> M
+    M --> F : user ou None
+
+    alt [Mot de passe correct]
+      F --> V : utilisateur authentifie
+      V -> V : login(request, user) session
+      V --> T : 200 JSON connexion reussie
+      T --> U : Redirection et etat connecte
+
+      opt [Premiere connexion UI]
+        note over T, V : Optionnel cote front, pas impose par l API seule
+      end
+
+    else [Mot de passe incorrect]
+      F --> V : echec auth
+      V --> T : 401 JSON invalid_password
+      T --> U : Message erreur
+    end
+  end
+  deactivate M
+end
+deactivate F
+deactivate V
+
+== FLUX 2 - Mot de passe oublie POST /api/forgot_password ==
+
+U -> T : Clic mot de passe oublie, saisie email
+T -> V : POST /api/forgot_password\nJSON email\n(forgot_password)
+
+activate V
+V -> F : Valider email present
+activate F
+F --> V : ok ou erreur
+
+alt [Email manquant]
+  V --> T : 400 email required
+  T --> U : Erreur formulaire
+else [Email fourni]
+  F -> M : User.objects.filter username ou email\n.first()
+  activate M
+  M -> DB : SELECT
+  DB --> M
+  M --> F : user ou None
+
+  alt [Email inconnu anti-enumeration]
+    F --> V : aucun user
+    V --> T : 200 JSON message generique\nmeme texte que si existant
+    T --> U : Message neutre
+  else [Email existant]
+    F --> V : utilisateur trouve
+    V -> M : delete jetons puis PasswordResetToken.objects.create\nexpire 15 min
+    M -> DB : DELETE INSERT
+    DB --> M
+    M --> V : reset_token et URL FRONTEND reset-password token
+
+    V -> E : send_mail DEBUG ou send_email_async prod
+    activate E
+    E --> U : Email avec lien HTTPS
+    deactivate E
+
+    V --> T : 200 JSON succes ou avertissement DEBUG
+    T --> U : Confirmation affichee
+  end
+  deactivate M
+end
+deactivate F
+note right of V : Pas de limite du nombre de demandes forgot_password dans le code actuel
+deactivate V
+
+== FLUX 3 - Reset via lien ==
+
+U -> T : Ouvre URL avec token mail
+T -> V : POST /api/validate_reset_token\nJSON token
+
+activate V
+V -> F : Schema token non vide
+F -> M : PasswordResetToken.objects.get\nis_valid()
+activate M
+M -> DB : SELECT
+DB --> M
+M --> F : jeton OK expire ou utilise
+deactivate M
+F --> V
+
+alt [Token invalide ou expire]
+  V --> T : 400 token_expired ou invalide ou deja utilise
+  T --> U : Message lien expire ou invalide
+else [Token valide]
+  V --> T : 200 Token valide
+  T --> U : Affiche formulaire nouveau MDP
+
+  U -> T : Saisit nouveau mot de passe
+  T -> V : POST /api/reset_password\nJSON token, new_password
+
+  V -> F : Valider token et MDP
+  activate F
+  F -> M : set_password save\nreset_token.is_used True
+  activate M
+  M -> DB : UPDATE user et token
+  DB --> M
+  M --> F : OK
+  deactivate M
+  F --> V : succes
+  deactivate F
+
+  note over V, E : Pas d envoi email confirmation dans reset_password actuel
+
+  V --> T : 200 mot de passe reinitialise
+  T --> U : Confirmation UI
+end
+deactivate V
+
+== FLUX 4 - Inscription POST /api/register ==
+
+U -> T : Remplit formulaire inscription
+T -> V : POST /api/register\nJSON username password email\n(register)
+
+activate V
+V -> F : Valider champs requis unicite username
+activate F
+F -> M : User.objects.create_user
+activate M
+M -> DB : INSERT
+DB --> M
+M --> F : utilisateur cree
+deactivate M
+F --> V : OK
+deactivate F
+
+note over V, E : register n envoie pas email confirmation dans le code actuel
+
+V --> T : 200 compte cree
+T --> U : Redirection login message succes
+deactivate V
+
+@enduml

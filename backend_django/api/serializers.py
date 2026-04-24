@@ -55,20 +55,25 @@ class PatientSerializer(serializers.ModelSerializer):
     patient_id = serializers.IntegerField(source='id', read_only=True)
     num_dossier = serializers.CharField(source='dossier_number', read_only=True)
     mri_files = serializers.SerializerMethodField(read_only=True)
+    segmentation_runs = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Patient
         fields = (
             'id', 'patient_id', 'dossier_number', 'num_dossier', 'nom', 'prenom', 'date_naissance', 'sexe',
             'telephone', 'email', 'pathologie', 'stade', 'antecedents', 'notes',
-            'autres_maladies', 'doctor', 'created_at', 'mri_files'
+            'autres_maladies', 'doctor', 'created_at', 'mri_files', 'segmentation_runs'
         )
-        # dossier_number is included by default as it is in fields
         read_only_fields = ('id', 'doctor', 'created_at')
 
     def get_mri_files(self, obj):
         files = obj.mri_files.all().order_by('-uploaded_at')
         return MRIFileSerializer(files, many=True, context=self.context).data
+
+    def get_segmentation_runs(self, obj):
+        # Uniquement les runs terminés (status='done') — les pending/running n'ont pas de résultats
+        runs = obj.segmentation_runs.filter(status='done').order_by('-created_at')
+        return SegmentationRunSerializer(runs, many=True, context=self.context).data
 
 
 class MRIFileSerializer(serializers.ModelSerializer):
@@ -77,7 +82,7 @@ class MRIFileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = MRIFile
-        fields = ('id', 'patient', 'file', 'file_url', 'preview_url', 'original_filename', 'relative_path', 'file_size', 'uploaded_at')
+        fields = ('id', 'patient', 'file', 'file_url', 'preview_url', 'original_filename', 'relative_path', 'file_size', 'file_type', 'uploaded_at')
 
     def get_file_url(self, obj):
         try:

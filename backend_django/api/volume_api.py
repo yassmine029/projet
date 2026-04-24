@@ -16,6 +16,14 @@ from django.views.decorators.http import require_http_methods
 from rest_framework.decorators import api_view
 from .utils.volume_utils import extract_slice, MAX_FILE_SIZE_BYTES
 from .volume_mine_3d_registration import run_mine_3d_nifti
+from .volume_mine_3d_hybrid import run_mine_3d_hybrid
+
+try:
+    from asgiref.sync import async_to_sync
+    from channels.layers import get_channel_layer
+except Exception:
+    async_to_sync = None
+    get_channel_layer = None
 
 try:
     import nibabel as nib
@@ -31,6 +39,30 @@ except Exception:
 
 VOLUMES_CACHE: Dict[str, dict] = {}
 JOBS_ROOT_DIR = os.path.join(tempfile.gettempdir(), 'visionmed_volume_jobs')
+
+
+def _emit_registration_progress(job_id: str, progress: int, stage: str, message: str, status: str = 'processing'):
+    if not job_id or get_channel_layer is None or async_to_sync is None:
+        return
+    try:
+        channel_layer = get_channel_layer()
+        if channel_layer is None:
+            return
+        pct = int(max(0, min(100, int(progress))))
+        async_to_sync(channel_layer.group_send)(
+            f'registration_{job_id}',
+            {
+                'type': 'registration_progress',
+                'jobId': str(job_id),
+                'status': status,
+                'stage': stage,
+                'progress': pct,
+                'message': message,
+            },
+        )
+    except Exception:
+        # Never fail registration because of websocket updates.
+        return
 
 
 def _job_state_dir(job_id: str) -> str:
@@ -727,6 +759,164 @@ def _best_axial_index(vol: np.ndarray) -> int:
     return int(np.argmax(counts))
 
 
+def _score_volume_against_atlas(vol: np.ndarray, atlas: np.ndarray) -> float:
+    """Heuristic score to choose the most plausible orientation fallback."""
+    try:
+        v = np.asarray(vol, dtype=np.float32)
+        a = np.asarray(atlas, dtype=np.float32)
+        if v.ndim != 3 or a.ndim != 3 or v.shape != a.shape:
+            return -1.0
+
+        fill = float(np.count_nonzero(v > 0.10)) / float(max(1, v.size))
+        if fill <= 0.0001:
+            return -1.0
+
+        # Favor compact realistic brain occupancy in atlas grid.
+        fill_penalty = abs(fill - 0.08)
+        fill_score = max(0.0, 1.0 - (fill_penalty / 0.20))
+
+        zc = int(np.clip(_best_axial_index(v), 0, v.shape[2] - 1))
+        zs = sorted(set([
+            int(np.clip(zc - 6, 0, v.shape[2] - 1)),
+            int(np.clip(zc - 3, 0, v.shape[2] - 1)),
+            zc,
+            int(np.clip(zc + 3, 0, v.shape[2] - 1)),
+            int(np.clip(zc + 6, 0, v.shape[2] - 1)),
+        ]))
+
+        ncc_scores = []
+        for z in zs:
+            aa = _normalize_u8(_render_slice(a, z, 'axial'))
+            vv = _normalize_u8(_render_slice(v, z, 'axial'))
+            ncc_scores.append(_compute_ncc(aa, vv))
+        anat_score = float(np.mean(ncc_scores)) if ncc_scores else 0.0
+
+        # Weight anatomy more than occupancy.
+        return float(0.75 * anat_score + 0.25 * fill_score)
+    except Exception:
+        return -1.0
+
+
+def _resample_volume_to_atlas_fallback(src_data: np.ndarray, atlas_shape: tuple) -> tuple:
+    """Robust fallback: try axis permutations and keep the most plausible atlas-space volume."""
+    _ensure_atlas()
+    atlas = np.asarray(VOLUMES_CACHE['atlas']['data'], dtype=np.float32)
+    src = np.asarray(src_data, dtype=np.float32)
+
+    if src.ndim != 3:
+        raise ValueError(f'fallback volume expects 3D, got {src.ndim}D')
+
+    perms = [
+        (0, 1, 2),
+        (1, 0, 2),
+        (2, 1, 0),
+        (1, 2, 0),
+        (0, 2, 1),
+        (2, 0, 1),
+    ]
+
+    best_vol = None
+    best_perm = (0, 1, 2)
+    best_score = -1.0
+
+    for perm in perms:
+        try:
+            cand = np.transpose(src, perm)
+            cand = _resample_volume_to_shape(cand, atlas_shape)
+            cand = _center_volume_by_foreground(cand)
+            cand = _robust_normalize_01(cand)
+            score = _score_volume_against_atlas(cand, atlas)
+            if score > best_score:
+                best_score = float(score)
+                best_perm = perm
+                best_vol = cand
+        except Exception:
+            continue
+
+    if best_vol is None:
+        # Last-resort behavior kept deterministic.
+        best_vol = _resample_volume_to_shape(src, atlas_shape)
+        best_vol = _center_volume_by_foreground(best_vol)
+        best_vol = _robust_normalize_01(best_vol)
+
+    meta = {
+        'perm': [int(v) for v in best_perm],
+        'score': float(round(best_score, 5)),
+    }
+    return np.asarray(best_vol, dtype=np.float32), meta
+
+
+def _auto_orient_patient_volume_to_atlas(vol: np.ndarray) -> tuple:
+    """Pick best in-plane flip (if any) against atlas anatomy for upload-time display coherence."""
+    _ensure_atlas()
+    atlas = np.asarray(VOLUMES_CACHE['atlas']['data'], dtype=np.float32)
+    src = np.asarray(vol, dtype=np.float32)
+
+    if src.ndim != 3 or atlas.ndim != 3 or src.shape != atlas.shape:
+        return src, {
+            'applied': False,
+            'transform': 'identity',
+            'score_identity': 0.0,
+            'score_best': 0.0,
+            'gain': 0.0,
+        }
+
+    # Keep transforms shape-preserving in (x, y, z).
+    transforms = {
+        'identity': lambda v: v,
+        'flip_x': lambda v: np.flip(v, axis=0),
+        'flip_y': lambda v: np.flip(v, axis=1),
+        'flip_xy': lambda v: np.flip(np.flip(v, axis=0), axis=1),
+    }
+
+    zc = int(np.clip(_best_axial_index(src), 0, src.shape[2] - 1))
+    z_candidates = sorted(set([
+        int(np.clip(zc - 6, 0, src.shape[2] - 1)),
+        int(np.clip(zc - 3, 0, src.shape[2] - 1)),
+        zc,
+        int(np.clip(zc + 3, 0, src.shape[2] - 1)),
+        int(np.clip(zc + 6, 0, src.shape[2] - 1)),
+    ]))
+
+    def _score(v: np.ndarray) -> float:
+        vals = []
+        for z in z_candidates:
+            a = _normalize_u8(_render_slice(atlas, z, 'axial'))
+            b = _normalize_u8(_render_slice(v, z, 'axial'))
+            vals.append(_compute_ncc(a, b))
+        return float(np.mean(vals)) if vals else 0.0
+
+    scores = {}
+    for name, fn in transforms.items():
+        try:
+            scores[name] = _score(np.asarray(fn(src), dtype=np.float32))
+        except Exception:
+            scores[name] = -1.0
+
+    identity_score = float(scores.get('identity', 0.0))
+    best_name = max(scores, key=scores.get)
+    best_score = float(scores.get(best_name, identity_score))
+    gain = best_score - identity_score
+
+    # Apply only with clear evidence to avoid changing already-correct orientation.
+    apply_fix = (best_name != 'identity') and (gain >= 0.06) and (best_score >= 0.22)
+    if apply_fix:
+        out = np.asarray(transforms[best_name](src), dtype=np.float32)
+    else:
+        out = src
+        best_name = 'identity'
+        best_score = identity_score
+        gain = 0.0
+
+    return out, {
+        'applied': bool(apply_fix),
+        'transform': str(best_name),
+        'score_identity': float(round(identity_score, 5)),
+        'score_best': float(round(best_score, 5)),
+        'gain': float(round(gain, 5)),
+    }
+
+
 def _center_volume_by_foreground(vol: np.ndarray) -> np.ndarray:
     """Center a 3D volume by foreground bbox center (integer shifts, no wrap artifacts)."""
     arr = np.asarray(vol, dtype=np.float32)
@@ -1183,11 +1373,10 @@ def get_atlas_slice(request):
     selected_label = (_get_job_entry(job_id) or {}).get('selected_label') if (job_id and show_contour) else None
     atlas_source = VOLUMES_CACHE.get('atlas', {}).get('source', 'official')
     
-    # Use colored labels ONLY in Phase 3 (when selected_label is set)
-    # or in Exploration mode (when job_id is absent).
-    # In Phase 2 results (job_id present, but no selected_label), 
-    # use grayscale anatomy for professional comparison.
-    if atlas_source == 'official' and (selected_label or not job_id or show_labels):
+    # Use colored labels ONLY when explicitly requested (show_labels=1)
+    # or when a specific label is selected (Brodmann identification).
+    # Default is grayscale MNI152 anatomy for clean reference display.
+    if atlas_source == 'official' and (selected_label or show_labels):
         img_rgb = _render_label_slice_rgb(atlas_labels, idx, axis)
     else:
         # Phase 2 Results: Grayscale anatomy
@@ -1248,15 +1437,23 @@ def upload_volume(request):
         if safe_name.endswith('.nii.gz') or safe_name.endswith('.nii'):
             storage_dir = os.path.join(tempfile.gettempdir(), 'visionmed_volume_jobs', job_id)
             os.makedirs(storage_dir, exist_ok=True)
-            patient_nifti_path = os.path.join(storage_dir, f'patient_{safe_name}')
+            upload_nifti_path = os.path.join(storage_dir, f'upload_{safe_name}')
+            patient_nifti_path = os.path.join(storage_dir, 'patient_prepared.nii.gz')
             f.seek(0)
-            with open(patient_nifti_path, 'wb') as out_f:
+            with open(upload_nifti_path, 'wb') as out_f:
                 for chunk in f.chunks():
                     out_f.write(chunk)
             f.seek(0)
-            vol, best_z, nifti_meta = _load_nifti(f, safe_name)
+            vol, best_z, nifti_meta = _load_nifti_from_path(
+                upload_nifti_path,
+                prepared_output_path=patient_nifti_path,
+            )
+            try:
+                os.remove(upload_nifti_path)
+            except Exception:
+                pass
             shape_before = tuple(int(v) for v in vol.shape)
-            resample_mode = 'affine-mni'
+            resample_mode = str((nifti_meta or {}).get('resample_mode', 'affine-mni'))
         else:
             vol, best_z = _load_image_as_volume(f)
             shape_before = tuple(int(v) for v in vol.shape)
@@ -1398,81 +1595,91 @@ def _load_nifti(f, safe_name: str) -> tuple:
             for chunk in f.chunks():
                 tmp.write(chunk)
             tmp_path = tmp.name
-
-        if nib is None:
-            raise RuntimeError('nibabel not installed')
-
-        _ensure_atlas()
-        raw_img = nib.load(tmp_path)
-        src_img = nib.as_closest_canonical(raw_img)
-
-        raw_orientation = tuple(str(v) for v in nib.aff2axcodes(raw_img.affine))
-        canonical_orientation = tuple(str(v) for v in nib.aff2axcodes(src_img.affine))
-
-        atlas_shape = tuple(int(v) for v in VOLUMES_CACHE['atlas']['data'].shape)
-        atlas_affine = np.asarray(VOLUMES_CACHE['atlas'].get('affine', np.eye(4)), dtype=np.float32)
-
-        src_data = src_img.get_fdata(dtype=np.float32)
-        if src_data.ndim == 4:
-            src_data = src_data[..., 0]
-        elif src_data.ndim == 2:
-            src_data = src_data[:, :, np.newaxis]
-        elif src_data.ndim != 3:
-            raise ValueError(f'Volume NIfTI non supporte : {src_data.ndim} dimensions (shape={src_data.shape})')
-
-        resample_mode = 'shape-only'
-        try:
-            from nibabel.processing import resample_from_to
-
-            resampled_img = resample_from_to(
-                src_img,
-                (atlas_shape, atlas_affine),
-                order=1,
-                mode='nearest',
-                cval=0.0,
-            )
-            data = resampled_img.get_fdata(dtype=np.float32)
-            resample_mode = 'affine-mni'
-            if _is_suspicious_spatial_position(data):
-                # Some NIfTI files carry inconsistent affine/origin; keep a robust centered fallback.
-                data = _resample_volume_to_shape(np.asarray(src_data, dtype=np.float32), atlas_shape)
-                data = _center_volume_by_foreground(data)
-                resample_mode = 'shape-center-fallback'
-        except Exception:
-            data = _resample_volume_to_shape(np.asarray(src_data, dtype=np.float32), atlas_shape)
-            data = _center_volume_by_foreground(data)
-            resample_mode = 'shape-center-fallback'
-
-        p1, p99 = np.percentile(data, [1, 99])
-        if p99 > p1:
-            data = np.clip(data, p1, p99)
-            data = (data - p1) / (p99 - p1)
-        else:
-            data = np.zeros_like(data)
-
-        vol = np.asarray(data, dtype=np.float32)
-        best_z = _best_axial_index(vol)
-
-        meta = {
-            'raw_shape': [int(v) for v in raw_img.shape[:3]],
-            'raw_zooms': [float(v) for v in raw_img.header.get_zooms()[:3]],
-            'raw_affine': np.asarray(raw_img.affine, dtype=np.float64).round(6).tolist(),
-            'raw_orientation': list(raw_orientation),
-            'is_ras': raw_orientation == ('R', 'A', 'S'),
-            'canonical_shape': [int(v) for v in src_img.shape[:3]],
-            'canonical_zooms': [float(v) for v in src_img.header.get_zooms()[:3]],
-            'canonical_affine': np.asarray(src_img.affine, dtype=np.float64).round(6).tolist(),
-            'canonical_orientation': list(canonical_orientation),
-            'resample_mode': resample_mode,
-            'target_shape': [int(v) for v in atlas_shape],
-            'target_affine': np.asarray(atlas_affine, dtype=np.float64).round(6).tolist(),
-            'fallback': None,
-        }
-
-        return vol, best_z, meta
+        return _load_nifti_from_path(tmp_path)
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.remove(tmp_path)
+
+
+def _load_nifti_from_path(nifti_path: str, prepared_output_path: str = None) -> tuple:
+    if nib is None:
+        raise RuntimeError('nibabel not installed')
+
+    _ensure_atlas()
+    raw_img = nib.load(nifti_path)
+    src_img = nib.as_closest_canonical(raw_img)
+
+    raw_orientation = tuple(str(v) for v in nib.aff2axcodes(raw_img.affine))
+    canonical_orientation = tuple(str(v) for v in nib.aff2axcodes(src_img.affine))
+
+    atlas_shape = tuple(int(v) for v in VOLUMES_CACHE['atlas']['data'].shape)
+    atlas_affine = np.asarray(VOLUMES_CACHE['atlas'].get('affine', np.eye(4)), dtype=np.float32)
+
+    src_data = src_img.get_fdata(dtype=np.float32)
+    if src_data.ndim == 4:
+        src_data = src_data[..., 0]
+    elif src_data.ndim == 2:
+        src_data = src_data[:, :, np.newaxis]
+    elif src_data.ndim != 3:
+        raise ValueError(f'Volume NIfTI non supporte : {src_data.ndim} dimensions (shape={src_data.shape})')
+
+    resample_mode = 'shape-only'
+    try:
+        from nibabel.processing import resample_from_to
+
+        resampled_img = resample_from_to(
+            src_img,
+            (atlas_shape, atlas_affine),
+            order=1,
+            mode='nearest',
+            cval=0.0,
+        )
+        data = resampled_img.get_fdata(dtype=np.float32)
+        resample_mode = 'affine-mni'
+        if _is_suspicious_spatial_position(data):
+            # Some NIfTI files carry inconsistent affine/origin; keep a robust centered fallback.
+            data = _resample_volume_to_shape(np.asarray(src_data, dtype=np.float32), atlas_shape)
+            data = _center_volume_by_foreground(data)
+            resample_mode = 'shape-center-fallback'
+    except Exception:
+        data = _resample_volume_to_shape(np.asarray(src_data, dtype=np.float32), atlas_shape)
+        data = _center_volume_by_foreground(data)
+        resample_mode = 'shape-center-fallback'
+
+    p1, p99 = np.percentile(data, [1, 99])
+    if p99 > p1:
+        data = np.clip(data, p1, p99)
+        data = (data - p1) / (p99 - p1)
+    else:
+        data = np.zeros_like(data)
+
+    vol = np.asarray(data, dtype=np.float32)
+    best_z = _best_axial_index(vol)
+
+    if prepared_output_path:
+        os.makedirs(os.path.dirname(prepared_output_path), exist_ok=True)
+        prepared_img = nib.Nifti1Image(vol, atlas_affine)
+        prepared_img.header.set_data_dtype(np.float32)
+        nib.save(prepared_img, prepared_output_path)
+
+    meta = {
+        'raw_shape': [int(v) for v in raw_img.shape[:3]],
+        'raw_zooms': [float(v) for v in raw_img.header.get_zooms()[:3]],
+        'raw_affine': np.asarray(raw_img.affine, dtype=np.float64).round(6).tolist(),
+        'raw_orientation': list(raw_orientation),
+        'is_ras': raw_orientation == ('R', 'A', 'S'),
+        'canonical_shape': [int(v) for v in src_img.shape[:3]],
+        'canonical_zooms': [float(v) for v in src_img.header.get_zooms()[:3]],
+        'canonical_affine': np.asarray(src_img.affine, dtype=np.float64).round(6).tolist(),
+        'canonical_orientation': list(canonical_orientation),
+        'resample_mode': resample_mode,
+        'target_shape': [int(v) for v in atlas_shape],
+        'target_affine': np.asarray(atlas_affine, dtype=np.float64).round(6).tolist(),
+        'prepared_saved': bool(prepared_output_path),
+        'fallback': None,
+    }
+
+    return vol, best_z, meta
 
 
 def _load_image_as_volume(f) -> tuple:
@@ -1597,6 +1804,7 @@ def load_demo_patient(request):
     VOLUMES_CACHE[job_id] = {
         'type': 'patient',
         'data': vol,
+        'data_original': vol.copy(),
         'registered_data': None,
         'pending_registered_data': None,
         'pending_registration': None,
@@ -1709,6 +1917,10 @@ def get_brodmann_zone(request):
     mask_atlas = None
     label_param = request.GET.get('labelId')
 
+    # 2D click coordinates (image space after rot90)
+    x = (w - 1) // 2
+    y = (h - 1) // 2
+
     if label_param is not None:
         try:
             requested_label = int(label_param)
@@ -1736,6 +1948,7 @@ def get_brodmann_zone(request):
                 # From list selection, keep the component nearest to slice center.
                 center_x = int(np.clip((w - 1) // 2, 0, max(0, w - 1)))
                 center_y = int(np.clip((h - 1) // 2, 0, max(0, h - 1)))
+                x, y = center_x, center_y
                 mask_atlas = _component_mask_near_point(candidate_mask, center_x, center_y)
     else:
         xr = float(request.GET.get('xRatio', 0.5))
@@ -1747,6 +1960,49 @@ def get_brodmann_zone(request):
         if label > 0:
             candidate_mask = (sl_labels == label).astype(np.uint8) * 255
             mask_atlas = _component_mask_near_point(candidate_mask, x, y)
+
+    # ── Compute 3D voxel coordinates from 2D image click (x=col, y=row after rot90) ──
+    # rot90(sl) maps: for axial sl=vol[:,:,z] shape(X,Y) → rot90 shape(Y,X):
+    #   img[y_2d, x_2d] = vol[x_2d, Y-1-y_2d, z]
+    # for coronal sl=vol[:,y,:] shape(X,Z) → rot90 shape(Z,X):
+    #   img[y_2d, x_2d] = vol[x_2d, y, Z-1-y_2d]
+    # for sagittal sl=vol[x,:,:] shape(Y,Z) → rot90 shape(Z,Y):
+    #   img[y_2d, x_2d] = vol[x, x_2d, Z-1-y_2d]
+    vol_X, vol_Y, vol_Z = atlas_labels.shape[:3]
+    if axis == 'axial':
+        voxel_x = int(np.clip(x, 0, vol_X - 1))
+        voxel_y = int(np.clip((vol_Y - 1) - y, 0, vol_Y - 1))
+        voxel_z = int(np.clip(index, 0, vol_Z - 1))
+    elif axis == 'coronal':
+        voxel_x = int(np.clip(x, 0, vol_X - 1))
+        voxel_y = int(np.clip(index, 0, vol_Y - 1))
+        voxel_z = int(np.clip((vol_Z - 1) - y, 0, vol_Z - 1))
+    else:  # sagittal
+        voxel_x = int(np.clip(index, 0, vol_X - 1))
+        voxel_y = int(np.clip(x, 0, vol_Y - 1))
+        voxel_z = int(np.clip((vol_Z - 1) - y, 0, vol_Z - 1))
+
+    # MNI coordinates via atlas affine
+    try:
+        affine = np.asarray(VOLUMES_CACHE['atlas']['affine'], dtype=float)
+        mni_hom = affine @ np.array([voxel_x, voxel_y, voxel_z, 1.0])
+        mni_x, mni_y, mni_z = float(mni_hom[0]), float(mni_hom[1]), float(mni_hom[2])
+    except Exception:
+        mni_x, mni_y, mni_z = 0.0, 0.0, 0.0
+
+    # Crosshair ratios for each axis (to position crosshair without additional API calls)
+    def _safe_ratio(num, denom):
+        return float(np.clip(num / max(1, denom), 0.0, 1.0))
+
+    crosshair_ratios = {
+        'axial':    {'xRatio': _safe_ratio(voxel_x, vol_X - 1),
+                     'yRatio': _safe_ratio((vol_Y - 1) - voxel_y, vol_Y - 1)},
+        'coronal':  {'xRatio': _safe_ratio(voxel_x, vol_X - 1),
+                     'yRatio': _safe_ratio((vol_Z - 1) - voxel_z, vol_Z - 1)},
+        'sagittal': {'xRatio': _safe_ratio(voxel_y, vol_Y - 1),
+                     'yRatio': _safe_ratio((vol_Z - 1) - voxel_z, vol_Z - 1)},
+    }
+    slice_indices = {'axial': voxel_z, 'coronal': voxel_y, 'sagittal': voxel_x}
 
     entry['selected_label'] = label if label > 0 else None
     name = VOLUMES_CACHE['atlas']['lut'].get(label, f'Region {label}') if label > 0 else None
@@ -1783,10 +2039,15 @@ def get_brodmann_zone(request):
             'success': True,
             'insideBrain': False,
             'zone': None,
+            'label_id': 0,
             'images': images,
             'axis': axis,
             'index': index,
             'max_index': max_idx,
+            'voxel_coords': {'x': voxel_x, 'y': voxel_y, 'z': voxel_z},
+            'mni_coords': {'x': round(mni_x, 1), 'y': round(mni_y, 1), 'z': round(mni_z, 1)},
+            'crosshair_ratios': crosshair_ratios,
+            'slice_indices': slice_indices,
         })
 
     # Atlas mask in atlas 2D slice space.
@@ -1833,11 +2094,219 @@ def get_brodmann_zone(request):
             'desc': zone_text['desc'],
             'functionality': zone_text['functionality'],
         },
+        'label_id': label,
         'images': images,
         'axis': axis,
         'index': index,
         'max_index': max_idx,
         'patient_volume_state': vol_state,
+        'voxel_coords': {'x': voxel_x, 'y': voxel_y, 'z': voxel_z},
+        'mni_coords': {'x': round(mni_x, 1), 'y': round(mni_y, 1), 'z': round(mni_z, 1)},
+        'crosshair_ratios': crosshair_ratios,
+        'slice_indices': slice_indices,
+    })
+
+
+@api_view(['GET'])
+def get_brodmann_zone_3d(request):
+    """
+    Génère un mesh OBJ 3D pour un label de zone de Brodmann donné.
+    Retourne l'OBJ encodé en base64 dans la réponse JSON.
+
+    Paramètres GET :
+      - labelId  (int, obligatoire) : numéro de zone BA
+      - quality  (str, optionnel)   : 'fast' | 'standard' | 'high'  (défaut: 'fast')
+    """
+    _ensure_atlas()
+
+    label_param = request.GET.get('labelId')
+    if not label_param:
+        return JsonResponse({'error': 'labelId requis'}, status=400)
+    try:
+        label_id = int(label_param)
+    except (TypeError, ValueError):
+        return JsonResponse({'error': 'labelId invalide'}, status=400)
+
+    quality = request.GET.get('quality', 'fast').strip().lower()
+    step_size = 1 if quality == 'high' else (2 if quality == 'standard' else 3)
+
+    atlas_labels = VOLUMES_CACHE['atlas']['labels']
+    binary_mask = (atlas_labels == label_id).astype(np.float32)
+
+    if np.count_nonzero(binary_mask) == 0:
+        return JsonResponse({'error': f'Label {label_id} absent de l\'atlas'}, status=404)
+
+    try:
+        from scipy.ndimage import gaussian_filter
+        from skimage import measure
+        import trimesh as _trimesh
+        import trimesh.smoothing as _tsmooth
+    except ImportError as e:
+        return JsonResponse({'error': f'Dépendance manquante: {e}'}, status=500)
+
+    # Léger lissage pour une surface propre
+    smooth = gaussian_filter(binary_mask, sigma=1.2)
+
+    # Marching cubes
+    try:
+        verts, faces, _normals, _vals = measure.marching_cubes(smooth, level=0.5, step_size=step_size)
+    except Exception as e:
+        return JsonResponse({'error': f'Marching cubes échoué: {e}'}, status=500)
+
+    if len(verts) == 0 or len(faces) == 0:
+        return JsonResponse({'error': 'Mesh vide — zone trop petite'}, status=404)
+
+    # Centrage + mise à l'échelle normalisée [-1, 1]
+    center = verts.mean(axis=0)
+    verts_centered = verts - center
+    max_extent = np.abs(verts_centered).max()
+    if max_extent > 0:
+        verts_centered /= max_extent
+
+    mesh = _trimesh.Trimesh(vertices=verts_centered, faces=faces, process=True)
+
+    # Lissage Laplacien léger
+    try:
+        _tsmooth.filter_laplacian(mesh, lamb=0.4, iterations=3)
+    except Exception:
+        pass
+
+    # Export OBJ → base64
+    obj_bytes = mesh.export(file_type='obj')
+    if isinstance(obj_bytes, str):
+        obj_bytes = obj_bytes.encode('utf-8')
+
+    obj_b64 = base64.b64encode(obj_bytes).decode('ascii')
+    name = VOLUMES_CACHE['atlas']['lut'].get(label_id, f'BA {label_id}')
+
+    return JsonResponse({
+        'success': True,
+        'label_id': label_id,
+        'name': name,
+        'obj_data': obj_b64,
+        'mesh_vertices': int(len(mesh.vertices)),
+        'mesh_faces': int(len(mesh.faces)),
+    })
+
+
+@api_view(['GET'])
+def get_brain_surface_3d(request):
+    """
+    Génère un mesh OBJ 3D de la surface cérébrale à partir du volume NIfTI d'un job.
+
+    Paramètres GET :
+      - jobId   (str)  : identifiant du job patient
+      - type    (str)  : 'original' | 'registered' | 'atlas'  (défaut: 'original')
+      - quality (str)  : 'fast' | 'standard' | 'high'         (défaut: 'fast')
+    """
+    job_id  = (request.GET.get('jobId') or '').strip()
+    vol_type = request.GET.get('type', 'original').strip().lower()
+    quality  = request.GET.get('quality', 'fast').strip().lower()
+    step_size = 1 if quality == 'high' else (2 if quality == 'standard' else 3)
+
+    try:
+        from scipy.ndimage import gaussian_filter, zoom
+        from skimage import measure
+        import trimesh as _trimesh
+        import trimesh.smoothing as _tsmooth
+    except ImportError as e:
+        return JsonResponse({'error': f'Dépendance manquante: {e}'}, status=500)
+
+    # ── Sélection du volume ────────────────────────────────────────────────────
+    if vol_type == 'atlas':
+        _ensure_atlas()
+        atlas_entry = VOLUMES_CACHE.get('atlas', {})
+        vol = atlas_entry.get('data') if atlas_entry else None
+        if vol is None:
+            return JsonResponse({'error': 'Atlas non chargé'}, status=404)
+    else:
+        if not job_id:
+            return JsonResponse({'error': 'jobId requis'}, status=400)
+        entry = VOLUMES_CACHE.get(job_id)
+        if not entry:
+            return JsonResponse({'error': 'Job introuvable'}, status=404)
+        if vol_type == 'registered':
+            # Check pending first (before validation), then validated, then raw
+            vol = entry.get('pending_registered_data') or entry.get('registered_data') or entry.get('data')
+        else:
+            # Original = before registration
+            vol = entry.get('data_original') or entry.get('data')
+
+    if vol is None:
+        return JsonResponse({'error': 'Volume indisponible'}, status=404)
+
+    vol = np.asarray(vol, dtype=np.float32)
+
+    # ── Sous-échantillonnage si trop grand (> 128³) ────────────────────────────
+    max_dim = 128
+    if max(vol.shape) > max_dim:
+        factors = tuple(max_dim / s if s > max_dim else 1.0 for s in vol.shape)
+        vol = zoom(vol, factors, order=1)
+
+    # ── Seuillage adaptatif : garde uniquement le plus grand composant ─────────
+    vmin, vmax = float(vol.min()), float(vol.max())
+    if vmax - vmin < 1e-6:
+        return JsonResponse({'error': 'Volume vide'}, status=404)
+
+    # Otsu approximatif : percentile 50 des voxels non-nuls (robuste pour MRI patient)
+    flat = vol[vol > vmin + (vmax - vmin) * 0.05].flatten()
+    if len(flat) == 0:
+        return JsonResponse({'error': 'Volume vide'}, status=404)
+    threshold = float(np.percentile(flat, 50))
+    binary = (vol > threshold).astype(np.uint8)
+
+    # Garder seulement le plus grand composant connexe pour éliminer le bruit
+    try:
+        from scipy.ndimage import label as nd_label
+        labeled, n_comp = nd_label(binary)
+        if n_comp > 1:
+            sizes = np.bincount(labeled.ravel())
+            sizes[0] = 0  # ignore background
+            largest = int(sizes.argmax())
+            binary = (labeled == largest).astype(np.uint8)
+    except Exception:
+        pass
+
+    binary = binary.astype(np.float32)
+
+    # ── Lissage gaussien ──────────────────────────────────────────────────────
+    smooth = gaussian_filter(binary, sigma=1.5)
+
+    # ── Marching cubes ────────────────────────────────────────────────────────
+    try:
+        verts, faces, _, _ = measure.marching_cubes(smooth, level=0.5, step_size=step_size)
+    except Exception as e:
+        return JsonResponse({'error': f'Marching cubes échoué: {e}'}, status=500)
+
+    if len(verts) == 0 or len(faces) == 0:
+        return JsonResponse({'error': 'Mesh vide'}, status=404)
+
+    # ── Centrage + normalisation [-1, 1] ──────────────────────────────────────
+    center = verts.mean(axis=0)
+    verts -= center
+    extent = np.abs(verts).max()
+    if extent > 0:
+        verts /= extent
+
+    mesh = _trimesh.Trimesh(vertices=verts, faces=faces, process=True)
+
+    # ── Lissage Laplacien ─────────────────────────────────────────────────────
+    try:
+        _tsmooth.filter_laplacian(mesh, lamb=0.5, iterations=4)
+    except Exception:
+        pass
+
+    # ── Export OBJ base64 ─────────────────────────────────────────────────────
+    obj_bytes = mesh.export(file_type='obj')
+    if isinstance(obj_bytes, str):
+        obj_bytes = obj_bytes.encode('utf-8')
+
+    return JsonResponse({
+        'success': True,
+        'obj_data': base64.b64encode(obj_bytes).decode('ascii'),
+        'mesh_vertices': int(len(mesh.vertices)),
+        'mesh_faces': int(len(mesh.faces)),
+        'vol_type': vol_type,
     })
 
 
@@ -1998,6 +2467,122 @@ def auto_align_volume(request):
     n_iters = int(np.clip(n_iters, 30, 1000))
 
     strict_atlas_grid = bool(payload.get('strict_atlas_grid', True))
+    transform_mode = str(payload.get('transform', 'MINE')).upper()
+    use_hybrid = (transform_mode == 'HYBRID')
+
+    # Hybrid loss is more complex than auto → needs more iterations to converge.
+    # RTX 3050: ~0.115s/iter → 250 iters ≈ 29s, acceptable.
+    if use_hybrid:
+        n_iters = int(np.clip(n_iters, 100, 250))
+
+    # ── Patient-to-patient 3D registration (no atlas) ─────────────────────────
+    fixed_job_id = payload.get('fixedJobId')
+    if fixed_job_id:
+        fixed_entry = _get_job_entry(fixed_job_id)
+        if fixed_entry is None:
+            return JsonResponse({'error': 'fixedJobId introuvable'}, status=404)
+
+        selected_p2p = entry.get('selected_slice') or {}
+        axis_p2p = str(payload.get('axis', selected_p2p.get('axis', 'axial'))).lower()
+        if axis_p2p not in ('axial', 'coronal', 'sagittal'):
+            axis_p2p = 'axial'
+
+        fixed_vol = np.asarray(fixed_entry['data'], dtype=np.float32)
+        patient_vol_p2p = np.asarray(entry['data'], dtype=np.float32)
+        fixed_nifti_path = fixed_entry.get('nifti_path')
+        patient_nifti_path_p2p = entry.get('nifti_path')
+
+        fixed_max = _max_index(fixed_vol.shape, axis_p2p)
+        patient_max = _max_index(patient_vol_p2p.shape, axis_p2p)
+        default_idx_p2p = min(fixed_max, patient_max) // 2
+        idx_p2p = int(np.clip(int(payload.get('index', default_idx_p2p)), 0, min(fixed_max, patient_max)))
+
+        work_dir_p2p = os.path.join(tempfile.gettempdir(), 'visionmed_volume_jobs', job_id, 'auto3d_p2p')
+        os.makedirs(work_dir_p2p, exist_ok=True)
+        fixed_nifti_out = os.path.join(work_dir_p2p, 'fixed_patient.nii.gz')
+        moving_nifti_out = os.path.join(work_dir_p2p, 'moving_patient.nii.gz')
+
+        _emit_registration_progress(job_id, 3, 'initialisation', 'Initialisation du recalage patient-patient...')
+        try:
+            if fixed_nifti_path and nib is not None and os.path.exists(fixed_nifti_path):
+                nib.save(nib.load(fixed_nifti_path), fixed_nifti_out)
+            else:
+                _save_volume_nifti(fixed_vol, fixed_nifti_out)
+
+            if patient_nifti_path_p2p and nib is not None and os.path.exists(patient_nifti_path_p2p):
+                nib.save(nib.load(patient_nifti_path_p2p), moving_nifti_out)
+            else:
+                _save_volume_nifti(patient_vol_p2p, moving_nifti_out)
+
+            _emit_registration_progress(job_id, 10, 'preparation', 'Volumes NIfTI prêts — lancement MINE...')
+
+            def _on_p2p_progress(tp, msg):
+                _emit_registration_progress(job_id, 12 + int(max(0, min(100, int(tp))) * 0.80), 'optimisation', msg)
+
+            _reg_fn_p2p = run_mine_3d_hybrid if use_hybrid else run_mine_3d_nifti
+            _hybrid_kwargs_p2p = dict(base=16, max_disp=0.05) if use_hybrid else {}
+            result_p2p = _reg_fn_p2p(
+                fixed_path=fixed_nifti_out,
+                moving_path=moving_nifti_out,
+                output_dir=work_dir_p2p,
+                n_iters=n_iters,
+                max_levels=3, levels_used=2,
+                max_samples=8192 if use_hybrid else 16384,
+                device_name='cuda', save_extended_outputs=False,
+                early_stop_patience=30 if use_hybrid else 22,
+                early_stop_min_iters=80 if use_hybrid else 35,
+                early_stop_min_delta=5e-4,
+                progress_callback=_on_p2p_progress,
+                **_hybrid_kwargs_p2p,
+            )
+            _emit_registration_progress(job_id, 95, 'postprocessing', 'Post-traitement...')
+        except Exception as e:
+            _emit_registration_progress(job_id, 100, 'error', f'Echec: {str(e)}', status='error')
+            return JsonResponse({'error': 'auto registration failed', 'message': str(e)}, status=500)
+
+        warped_path_p2p = result_p2p.get('warped_path')
+        if not warped_path_p2p or not os.path.exists(warped_path_p2p):
+            return JsonResponse({'error': 'warped volume not found'}, status=500)
+
+        warped_vol_p2p = nib.load(warped_path_p2p).get_fdata(dtype=np.float32)
+        if tuple(int(v) for v in warped_vol_p2p.shape) != tuple(int(v) for v in fixed_vol.shape):
+            warped_vol_p2p = _resample_volume_to_shape(warped_vol_p2p, fixed_vol.shape)
+
+        fixed_img_p2p = _normalize_u8(_render_slice(fixed_vol, idx_p2p, axis_p2p))
+        patient_img_p2p = _normalize_u8(_render_slice(warped_vol_p2p, idx_p2p, axis_p2p))
+
+        entry['pending_registered_data'] = np.asarray(warped_vol_p2p, dtype=np.float32)
+        entry['pending_registration'] = {
+            'mode': 'auto3d_p2p', 'axis': axis_p2p, 'index': idx_p2p,
+            'n_iters': n_iters, 'warped_path': warped_path_p2p,
+            'fixed_job_id': fixed_job_id,
+        }
+        _persist_job_entry(job_id)
+
+        final_mi_p2p = float(result_p2p.get('mutual_information', 0.0))
+        mi_quality_p2p = 'Excellent' if final_mi_p2p > 0.5 else 'Bon' if final_mi_p2p > 0.3 else 'Faible'
+        _emit_registration_progress(job_id, 100, 'completed', 'Recalage terminé', status='success')
+
+        return JsonResponse({
+            'success': True, 'auto_applied': False, 'requires_validation': True,
+            'image': _encode_png_data_url(patient_img_p2p),
+            'images': {
+                'patient': _encode_png_data_url(patient_img_p2p),
+                'atlas': _encode_png_data_url(fixed_img_p2p),
+            },
+            'axis': axis_p2p, 'index': idx_p2p, 'n_iters': n_iters,
+            'metrics': {
+                'n_iters': n_iters, 'mutual_information': round(final_mi_p2p, 4),
+                'mi_quality': mi_quality_p2p,
+                'mse_before': float(result_p2p.get('metrics', {}).get('mse_before', 0.0)),
+                'mse_after': float(result_p2p.get('metrics', {}).get('mse_after', 0.0)),
+                'ncc_before': float(result_p2p.get('metrics', {}).get('ncc_before', 0.0)),
+                'ncc_after': float(result_p2p.get('metrics', {}).get('ncc_after', 0.0)),
+                'processing_time_ms': float(result_p2p.get('processing_time_ms', 0.0)),
+                'device': result_p2p.get('device', 'cpu'), 'success': True,
+            },
+        })
+    # ── End patient-to-patient path ────────────────────────────────────────────
 
     _ensure_atlas()
     selected = entry.get('selected_slice') or {}
@@ -2009,6 +2594,35 @@ def auto_align_volume(request):
     patient_vol = entry['data']
     patient_nifti_path = entry.get('nifti_path')
 
+    # Backward compatibility: older jobs may still point to a raw upload NIfTI.
+    # Rebuild a prepared patient NIfTI once, then persist it for subsequent runs.
+    patient_prepared_mode = 'cache-volume'
+    if patient_nifti_path and nib is not None and os.path.exists(patient_nifti_path):
+        try:
+            current_name = os.path.basename(str(patient_nifti_path)).lower()
+            if current_name != 'patient_prepared.nii.gz':
+                prepared_path = os.path.join(os.path.dirname(patient_nifti_path), 'patient_prepared.nii.gz')
+                prepared_vol, _prepared_z, _prepared_meta = _load_nifti_from_path(
+                    patient_nifti_path,
+                    prepared_output_path=prepared_path,
+                )
+                patient_nifti_path = prepared_path
+                entry['nifti_path'] = prepared_path
+                entry['data'] = np.asarray(prepared_vol, dtype=np.float32)
+                entry['data_original'] = np.asarray(prepared_vol, dtype=np.float32).copy()
+                patient_vol = entry['data']
+                patient_prepared_mode = 'legacy-upgrade'
+                _persist_job_entry(job_id)
+            else:
+                prepared_img = nib.load(patient_nifti_path)
+                prepared_vol = prepared_img.get_fdata(dtype=np.float32)
+                if tuple(int(v) for v in prepared_vol.shape) == tuple(int(v) for v in atlas_vol.shape):
+                    entry['data'] = np.asarray(prepared_vol, dtype=np.float32)
+                    patient_vol = entry['data']
+                    patient_prepared_mode = 'prepared-nifti'
+        except Exception as e:
+            print(f"[AUTO_ALIGN] Prepared NIfTI upgrade skipped: {e}")
+
     atlas_max_idx = _max_index(atlas_vol.shape, axis)
     patient_max_idx = _max_index(patient_vol.shape, axis)
     idx = int(payload.get('index', selected.get('index', min(atlas_max_idx, patient_max_idx) // 2)))
@@ -2019,16 +2633,33 @@ def auto_align_volume(request):
     os.makedirs(work_dir, exist_ok=True)
     atlas_nifti_path = os.path.join(work_dir, 'atlas_fixed.nii.gz')
     moving_prepared_nifti_path = os.path.join(work_dir, 'moving_prepared.nii.gz')
+    _emit_registration_progress(job_id, 3, 'initialisation', 'Initialisation du recalage automatique...')
 
     try:
         # Prepare moving volume in atlas grid without introducing synthetic affine drift.
         patient_vol_for_mine = np.asarray(patient_vol, dtype=np.float32)
         atlas_shape = tuple(int(v) for v in atlas_vol.shape)
         patient_shape = tuple(int(v) for v in patient_vol.shape)
-        
+
+        if patient_nifti_path and nib is not None and os.path.exists(patient_nifti_path):
+            try:
+                prepared_img = nib.load(patient_nifti_path)
+                prepared_data = prepared_img.get_fdata(dtype=np.float32)
+                if prepared_data.ndim == 4:
+                    prepared_data = prepared_data[..., 0]
+                if prepared_data.ndim == 2:
+                    prepared_data = prepared_data[:, :, np.newaxis]
+                if prepared_data.ndim == 3:
+                    patient_vol_for_mine = np.asarray(prepared_data, dtype=np.float32)
+                    patient_shape = tuple(int(v) for v in patient_vol_for_mine.shape)
+                    patient_prepared_mode = 'prepared-nifti'
+            except Exception as e:
+                print(f"[AUTO_ALIGN] Cannot read prepared nifti, fallback to cache: {e}")
+
         if patient_shape != atlas_shape:
             print(f"[AUTO_ALIGN] Patient shape {patient_shape} != atlas {atlas_shape}")
             print(f"[AUTO_ALIGN] Resampling moving volume to atlas grid...")
+            _emit_registration_progress(job_id, 8, 'resampling', 'Resampling du volume patient...')
             
             try:
                 atlas_affine = np.asarray(VOLUMES_CACHE['atlas'].get('affine', np.eye(4)), dtype=np.float32)
@@ -2058,9 +2689,12 @@ def auto_align_volume(request):
             
             # Robustly normalize to match atlas intensity range
             patient_vol_for_mine = _robust_normalize_01(patient_vol_for_mine)
+
+        print(f"[AUTO_ALIGN] moving source mode: {patient_prepared_mode}")
         
         # Save with guaranteed atlas affine coherence
         _ensure_atlas()
+        _emit_registration_progress(job_id, 10, 'preparation', 'Preparation des volumes NIfTI...')
         print(f"[AUTO_ALIGN] Saving atlas NIfTI: {atlas_nifti_path}")
         _save_volume_nifti(atlas_vol, atlas_nifti_path, 
                           affine=VOLUMES_CACHE['atlas'].get('affine'))
@@ -2070,21 +2704,33 @@ def auto_align_volume(request):
                           affine=VOLUMES_CACHE['atlas'].get('affine'))
         
         print(f"[AUTO_ALIGN] Running MINE 3D registration with n_iters={n_iters}...")
-        result = run_mine_3d_nifti(
+
+        def _on_mine_progress(train_progress: int, msg: str):
+            # Keep room for pre/post stages around optimization.
+            overall = 12 + int(max(0, min(100, int(train_progress))) * 0.80)
+            _emit_registration_progress(job_id, overall, 'optimisation', msg)
+
+        _reg_fn = run_mine_3d_hybrid if use_hybrid else run_mine_3d_nifti
+        _hybrid_kwargs = dict(base=16, max_disp=0.05) if use_hybrid else {}
+        result = _reg_fn(
             fixed_path=atlas_nifti_path,
             moving_path=moving_prepared_nifti_path,
             output_dir=work_dir,
             n_iters=n_iters,
             max_levels=3,
             levels_used=2,
-            max_samples=16384,
+            max_samples=4096 if use_hybrid else 16384,
             device_name='cuda',
             save_extended_outputs=False,
-            early_stop_patience=22,
-            early_stop_min_iters=35,
-            early_stop_min_delta=5e-4,
+            early_stop_patience=10 if use_hybrid else 22,
+            early_stop_min_iters=15 if use_hybrid else 35,
+            early_stop_min_delta=1e-3 if use_hybrid else 5e-4,
+            progress_callback=_on_mine_progress,
+            **_hybrid_kwargs,
         )
+        _emit_registration_progress(job_id, 95, 'postprocessing', 'Post-traitement des volumes...')
     except Exception as e:
+        _emit_registration_progress(job_id, 100, 'error', f'Echec: {str(e)}', status='error')
         return JsonResponse({
             'error': 'auto registration failed',
             'message': str(e),
@@ -2147,6 +2793,7 @@ def auto_align_volume(request):
         'axis': axis,
         'index': idx,
         'n_iters': n_iters,
+        'prepared_mode': patient_prepared_mode,
         'strict_atlas_grid': strict_atlas_grid,
         'matrix_4x4': matrix_4x4,
         'warped_path': warped_path,
@@ -2173,10 +2820,13 @@ def auto_align_volume(request):
     else:
         mi_quality = 'Faible'
 
+    _emit_registration_progress(job_id, 100, 'completed', 'Recalage termine', status='success')
+
     return JsonResponse({
         'success': True,
         'auto_applied': False,
         'requires_validation': True,
+        'prepared_mode': patient_prepared_mode,
         'fallback_used': auto_fallback_used,
         'fallback_reason': 'suspicious_matrix' if suspicious_matrix else None,
         'image': _encode_png_data_url(patient_img),
@@ -2358,3 +3008,193 @@ def reject_volume_registration(request):
     entry['pending_registered_data'] = None
     _persist_job_entry(job_id)
     return JsonResponse({'success': True, 'message': 'Resultat rejete. Relancez avec d autres parametres.'})
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def save_registered_to_patient(request):
+    """
+    Sauvegarde le volume recalé (ou l'image recalée 2D) dans le dossier patient (MRIFile).
+
+    Payload JSON :
+        jobId       : str   — identifiant du job de recalage
+        patientId   : int   — ID du patient en base
+        mode        : str   — '2d' | '3d' | 'advanced'  (optionnel, défaut '3d')
+        mi          : float — indice MI du recalage      (optionnel)
+        ncc         : float — NCC après recalage         (optionnel)
+        n_iters     : int   — nb d'itérations            (optionnel)
+        processing_time_ms : float                        (optionnel)
+
+    Retour :
+        { success, file_id, original_filename, file_size, uploaded_at }
+    """
+    import io
+    from datetime import datetime
+    from django.contrib.auth.decorators import login_required as _lr
+
+    # ── Auth ─────────────────────────────────────────────────────────────────────
+    if not request.user.is_authenticated:
+        return JsonResponse({'error': 'Authentication required'}, status=401)
+
+    try:
+        payload = json.loads(request.body)
+    except Exception:
+        return JsonResponse({'error': 'invalid json'}, status=400)
+
+    job_id     = payload.get('jobId', '')
+    patient_id = payload.get('patientId')
+    mode       = str(payload.get('mode', '3d')).lower()
+
+    if not job_id:
+        return JsonResponse({'error': 'jobId manquant'}, status=400)
+    if not patient_id:
+        return JsonResponse({'error': 'patientId manquant'}, status=400)
+
+    # ── Récupérer le patient ──────────────────────────────────────────────────────
+    try:
+        from .models import Patient, MRIFile
+        patient = Patient.objects.get(id=patient_id, doctor=request.user)
+    except Patient.DoesNotExist:
+        return JsonResponse({'error': 'Patient introuvable ou accès refusé'}, status=404)
+
+    # ── Données recalées : job ou image base64 (fallback 2D) ─────────────────────
+    image_data_b64 = payload.get('imageData')  # base64 PNG envoyé par le frontend (mode 2D)
+    vol = None
+    nifti_affine_from_job = None
+
+    entry = _get_job_entry(job_id) if job_id else None
+    if entry is not None:
+        vol = entry.get('registered_data')
+        if vol is None:
+            vol = entry.get('pending_registered_data')
+        if vol is not None:
+            vol = np.asarray(vol, dtype=np.float32)
+            nifti_path = entry.get('nifti_path')
+            if nifti_path and os.path.exists(str(nifti_path)):
+                try:
+                    import nibabel as _nib_tmp
+                    nifti_affine_from_job = _nib_tmp.load(nifti_path).affine
+                except Exception:
+                    pass
+
+    # Si pas de volume dans le job, essayer de décoder l'image base64 (mode 2D)
+    if vol is None and image_data_b64:
+        try:
+            img_bytes = base64.b64decode(image_data_b64.split(',')[-1])
+            pil = Image.open(io.BytesIO(img_bytes)).convert('L')
+            arr = np.array(pil, dtype=np.float32)
+            vol = arr[:, :, np.newaxis]  # shape (H, W, 1) — coupe unique
+        except Exception as exc:
+            return JsonResponse({'error': f'Impossible de décoder imageData : {exc}'}, status=400)
+
+    if vol is None:
+        return JsonResponse({'error': 'Aucune donnée recalée disponible — relancez le recalage'}, status=400)
+
+    # ── Construire le nom de fichier avec date + métriques ────────────────────────
+    now_str   = datetime.now().strftime('%Y%m%d_%H%M%S')
+    mi_val    = payload.get('mi')
+    ncc_val   = payload.get('ncc')
+    n_iters   = payload.get('n_iters')
+    proc_ms   = payload.get('processing_time_ms')
+
+    # Nom court : reg_YYYYMMDD_HHMM_<mode>_MI<val> — évite le dépassement max_length
+    name_parts = [f'reg_{now_str[:13]}', mode]  # now_str[:13] = YYYYMMDD_HHMM
+    if mi_val is not None:
+        name_parts.append(f'MI{float(mi_val):.3f}')
+    if n_iters is not None:
+        name_parts.append(f'i{int(n_iters)}')
+
+    # ── Sérialiser selon le mode ──────────────────────────────────────────────────
+    is_3d = mode in ('3d', 'advanced')
+
+    if is_3d:
+        # Sauvegarder en NIfTI via fichier temporaire (BytesIO ne supporte pas .nii.gz)
+        try:
+            import nibabel as nib  # type: ignore
+            affine = nifti_affine_from_job if nifti_affine_from_job is not None else np.eye(4)
+            nifti_img = nib.Nifti1Image(vol, affine)
+            tmp_path = os.path.join(tempfile.gettempdir(), f'reg_tmp_{uuid.uuid4().hex}.nii.gz')
+            try:
+                nib.save(nifti_img, tmp_path)
+                with open(tmp_path, 'rb') as _f:
+                    file_bytes = _f.read()
+            finally:
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+            filename = '_'.join(name_parts) + '.nii.gz'
+            content_type = 'application/gzip'
+        except Exception as exc:
+            return JsonResponse({'error': f'Erreur sérialisation NIfTI : {exc}'}, status=500)
+    else:
+        # Sauvegarder en PNG — extraire la coupe médiane axiale
+        try:
+            if vol.ndim == 3:
+                mid_z   = vol.shape[2] // 2
+                slice2d = vol[:, :, mid_z]
+            else:
+                slice2d = vol
+            # Normalisation u8
+            mn, mx = float(slice2d.min()), float(slice2d.max())
+            if mx > mn:
+                u8 = ((slice2d - mn) / (mx - mn) * 255).astype(np.uint8)
+            else:
+                u8 = np.zeros_like(slice2d, dtype=np.uint8)
+            pil_img   = Image.fromarray(u8, mode='L')
+            buf       = io.BytesIO()
+            pil_img.save(buf, format='PNG')
+            file_bytes    = buf.getvalue()
+            filename      = '_'.join(name_parts) + '.png'
+            content_type  = 'image/png'
+        except Exception as exc:
+            return JsonResponse({'error': f'Erreur sérialisation PNG : {exc}'}, status=500)
+
+    # ── Sauvegarder dans le dossier patient ───────────────────────────────────────
+    try:
+        from django.core.files.base import ContentFile
+        from django.conf import settings
+
+        # Sous-dossier organisé par patient
+        rel_dir  = os.path.join('patients_mri_files', f'patient_{patient.id}', 'registrations')
+        abs_dir  = os.path.join(settings.MEDIA_ROOT, rel_dir)
+        os.makedirs(abs_dir, exist_ok=True)
+
+        rel_path = os.path.join(rel_dir, filename)
+        abs_path = os.path.join(abs_dir, filename)
+        with open(abs_path, 'wb') as f_out:
+            f_out.write(file_bytes)
+
+        mri_file = MRIFile.objects.create(
+            patient=patient,
+            file=rel_path,
+            original_filename=filename,
+            relative_path=rel_path,
+            file_size=len(file_bytes),
+            file_type='analysis',
+        )
+
+    except Exception as exc:
+        return JsonResponse({'error': f'Erreur sauvegarde fichier : {exc}'}, status=500)
+
+    # ── Réponse ───────────────────────────────────────────────────────────────────
+    return JsonResponse({
+        'success': True,
+        'file_id': mri_file.id,
+        'original_filename': filename,
+        'file_size': len(file_bytes),
+        'uploaded_at': mri_file.uploaded_at.isoformat(),
+        'patient': {
+            'id': patient.id,
+            'nom': patient.nom,
+            'prenom': patient.prenom,
+            'dossier_number': patient.dossier_number,
+        },
+        'details': {
+            'mode': mode,
+            'mi': mi_val,
+            'ncc': ncc_val,
+            'n_iters': n_iters,
+            'processing_time_ms': proc_ms,
+        },
+    })

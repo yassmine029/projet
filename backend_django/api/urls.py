@@ -30,6 +30,7 @@ urlpatterns = [
     # Alignment routes
     path('align', views.align, name='align'),
     path('auto-align', views.auto_align, name='auto_align'),
+    path('registration/initialize/', views.initialize_registration_from_patient_files, name='init_registration_files'),
     path('job/<str:job_id>/tform', views.get_job_tform, name='job_tform'),
 
     # 3D Volume routes
@@ -43,11 +44,14 @@ urlpatterns = [
     path('volume/load-demo', volume_api.load_demo_patient, name='load_demo_patient'),
     path('volume/patient_slice', volume_api.get_patient_slice, name='get_patient_slice'),
     path('volume/brodmann', volume_api.get_brodmann_zone, name='get_brodmann_zone'),
+    path('volume/brodmann-zone-3d', volume_api.get_brodmann_zone_3d, name='get_brodmann_zone_3d'),
+    path('volume/brain-surface-3d', volume_api.get_brain_surface_3d, name='get_brain_surface_3d'),
     path('volume/cortical-zones', volume_api.get_cortical_zones, name='get_cortical_zones'),
     path('volume/auto-align', volume_api.auto_align_volume, name='auto_align_volume'),
     path('volume/manual-align', volume_api.manual_align_volume, name='manual_align_volume'),
     path('volume/validate-registration', volume_api.validate_volume_registration, name='validate_volume_registration'),
     path('volume/reject-registration', volume_api.reject_volume_registration, name='reject_volume_registration'),
+    path('volume/save-registered-to-patient', volume_api.save_registered_to_patient, name='save_registered_to_patient'),
     path('volume/viewer', volume_api.slice_viewer_page, name='slice_viewer_page'),
 
     # Preprocessing route
@@ -80,6 +84,7 @@ urlpatterns = [
 
     # Patient routes (Nadine - DRF style)
     path('patients/', views.patients_list_create, name='patients_list_create'),
+    path('patients/next-dossier/', views.next_dossier_number, name='next_dossier_number'),
     path('patients/<int:patient_id>/', views.patient_detail_update_delete, name='patient_detail_update_delete'),
     path('patients/<int:patient_id>/mri-files/', views.mri_files_list_upload, name='mri_files_list_upload'),
     path('mri-files/<int:file_id>/preview/', views.mri_file_preview, name='mri_file_preview'),

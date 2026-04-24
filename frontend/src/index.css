@@ -1,7 +1,17 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 @import "tailwindcss";
+
 
 :root {
   color-scheme: light;
+  font-family: 'Inter', sans-serif;
+
+  /* Medical Design System Tokens */
+  --patient-original: 217 91% 30%;   /* Deep Blue */
+  --patient-new: 142 76% 45%;        /* Vibrant Green */
+  --type-registration: 271 81% 56%;  /* Violet */
+  --type-segmentation: 161 84% 39%;  /* Emerald Green */
+  --type-reconstruction: 24 95% 53%; /* Orange */
 }
 
 .theme-dark {
@@ -234,6 +244,25 @@
     100% { transform: translateX(100%); }
 }
 
+@keyframes pulse-soft {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  50% { transform: scale(1.05); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0.8; }
+}
+
+.pulse-green {
+  animation: pulse-soft 2s infinite ease-in-out;
+}
+
+.timeline-line {
+  background: linear-gradient(to bottom, #cbd5e1, #cbd5e1);
+  width: 2px;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 20px;
+}
+
 /* Extended dark-mode overrides for registration page */
 .theme-dark .registration-full-dark [class*="bg-slate-200"],
 .theme-dark .registration-full-dark [class*="bg-slate-300"] {
@@ -292,6 +321,21 @@
 
 .theme-dark .registration-full-dark [class*="bg-indigo-200"] {
   background-color: rgba(99, 102, 241, 0.15) !important;
+}
+
+/* Custom Scrollbar for Premium Dashboard */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 5px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .theme-dark .registration-full-dark [class*="bg-slate-800"] {

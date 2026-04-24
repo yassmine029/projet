@@ -21,6 +21,7 @@ import {
   Boxes,
   Plus,
   Layers,
+  Settings,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
@@ -153,57 +154,98 @@ function DashboardHome() {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   });
 
+  const [userProfile, setUserProfile] = useState(null);
+
+  useEffect(() => {
+    const fetchProfile = async () => {
+      try {
+        const res = await api.get('/auth/user/');
+        if (res.data) setUserProfile(res.data);
+      } catch (e) {
+        // Fallback
+      }
+    };
+    fetchProfile();
+  }, []);
+
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour >= 5 && hour < 12) return 'Bonjour';
+    if (hour >= 12 && hour < 18) return 'Bon après-midi';
+    if (hour >= 18 && hour < 22) return 'Bonsoir';
+    return 'Bonne nuit'; // Pour les courageux qui travaillent tard
+  };
+
+  const doctorName = userProfile?.full_name || userProfile?.username || 'Docteur';
+
   return (
-    <div className="max-w-[1160px] space-y-7 pb-12 animate-fade-in">
+    <div className="max-w-[1160px] space-y-7 pb-12 animate-fade-in relative">
+      <div className="absolute top-0 right-0 -z-10 w-1/2 h-[400px] bg-blue-50/50 blur-[120px] rounded-full pointer-events-none" />
 
       {/* ── Hero Banner ── */}
-      <div className="relative overflow-hidden rounded-[2rem] bg-gradient-to-br from-blue-600 via-blue-500 to-indigo-600 text-white">
-        <div className="pointer-events-none absolute -top-16 -right-16 w-72 h-72 bg-white/5 rounded-full blur-3xl" />
-        <div className="pointer-events-none absolute bottom-0 left-1/4 w-48 h-48 bg-cyan-400/10 rounded-full blur-3xl" />
-        <div className="pointer-events-none absolute top-1/2 right-1/4 w-32 h-32 bg-indigo-400/10 rounded-full blur-2xl" />
+      <div className="relative overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-blue-700 via-blue-600 to-indigo-600 text-white shadow-xl shadow-blue-600/10 border border-blue-400/20">
+        {/* Animated Background Gradients (Lighter) */}
+        <div className="absolute top-[-20%] right-[-10%] w-[60%] h-[140%] bg-blue-300 rotate-12 blur-[120px] opacity-20" />
+        <div className="absolute bottom-[-20%] left-[-10%] w-[50%] h-[120%] bg-white -rotate-12 blur-[100px] opacity-10" />
 
-        <div className="relative z-10 grid lg:grid-cols-5 gap-6 p-8 md:p-10">
-          <div className="lg:col-span-3 space-y-4">
-            <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/10 backdrop-blur-sm border border-white/20 rounded-full text-[10px] font-bold uppercase tracking-wider">
-              <Activity className="w-3 h-3" /> Plateforme Clinique NeuroScan
+        <div className="relative z-10 grid lg:grid-cols-12 gap-8 p-10 md:p-12 items-center">
+          <div className="lg:col-span-12 xl:col-span-7 space-y-6">
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-white/10 backdrop-blur-md border border-white/20 rounded-full text-[10px] font-black uppercase tracking-[0.1em] text-blue-100 shadow-sm">
+              <Sparkles className="w-3.5 h-3.5 text-blue-300" /> Plateforme Médicale NeuroScan
             </div>
-            <h1 className="text-2xl md:text-3xl font-black tracking-tight leading-tight">
-              Bienvenue sur votre<br />tableau de bord
-            </h1>
-            <p className="text-blue-100 text-[13px] font-medium max-w-md leading-relaxed">
-              Segmentation hippocampique, recalage multimodal, gestion patients et rapports cliniques — tout depuis un espace unifié et sécurisé.
+            
+            <div className="space-y-1">
+              <h1 className="text-2xl md:text-4xl font-black tracking-tight leading-tight">
+                {getGreeting()}, <span className="text-transparent bg-clip-text bg-gradient-to-r from-white via-blue-100 to-blue-200">{doctorName}</span>.
+              </h1>
+              <p className="text-xl md:text-2xl font-medium text-blue-100/80 tracking-tight">
+                Bienvenue dans votre espace de travail.
+              </p>
+            </div>
+
+            <p className="text-white/80 text-[13px] font-medium max-w-md leading-relaxed">
+              Votre tableau de bord unifié est prêt pour vos segmentations hippocampiques et analyses multimodales sécurisées.
             </p>
-            <p className="text-blue-200/60 text-[10px] font-bold uppercase tracking-[0.15em] pt-1">{today}</p>
-            <div className="flex flex-wrap gap-3 pt-2">
+
+            <div className="flex flex-wrap gap-3 pt-4">
               <button
                 onClick={() => navigate('/segmentation/nouvelle')}
-                className="px-5 py-2.5 bg-white text-blue-600 text-[12px] font-black rounded-xl hover:bg-blue-50 shadow-lg transition-all active:scale-95"
+                className="group relative px-6 py-3 bg-white text-blue-600 text-[12px] font-black rounded-xl hover:bg-blue-50 shadow-lg shadow-blue-900/10 transition-all active:scale-95 flex items-center gap-2 overflow-hidden"
               >
-                Nouvelle segmentation
+                <div className="absolute inset-0 bg-blue-50 translate-y-full group-hover:translate-y-0 transition-transform duration-300 -z-10" />
+                <Brain className="w-3.5 h-3.5" /> Nouvelle segmentation
               </button>
               <button
                 onClick={() => navigate('/registration')}
-                className="px-5 py-2.5 bg-white/10 backdrop-blur-sm border border-white/20 text-white text-[12px] font-bold rounded-xl hover:bg-white/20 transition-all active:scale-95"
+                className="px-6 py-3 bg-white/10 backdrop-blur-md border border-white/30 text-white text-[12px] font-bold rounded-xl hover:bg-white/20 transition-all active:scale-95 flex items-center gap-2"
               >
-                Lancer un recalage
+                <GitMerge className="w-3.5 h-3.5" /> Lancer un recalage
               </button>
+            </div>
+            
+            <div className="flex items-center gap-4 pt-4 border-t border-white/20">
+               <div className="flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.6)]" />
+                  <span className="text-[10px] font-bold text-white/70 uppercase tracking-widest">Système Opérationnel</span>
+               </div>
+               <span className="w-1 h-1 rounded-full bg-white/30" />
+               <span className="text-[10px] font-bold text-white/70 uppercase tracking-widest">{today}</span>
             </div>
           </div>
 
-          {/* Right side: mini summary cards */}
-          <div className="lg:col-span-2 flex flex-col gap-3 justify-center">
+          <div className="lg:col-span-12 xl:col-span-5 hidden xl:flex flex-col gap-3">
             {[
-              { icon: Brain, label: 'Segmentation IA', desc: 'Deep Learning hippocampique', c: 'bg-white/10' },
-              { icon: GitMerge, label: 'Recalage 2D / 3D', desc: 'IRM & TEP multimodal', c: 'bg-white/10' },
-              { icon: ShieldCheck, label: 'Sécurité HDS', desc: 'Chiffrement bout en bout', c: 'bg-white/10' },
+              { icon: Cpu, label: 'Segmentation IA', desc: 'Précision hippocampique par Deep Learning', color: 'bg-white/20' },
+              { icon: Boxes, label: 'Recalage MINE', desc: 'Algorithmes de recalage 2D & 3D multimodaux', color: 'bg-white/20' },
+              { icon: ShieldCheck, label: 'Standard HDS', desc: 'Sécurité et confidentialité des données patients', color: 'bg-white/20' },
             ].map((item, i) => (
-              <div key={i} className={`flex items-center gap-3 ${item.c} backdrop-blur-sm border border-white/10 rounded-xl px-4 py-3`}>
-                <div className="w-9 h-9 bg-white/15 rounded-lg flex items-center justify-center flex-shrink-0">
+              <div key={i} className="group flex items-center gap-4 bg-white/10 hover:bg-white/20 backdrop-blur-xl border border-white/20 rounded-2xl p-4 transition-all duration-300">
+                <div className={`w-10 h-10 ${item.color} rounded-xl flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform shadow-inner`}>
                   <item.icon className="w-4 h-4 text-white" />
                 </div>
                 <div>
-                  <p className="text-[12px] font-bold text-white leading-tight">{item.label}</p>
-                  <p className="text-[10px] text-blue-200 font-medium">{item.desc}</p>
+                  <p className="text-[13px] font-black text-white leading-tight mb-0.5">{item.label}</p>
+                  <p className="text-[10px] text-white/60 font-medium leading-relaxed">{item.desc}</p>
                 </div>
               </div>
             ))}
@@ -211,172 +253,76 @@ function DashboardHome() {
         </div>
       </div>
 
+
       {/* ── Stats Row ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
         <StatCard icon={Users} label="Patients enregistrés" value={loading ? '—' : stats.patients} sub="Base active" color="blue" />
         <StatCard icon={FileImage} label="Analyses MRI" value={loading ? '—' : stats.analyses} sub="Segmentations" color="emerald" />
-        <StatCard icon={GitMerge} label="Recalages" value="2D & 3D" sub="Multimodal" color="violet" />
-        <StatCard icon={Zap} label="Temps d'analyse" value="< 30s" sub="Segmentation moyenne" color="amber" />
+        <StatCard icon={GitMerge} label="Recalages" value="2D & 3D" sub="Multimodal" color="blue" />
+        <StatCard icon={Zap} label="Performance IA" value="< 30s" sub="Temps moyen" color="amber" />
       </div>
 
-      {/* ── Quick Action Cards ── */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
+      {/* ── Quick Access Grid ── */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-bold text-slate-900 tracking-tight">Accès rapide aux modules</h2>
-            <p className="text-[11px] text-slate-400 font-medium mt-0.5">Cliquez pour accéder directement</p>
+            <h2 className="text-[16px] font-black text-slate-900 tracking-tight">Modules de diagnostic</h2>
+            <p className="text-[11px] text-slate-400 font-medium mt-0.5">Accès direct aux outils d'analyse</p>
           </div>
         </div>
-        <div className="grid md:grid-cols-2 gap-4">
-          {/* Card 1 — Segmentation (big) */}
-          <div
-            onClick={() => navigate('/segmentation/nouvelle')}
-            className="group relative bg-white border border-slate-100 rounded-[1.5rem] p-6 hover:shadow-card-hover hover:-translate-y-1 transition-all duration-500 cursor-pointer overflow-hidden"
-          >
-            <div className="pointer-events-none absolute -bottom-6 -right-6 w-32 h-32 bg-blue-50 rounded-full opacity-60 group-hover:opacity-100 transition-opacity" />
-            <div className="relative z-10">
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors duration-500">
-                  <Brain className="w-6 h-6" />
-                </div>
-                <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-blue-600">
-                  <Sparkles className="h-3 w-3" /> IA
-                </span>
-              </div>
-              <h3 className="text-lg font-bold text-slate-900 tracking-tight mb-1">Segmentation Volumétrique</h3>
-              <p className="text-[12px] text-slate-500 leading-relaxed mb-4">Segmentation automatique de l'hippocampe gauche et droit par deep learning. Calcul des volumes et index d'asymétrie.</p>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          {[
+            { id: 'seg', icon: Brain, title: 'Segmentation', desc: 'Volumétrie hippocampique IA', color: 'blue', to: '/segmentation/nouvelle' },
+            { id: 'reg', icon: GitMerge, title: 'Recalage', desc: 'Multimodalité 2D / 3D', color: 'blue', to: '/registration' },
+            { id: 'pat', icon: Users, title: 'Patients', desc: 'Gestion de la base clinique', color: 'emerald', to: '/dashboard/patients' },
+            { id: 'rep', icon: FileText, title: 'Rapports', desc: 'Résultats et exports cliniques', color: 'amber', to: '/dashboard/analysesMRI' },
+          ].map((m) => (
+            <div
+              key={m.id}
+              onClick={() => navigate(m.to)}
+              className="group relative bg-white border border-slate-100 rounded-2xl p-5 hover:shadow-card-hover hover:-translate-y-1 transition-all duration-300 cursor-pointer overflow-hidden"
+            >
               <div className="flex items-center gap-4">
-                {['Volume L/R', 'Asymétrie', 'Reconstruction 3D'].map((t) => (
-                  <span key={t} className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-500" /> {t}
-                  </span>
-                ))}
-              </div>
-              <div className="mt-4 flex items-center gap-2 text-blue-600 font-bold text-xs uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-all">
-                Lancer une analyse <ArrowRight className="w-3 h-3" />
-              </div>
-            </div>
-          </div>
-
-          {/* Card 2 — Recalage (big) */}
-          <div
-            onClick={() => navigate('/registration')}
-            className="group relative bg-white border border-slate-100 rounded-[1.5rem] p-6 hover:shadow-card-hover hover:-translate-y-1 transition-all duration-500 cursor-pointer overflow-hidden"
-          >
-            <div className="pointer-events-none absolute -bottom-6 -right-6 w-32 h-32 bg-violet-50 rounded-full opacity-60 group-hover:opacity-100 transition-opacity" />
-            <div className="relative z-10">
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 bg-violet-50 rounded-2xl flex items-center justify-center text-violet-600 group-hover:bg-violet-600 group-hover:text-white transition-colors duration-500">
-                  <GitMerge className="w-6 h-6" />
+                <div className="w-11 h-11 bg-slate-50 rounded-xl flex items-center justify-center text-slate-400 group-hover:bg-blue-600 group-hover:text-white transition-all duration-300 shadow-sm">
+                  <m.icon className="w-5 h-5" />
                 </div>
-                <span className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-violet-600">
-                  2D & 3D
-                </span>
-              </div>
-              <h3 className="text-lg font-bold text-slate-900 tracking-tight mb-1">Recalage Multimodal</h3>
-              <p className="text-[12px] text-slate-500 leading-relaxed mb-4">Recalage automatique et manuel IRM/IRM et TEP/IRM. Identification des zones corticales d'intérêt.</p>
-              <div className="flex items-center gap-4">
-                {['Manuel', 'Automatique', 'Hybride'].map((t) => (
-                  <span key={t} className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-400">
-                    <CheckCircle2 className="w-3 h-3 text-violet-500" /> {t}
-                  </span>
-                ))}
-              </div>
-              <div className="mt-4 flex items-center gap-2 text-violet-600 font-bold text-xs uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-all">
-                Ouvrir le recalage <ArrowRight className="w-3 h-3" />
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors">{m.title}</h3>
+                  <p className="text-[10px] text-slate-400 font-medium truncate">{m.desc}</p>
+                </div>
+                <ChevronRight className="w-4 h-4 text-slate-200 group-hover:text-blue-600 transition-colors" />
               </div>
             </div>
-          </div>
-
-          {/* Card 3 — Patients (compact) */}
-          <div
-            onClick={() => navigate('/dashboard/patients')}
-            className="group relative bg-white border border-slate-100 rounded-[1.5rem] p-5 hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-300 cursor-pointer flex items-center gap-5"
-          >
-            <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600 flex-shrink-0 group-hover:bg-emerald-600 group-hover:text-white transition-colors duration-500">
-              <Users className="w-6 h-6" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <h3 className="text-[15px] font-bold text-slate-900 tracking-tight">Gestion Patients</h3>
-              <p className="text-[11px] text-slate-500 font-medium">Dossiers cliniques, historique et suivi longitudinal.</p>
-            </div>
-            <div className="flex items-center gap-1">
-              <span className="text-[22px] font-black text-emerald-600">{loading ? '—' : stats.patients}</span>
-              <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-emerald-600 transition-colors" />
-            </div>
-          </div>
-
-          {/* Card 4 — Analyses MRI (compact) */}
-          <div
-            onClick={() => navigate('/dashboard/analysesMRI')}
-            className="group relative bg-white border border-slate-100 rounded-[1.5rem] p-5 hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-300 cursor-pointer flex items-center gap-5"
-          >
-            <div className="w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-600 flex-shrink-0 group-hover:bg-amber-600 group-hover:text-white transition-colors duration-500">
-              <FileText className="w-6 h-6" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <h3 className="text-[15px] font-bold text-slate-900 tracking-tight">Analyses & Rapports</h3>
-              <p className="text-[11px] text-slate-500 font-medium">Résultats de segmentation, exports PDF et CSV.</p>
-            </div>
-            <div className="flex items-center gap-1">
-              <span className="text-[22px] font-black text-amber-600">{loading ? '—' : stats.analyses}</span>
-              <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-amber-600 transition-colors" />
-            </div>
-          </div>
+          ))}
         </div>
       </div>
 
-      {/* ── Middle Row: Activity + Platform Capabilities ── */}
-      <div className="grid lg:grid-cols-3 gap-5">
-
-        {/* Recent Activity */}
-        <div className="lg:col-span-2 bg-white border border-slate-100 rounded-2xl p-6 flex flex-col">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-blue-50 rounded-xl flex items-center justify-center">
-                <Clock className="w-4 h-4 text-blue-600" />
-              </div>
-              <div>
-                <h2 className="text-[15px] font-bold text-slate-900 tracking-tight">Activité récente</h2>
-                <p className="text-[10px] text-slate-400 font-medium">Dernières analyses et segmentations</p>
-              </div>
-            </div>
-            <button
-              onClick={() => navigate('/dashboard/analysesMRI')}
-              className="text-[10px] font-bold text-blue-600 hover:text-blue-700 uppercase tracking-widest flex items-center gap-1 transition-colors"
-            >
-              Tout voir <ChevronRight className="w-3 h-3" />
-            </button>
+      {/* ── Main Dashboard Content ── */}
+      <div className="grid lg:grid-cols-3 gap-6">
+        
+        {/* Left: Recent Activity (Spans 2 columns) */}
+        <div className="lg:col-span-2 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-[15px] font-black text-slate-900 tracking-tight">Activité récente</h2>
+            <button onClick={() => navigate('/dashboard/analysesMRI')} className="text-[10px] font-bold text-blue-600 uppercase tracking-widest hover:underline px-2 py-1">Tout voir</button>
           </div>
-
-          <div className="flex-1">
+          
+          <div className="bg-white border border-slate-100 rounded-3xl p-2 shadow-sm overflow-hidden">
             {loading ? (
-              <div className="h-40 flex items-center justify-center">
-                <span className="inline-block h-7 w-7 animate-spin rounded-full border-[3px] border-blue-600 border-t-transparent" />
-              </div>
+              <div className="py-20 flex justify-center"><span className="h-6 w-6 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" /></div>
             ) : recentRuns.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-center">
-                <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center mb-4">
-                  <FileImage className="w-8 h-8 text-slate-300" />
-                </div>
-                <p className="text-sm font-bold text-slate-500 mb-1">Aucune analyse récente</p>
-                <p className="text-[11px] text-slate-400 max-w-xs leading-relaxed mb-4">
-                  Lancez votre première segmentation volumétrique pour voir apparaître vos analyses ici.
-                </p>
-                <button
-                  onClick={() => navigate('/segmentation/nouvelle')}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white text-[12px] font-bold rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-600/20 transition-all active:scale-95"
-                >
-                  <Plus className="w-3.5 h-3.5" /> Nouvelle segmentation
-                </button>
+              <div className="py-12 text-center">
+                <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-3"><Activity className="w-5 h-5 text-slate-300" /></div>
+                <p className="text-xs font-bold text-slate-400">Aucune analyse récente</p>
               </div>
             ) : (
-              <div>
+              <div className="divide-y divide-slate-50">
                 {recentRuns.map((run, i) => (
                   <RecentActivityItem
                     key={run.id || i}
                     title={run.patient_name || `Analyse #${run.id}`}
-                    subtitle={`${run.model_version || run.model_key || 'U-Net++ ONNX'} · ${run.processed_count || 0}/${run.selected_count || 0} coupes`}
+                    subtitle={`${run.model_key || 'IA'} · ${run.processed_count || 0} coupes`}
                     time={formatTime(run.created_at)}
                     status={run.status || 'pending'}
                     onClick={() => navigate(`/segmentation/nouvelle?run=${run.id}`)}
@@ -387,112 +333,52 @@ function DashboardHome() {
           </div>
         </div>
 
-        {/* Platform Capabilities */}
-        <div className="bg-white border border-slate-100 rounded-2xl p-6">
-          <div className="flex items-center gap-3 mb-5">
-            <div className="w-9 h-9 bg-indigo-50 rounded-xl flex items-center justify-center">
-              <Boxes className="w-4 h-4 text-indigo-600" />
-            </div>
-            <div>
-              <h2 className="text-[15px] font-bold text-slate-900 tracking-tight">Capacités</h2>
-              <p className="text-[10px] text-slate-400 font-medium">Modules disponibles</p>
-            </div>
-          </div>
-
+        {/* Right: System & Capabilities */}
+        <div className="space-y-6">
+          {/* System Status Section */}
           <div className="space-y-4">
-            <FeatureRow icon={Brain} title="Segmentation Hippocampique" desc="Volume L/R, asymétrie, normes de référence." color="blue" />
-            <FeatureRow icon={Layers} title="Reconstruction 3D" desc="Visualisation interactive de l'hippocampe." color="violet" />
-            <FeatureRow icon={GitMerge} title="Recalage Multimodal" desc="IRM/IRM et TEP/IRM en 2D et 3D." color="emerald" />
-            <FeatureRow icon={BarChart3} title="Rapports Cliniques" desc="PDF structuré, CSV, modèles 3D STL/OBJ." color="amber" />
-            <FeatureRow icon={Eye} title="Zones Corticales" desc="Identification automatique Brodmann." color="rose" />
+             <h2 className="text-[15px] font-black text-slate-900 tracking-tight">Plateforme</h2>
+             <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm space-y-4">
+               {[
+                 { label: 'Calcul IA', ok: true, detail: 'U-Net++ ONNX' },
+                 { label: 'Base de données', ok: true, detail: 'Disponible' },
+                 { label: 'Accès Patient', ok: true, detail: 'Sécurisé' },
+               ].map((item, i) => (
+                 <div key={i} className="flex items-center justify-between group">
+                   <div className="flex items-center gap-3">
+                     <div className={`w-1.5 h-1.5 rounded-full ${item.ok ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]' : 'bg-red-500'}`} />
+                     <span className="text-[12px] font-bold text-slate-600">{item.label}</span>
+                   </div>
+                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{item.detail}</span>
+                 </div>
+               ))}
+               <div className="mt-4 pt-4 border-t border-slate-50">
+                  <div className="bg-slate-50 rounded-2xl p-4 flex items-center gap-3 group hover:bg-blue-50 transition-colors cursor-pointer" onClick={() => navigate('/parametres')}>
+                    <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-400 group-hover:text-blue-600 transition-colors shadow-sm">
+                      <Settings className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-[11px] font-bold text-slate-900">Préférences</p>
+                      <p className="text-[9px] text-slate-500 font-medium">Configurez vos options</p>
+                    </div>
+                    <ChevronRight className="w-3 h-3 text-slate-300" />
+                  </div>
+               </div>
+             </div>
           </div>
-        </div>
-      </div>
 
-      {/* ── Bottom Row: Workflow + System Info ── */}
-      <div className="grid lg:grid-cols-5 gap-5">
-
-        {/* Workflow / Getting started */}
-        <div className="lg:col-span-3 bg-white border border-slate-100 rounded-2xl p-6">
-          <div className="flex items-center gap-3 mb-5">
-            <div className="w-9 h-9 bg-amber-50 rounded-xl flex items-center justify-center">
-              <Sparkles className="w-4 h-4 text-amber-600" />
-            </div>
-            <div>
-              <h2 className="text-[15px] font-bold text-slate-900 tracking-tight">Workflow clinique</h2>
-              <p className="text-[10px] text-slate-400 font-medium">De l'image au diagnostic en 4 étapes</p>
-            </div>
-          </div>
-
-          <div className="grid sm:grid-cols-4 gap-3">
-            {[
-              { step: '01', icon: Download, title: 'Import', desc: 'Importez vos fichiers NIfTI depuis le PACS ou votre poste.', to: '/segmentation/nouvelle' },
-              { step: '02', icon: Cpu, title: 'Traitement IA', desc: 'Segmentation et recalage lancés automatiquement.', to: '/segmentation/nouvelle' },
-              { step: '03', icon: Eye, title: 'Visualisation', desc: 'Explorez la reconstruction 3D et les images recalées.', to: '/segmentation/modelisation' },
-              { step: '04', icon: FileText, title: 'Rapport', desc: 'Volumes, asymétries et résultats prêts pour le dossier.', to: '/dashboard/analysesMRI' },
-            ].map((item) => (
-              <div
-                key={item.step}
-                onClick={() => navigate(item.to)}
-                className="group relative rounded-xl border border-slate-100 p-4 hover:border-blue-200 hover:shadow-card-hover cursor-pointer transition-all text-center"
-              >
-                <div className="w-10 h-10 bg-blue-600 text-white text-[11px] font-black rounded-xl flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition-transform shadow-lg shadow-blue-600/20">
-                  <item.icon className="w-5 h-5" />
-                </div>
-                <div className="absolute -top-2 -right-2 w-6 h-6 bg-blue-500 text-white text-[9px] font-black rounded-full flex items-center justify-center border-2 border-white shadow-sm">
-                  {item.step}
-                </div>
-                <p className="text-[12px] font-bold text-slate-900 mb-1">{item.title}</p>
-                <p className="text-[10px] text-slate-400 leading-relaxed">{item.desc}</p>
-              </div>
-            ))}
+          {/* Mini Capabilities List */}
+          <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-3xl p-6 text-white shadow-xl shadow-slate-900/10">
+             <div className="flex items-center gap-2 mb-4">
+               <ShieldCheck className="w-4 h-4 text-emerald-400" />
+               <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Sécurité & Normes</span>
+             </div>
+             <p className="text-sm font-bold leading-snug">Données patients chiffrées de bout en bout (HDS).</p>
+             <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">Conformité RGPD et ISO 27001 pour la gestion des données médicales.</p>
+             <button onClick={() => navigate('/')} className="mt-4 w-full py-2 bg-white/5 border border-white/10 rounded-xl text-[10px] font-bold hover:bg-white/10 transition-all uppercase tracking-widest">Voir les garanties</button>
           </div>
         </div>
 
-        {/* System Status */}
-        <div className="lg:col-span-2 bg-white border border-slate-100 rounded-2xl p-6">
-          <div className="flex items-center gap-3 mb-5">
-            <div className="w-9 h-9 bg-emerald-50 rounded-xl flex items-center justify-center">
-              <ShieldCheck className="w-4 h-4 text-emerald-600" />
-            </div>
-            <div>
-              <h2 className="text-[15px] font-bold text-slate-900 tracking-tight">État du système</h2>
-              <p className="text-[10px] text-slate-400 font-medium">Statut de la plateforme</p>
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            {[
-              { label: 'API Backend', status: 'En ligne', ok: true },
-              { label: 'Modèle Segmentation', status: 'U-Net++ ONNX', ok: true },
-              { label: 'Recalage MINE', status: 'Deep Learning', ok: true },
-              { label: 'Base de données', status: 'Opérationnel', ok: true },
-            ].map((item, i) => (
-              <div key={i} className="flex items-center justify-between py-2 border-b border-slate-50 last:border-0">
-                <div className="flex items-center gap-2.5">
-                  <div className={`w-2 h-2 rounded-full ${item.ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
-                  <span className="text-[12px] font-semibold text-slate-700">{item.label}</span>
-                </div>
-                <span className={`text-[10px] font-bold uppercase tracking-wider ${item.ok ? 'text-emerald-600' : 'text-red-600'}`}>{item.status}</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-4 pt-4 border-t border-slate-100">
-            <div className="rounded-xl bg-blue-50/60 border border-blue-100 p-4">
-              <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest mb-1">Assistance</p>
-              <p className="text-[11px] text-slate-600 leading-relaxed">
-                Besoin d'aide ? Retournez à l'accueil pour contacter notre équipe technique.
-              </p>
-              <button
-                onClick={() => navigate('/')}
-                className="mt-2 text-[11px] font-bold text-blue-600 hover:text-blue-700 inline-flex items-center gap-1 transition-colors"
-              >
-                Page d'accueil <ArrowRight className="w-3 h-3" />
-              </button>
-            </div>
-          </div>
-        </div>
       </div>
 
     </div>

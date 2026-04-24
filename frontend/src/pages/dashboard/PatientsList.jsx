@@ -109,14 +109,50 @@ export default function PatientsList() {
   const handleEditSubmit = async (e) => {
     e.preventDefault();
     if (!editingPatient?.id) return;
+
+    // ─── Front-end Validations ───
+    const errors = [];
+    
+    // 1. Required fields
+    if (!editForm.dossier_number?.trim()) errors.push("Le numéro de dossier est obligatoire.");
+    if (!editForm.sexe) errors.push("Le sexe du patient est obligatoire.");
+    if (!editForm.date_naissance) {
+      errors.push("La date de naissance est obligatoire.");
+    } else {
+      // 2. Date in the future check
+      const d = new Date(editForm.date_naissance);
+      if (d > new Date()) {
+        errors.push("La date de naissance ne peut pas être dans le futur.");
+      }
+    }
+
+    // 3. Email format check
+    if (editForm.email?.trim()) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(editForm.email)) {
+        errors.push("Le format de l'email est invalide.");
+      }
+    }
+
+    if (errors.length > 0) {
+      setEditError(errors[0]); // Display first error
+      return;
+    }
+
     setEditLoading(true);
     setEditError('');
     try {
       await api.patch(`/patients/${editingPatient.id}/`, {
-        dossier_number: editForm.dossier_number, date_naissance: editForm.date_naissance,
-        sexe: editForm.sexe, telephone: editForm.telephone, email: editForm.email,
-        pathologie: editForm.pathologie, stade: editForm.stade, antecedents: editForm.antecedents,
-        autres_maladies: editForm.autres_maladies, notes: editForm.notes,
+        dossier_number: editForm.dossier_number, 
+        date_naissance: editForm.date_naissance,
+        sexe: editForm.sexe, 
+        telephone: editForm.telephone, 
+        email: editForm.email,
+        pathologie: editForm.pathologie, 
+        stade: editForm.stade, 
+        antecedents: editForm.antecedents,
+        autres_maladies: editForm.autres_maladies, 
+        notes: editForm.notes,
       });
       closeEditModal();
       fetchPatients();
@@ -128,7 +164,7 @@ export default function PatientsList() {
         const val = apiErrors[key];
         setEditError(`${key}: ${Array.isArray(val) ? val[0] : val}`);
       } else {
-        setEditError(err?.response?.data?.error || 'La modification du patient a echoue.');
+        setEditError(err?.response?.data?.error || 'La modification du patient a échoué.');
       }
     } finally {
       setEditLoading(false);
@@ -263,7 +299,11 @@ export default function PatientsList() {
                 </tr>
               ) : (
                 patients.map(patient => (
-                  <tr key={patient.id} className="hover:bg-blue-50/30 transition-colors group">
+                  <tr 
+                    key={patient.id} 
+                    onClick={() => navigate(`/dashboard/patients/${patient.id}`)}
+                    className="hover:bg-blue-50/50 transition-colors cursor-pointer group"
+                  >
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-3">
                         <div className={`w-9 h-9 bg-gradient-to-br ${getAvatarColor(patient.id)} rounded-xl flex items-center justify-center text-white text-xs font-bold shadow-sm`}>
@@ -290,16 +330,22 @@ export default function PatientsList() {
                     </td>
                     <td className="px-5 py-3.5 text-right">
                       <div className="inline-flex items-center gap-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
-                        <button onClick={() => navigate(`/dashboard/patients/${patient.id}`)}
-                          className="px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors">
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); navigate(`/dashboard/patients/${patient.id}`); }}
+                          className="px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+                        >
                           Voir
                         </button>
-                        <button onClick={() => openEditModal(patient)}
-                          className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); openEditModal(patient); }}
+                          className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                        >
                           Modifier
                         </button>
-                        <button onClick={() => handleDeletePatient(patient)}
-                          className="px-3 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors">
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); handleDeletePatient(patient); }}
+                          className="px-3 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
+                        >
                           Supprimer
                         </button>
                       </div>

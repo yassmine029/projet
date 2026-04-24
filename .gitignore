@@ -16,6 +16,9 @@ __pycache__/
 db.sqlite3
 backend_django/db_backups/*.json
 backend_django/db_backups/_*.py
+# Exports DB accidentels (scripts PowerShell)
+backend_django/*.json
+backend_django/db_export*
 
 # Fichiers uploadés (IMPORTANT!)
 uploads/

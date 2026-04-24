@@ -771,6 +771,12 @@ def _next_dossier_number():
         seq += 1
 
 
+@api_view(['GET'])
+@login_required
+def next_dossier_number(request):
+    return JsonResponse({'ok': True, 'dossier_number': _next_dossier_number()})
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def register(request):
@@ -1014,6 +1020,125 @@ def upload(request):
     Series.objects.create(job_id=job_id, patient_id=patient_id, user=request.user, files=[ref_rel, pat_rel])
     print(f"Yassmine now the upload SUCCESS - job_id: {job_id}")
     return JsonResponse({'jobId': job_id, 'refPreview': make_preview(ref_path), 'patPreview': make_preview(pat_path)})
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@login_required
+def initialize_registration_from_patient_files(request):
+    """Initializes a registration jobId from existing MRIFile objects (2D or 3D)."""
+    try:
+        data = json.loads(request.body)
+        ref_file_id = data.get('ref_file_id')
+        pat_file_id = data.get('pat_file_id')
+        patient_id_val = str(data.get('patient_id') or 'Unknown')
+
+        if not pat_file_id:
+            return JsonResponse({'error': 'pat_file_id is required'}, status=400)
+
+        pat_file = get_object_or_404(MRIFile, id=pat_file_id, patient__doctor=request.user)
+        is_3d = pat_file.original_filename.lower().endswith(('.nii', '.nii.gz'))
+        
+        job_id = str(uuid.uuid4())
+        
+        if is_3d:
+            # 3D Path: Replicate logic from volume_api.upload_volume
+            from .volume_api import (
+                VOLUMES_CACHE, _load_nifti_from_path, _persist_job_entry, _ensure_atlas
+            )
+            
+            storage_dir = os.path.join(tempfile.gettempdir(), 'visionmed_volume_jobs', job_id)
+            os.makedirs(storage_dir, exist_ok=True)
+            
+            patient_nifti_path = os.path.join(storage_dir, 'patient_prepared.nii.gz')
+            
+            # Use original file
+            vol, best_z, nifti_meta = _load_nifti_from_path(
+                pat_file.file.path,
+                prepared_output_path=patient_nifti_path,
+            )
+            
+            VOLUMES_CACHE[job_id] = {
+                'type': 'patient',
+                'data': vol,
+                'data_original': vol.copy(),
+                'nifti_path': patient_nifti_path,
+                'registered_data': None,
+                'pending_registered_data': None,
+                'pending_registration': None,
+                'selected_label': None,
+                'selected_label_name': None,
+                'selected_slice': None,
+            }
+            _persist_job_entry(job_id)
+            
+            if ref_file_id:
+                # Custom Atlas
+                ref_file = get_object_or_404(MRIFile, id=ref_file_id, patient__doctor=request.user)
+                try:
+                    atlas_vol, _, _ = _load_nifti_from_path(ref_file.file.path)
+                    from .volume_api import _set_custom_atlas_volume
+                    _set_custom_atlas_volume(atlas_vol)
+                except Exception as e:
+                    print(f"Warning: Failed to load custom 3D atlas: {e}")
+
+            return JsonResponse({
+                'ok': True,
+                'jobId': job_id,
+                'is_3d': True,
+                'suggested_z': int(best_z),
+                'pat_file': MRIFileSerializer(pat_file, context={'request': request}).data
+            })
+
+        else:
+            # 2D Path: Replicate logic from views.upload
+            if not ref_file_id:
+                return JsonResponse({'error': 'ref_file_id is required for 2D registration'}, status=400)
+
+            ref_file = get_object_or_404(MRIFile, id=ref_file_id, patient__doctor=request.user)
+            
+            job_dir = os.path.join(UPLOAD_DIR, job_id)
+            os.makedirs(job_dir, exist_ok=True)
+
+            ref_ext = os.path.splitext(ref_file.original_filename)[1] or '.png'
+            pat_ext = os.path.splitext(pat_file.original_filename)[1] or '.png'
+
+            ref_dest = os.path.join(job_dir, 'ref' + ref_ext)
+            pat_dest = os.path.join(job_dir, 'patient' + pat_ext)
+
+            shutil.copy2(ref_file.file.path, ref_dest)
+            shutil.copy2(pat_file.file.path, pat_dest)
+
+            ref_rel = os.path.relpath(ref_dest, UPLOAD_DIR).replace('\\', '/')
+            pat_rel = os.path.relpath(pat_dest, UPLOAD_DIR).replace('\\', '/')
+
+            JOBS[job_id] = {
+                'patient_id': patient_id_val,
+                'ref': ref_dest,
+                'patient': pat_dest,
+                'user': request.user.username
+            }
+
+            Series.objects.create(
+                job_id=job_id,
+                patient_id=patient_id_val,
+                user=request.user,
+                files=[ref_rel, pat_rel]
+            )
+
+            return JsonResponse({
+                'ok': True,
+                'jobId': job_id,
+                'is_3d': False,
+                'ref_file': MRIFileSerializer(ref_file, context={'request': request}).data,
+                'pat_file': MRIFileSerializer(pat_file, context={'request': request}).data
+            })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"Error initializing registration from files: {str(e)}")
+        return JsonResponse({'error': str(e)}, status=500)
 
 
 @csrf_exempt
@@ -1306,7 +1431,7 @@ def auto_align(request):
             ref_path,
             pat_path,
             os.path.join(auto_dir, f"mine_{job_id}"),
-            n_iters=mine_iters,
+            n_iters=n_iters,
             device_name="auto"
         )
 
@@ -1340,7 +1465,7 @@ def auto_align(request):
                     'mutual_information': round(float(final_mi), 4),
                     'mi_quality': mi_quality,
                     'quality_score': round(float(mi_score), 4),
-                    'n_iters': mine_iters,
+                    'n_iters': n_iters,
                     'processing_time_ms': round(float(result['processing_time'] * 1000), 2),
                     'device': result['device'],
                     'success': True,
@@ -1351,7 +1476,7 @@ def auto_align(request):
                 metrics = {
                     'success': True,
                     'mutual_information': result.get('mutual_information', 0.0),
-                    'n_iters': mine_iters,
+                    'n_iters': n_iters,
                     'processing_time_ms': round(result['processing_time'] * 1000, 2),
                     'device': result['device']
                 }
@@ -1599,6 +1724,10 @@ def patient_detail_update_delete(request, patient_id):
             serializer.save()
             return JsonResponse({'ok': True, 'patient': serializer.data, 'message': 'Patient mis à jour avec succès'})
         return JsonResponse({'ok': False, 'errors': serializer.errors}, status=400)
+
+    elif request.method == 'DELETE':
+        patient.delete()
+        return JsonResponse({'ok': True, 'message': 'Patient supprimé avec succès'})
 
 
 @api_view(['GET'])
@@ -2307,7 +2436,20 @@ def _build_volume_projection_png(rows):
     if not masks:
         return None
 
-    vol = np.stack(masks, axis=0)
+    shape_counts = {}
+    for m in masks:
+        shape = (int(m.shape[0]), int(m.shape[1]))
+        shape_counts[shape] = shape_counts.get(shape, 0) + 1
+    target_shape = max(shape_counts.items(), key=lambda item: item[1])[0]
+    th, tw = target_shape
+
+    aligned_masks = []
+    for m in masks:
+        if m.shape != target_shape:
+            m = cv2.resize(m, (tw, th), interpolation=cv2.INTER_NEAREST)
+        aligned_masks.append((m > 0).astype(np.uint8))
+
+    vol = np.stack(aligned_masks, axis=0)
     ax = (np.max(vol, axis=0) * 255).astype(np.uint8)
     cor = (np.max(vol, axis=1) * 255).astype(np.uint8)
     sag = (np.max(vol, axis=2) * 255).astype(np.uint8)
@@ -3603,6 +3745,25 @@ def _dashboard_patient_payload(patient):
     mri_files = list(patient.mri_files.all())
     slices_count = len(mri_files)
     last_exam = None
+    
+    has_2d = False
+    has_nifti = False
+    
+    extensions_2d = {'.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp'}
+    extensions_nifti = {'.nii', '.gz'}
+    
+    for f in mri_files:
+        fname = f.original_filename.lower()
+        if any(fname.endswith(ext) for ext in extensions_2d):
+            has_2d = True
+        if any(fname.endswith(ext) for ext in extensions_nifti):
+            has_nifti = True
+
+    age = None
+    if patient.date_naissance:
+        today = timezone.now().date()
+        age = today.year - patient.date_naissance.year - ((today.month, today.day) < (patient.date_naissance.month, patient.date_naissance.day))
+
     if slices_count > 0:
         # Use latest uploaded MRI file as last exam proxy for dashboard cards.
         dated_rows = [row for row in mri_files if row.uploaded_at]
@@ -3611,12 +3772,15 @@ def _dashboard_patient_payload(patient):
             last_exam = last_row.uploaded_at.isoformat()
 
     return {
-        'id': str(patient.id),
+        'id': patient.id,
         'num_dossier': patient.dossier_number,
         'nom': patient.nom,
         'prenom': patient.prenom,
         'date_naissance': patient.date_naissance.isoformat() if patient.date_naissance else None,
+        'age': age,
         'sexe': patient.sexe,
+        'has_2d': has_2d,
+        'has_nifti': has_nifti,
         'autres_maladies': patient.autres_maladies,
         'slices_count': slices_count,
         'last_exam': last_exam,
@@ -3671,14 +3835,48 @@ def patients_list_create(request):
         dossier_number = (raw_data.get('dossier_number') or raw_data.get('num_dossier') or '').strip()
         if not dossier_number:
             return JsonResponse({'ok': False, 'error': 'Le numero de dossier est obligatoire.'}, status=400)
+        import re as _re
+        if not _re.match(r'^DOS-\d{4}-\d{4}$', dossier_number):
+            return JsonResponse({'ok': False, 'error': 'Format du numéro invalide — attendu : DOS-YYYY-NNNN.'}, status=400)
+        dos_year = int(dossier_number.split('-')[1])
+        from datetime import date as _date_check
+        if dos_year < 2000 or dos_year > _date_check.today().year:
+            return JsonResponse({'ok': False, 'error': f"L'année dans le numéro de dossier doit être entre 2000 et {_date_check.today().year}."}, status=400)
+
+        date_naissance_str = (raw_data.get('date_naissance') or '').strip()
+        if date_naissance_str:
+            from datetime import date as _date
+            try:
+                dn = _date.fromisoformat(date_naissance_str)
+                today_d = _date.today()
+                if dn > today_d:
+                    return JsonResponse({'ok': False, 'error': 'La date de naissance ne peut pas être dans le futur.'}, status=400)
+                age_years = today_d.year - dn.year - ((today_d.month, today_d.day) < (dn.month, dn.day))
+                if age_years > 130:
+                    return JsonResponse({'ok': False, 'error': 'Date de naissance invalide — âge supérieur à 130 ans.'}, status=400)
+            except ValueError:
+                return JsonResponse({'ok': False, 'error': 'Format de date invalide (attendu : YYYY-MM-DD).'}, status=400)
+
+        date_naissance_val = (raw_data.get('date_naissance') or '').strip()
+        if not date_naissance_val:
+            return JsonResponse({'ok': False, 'error': 'La date de naissance est obligatoire.'}, status=400)
+
+        sexe_val = (raw_data.get('sexe') or '').strip()
+        if sexe_val not in ('M', 'F'):
+            return JsonResponse({'ok': False, 'error': 'Le sexe est obligatoire (M ou F).'}, status=400)
+
+        telephone_val = (raw_data.get('telephone') or '').strip()
+        if telephone_val:
+            tn_phone_re = _re.compile(r'^(\+216[\s\-]?|00216[\s\-]?)?([2579]\d)[\s\-]?(\d{3})[\s\-]?(\d{3})$')
+            if not tn_phone_re.match(telephone_val):
+                return JsonResponse({'ok': False, 'error': 'Numéro de téléphone invalide — format attendu : XX XXX XXX (ex: 22 123 456 ou +216 22 123 456).'}, status=400)
 
         payload = {
             'dossier_number': dossier_number,
-            # Keep compatibility with current creation UI that only asks for dossier/date/sexe.
             'nom': (raw_data.get('nom') or 'Patient').strip(),
             'prenom': (raw_data.get('prenom') or dossier_number).strip(),
-            'date_naissance': raw_data.get('date_naissance') or '1900-01-01',
-            'sexe': raw_data.get('sexe') or 'M',
+            'date_naissance': date_naissance_val,
+            'sexe': sexe_val,
             'telephone': raw_data.get('telephone') or None,
             'email': raw_data.get('email') or None,
             'pathologie': raw_data.get('pathologie') or None,
@@ -3700,27 +3898,56 @@ def patients_list_create(request):
                     first_error = str(first_value)
             return JsonResponse({'ok': False, 'error': first_error, 'errors': serializer.errors}, status=400)
 
-        with transaction.atomic():
-            patient = serializer.save(doctor=request.user)
+        try:
+            with transaction.atomic():
+                patient = serializer.save(doctor=request.user)
 
-            # Optional in JSON mode, mandatory in multipart mode from NewPatient screen.
-            if not is_json and not files:
-                transaction.set_rollback(True)
-                return JsonResponse({'ok': False, 'error': 'Un dossier contenant au moins un fichier est obligatoire.'}, status=400)
+                # Optional in JSON mode, mandatory in multipart mode from NewPatient screen.
+                if not is_json and not files:
+                    transaction.set_rollback(True)
+                    return JsonResponse({'ok': False, 'error': 'Un dossier contenant au moins un fichier est obligatoire.'}, status=400)
 
-            for index, uploaded_file in enumerate(files):
-                rel_from_client = relative_paths[index] if index < len(relative_paths) else ''
-                safe_rel = _safe_relative_path(rel_from_client, uploaded_file.name)
-                storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
-                saved_path = default_storage.save(storage_path, uploaded_file)
+                ALLOWED_EXTENSIONS = {
+                    '.nii', '.gz', '.dcm', '.dicom',
+                    '.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp',
+                }
+                MAX_FILE_SIZE_MB = 500
+                MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
-                MRIFile.objects.create(
-                    patient=patient,
-                    file=saved_path,
-                    original_filename=uploaded_file.name,
-                    relative_path=safe_rel,
-                    file_size=int(getattr(uploaded_file, 'size', 0) or 0),
-                )
+                for index, uploaded_file in enumerate(files):
+                    fname_lower = uploaded_file.name.lower()
+                    ext = os.path.splitext(fname_lower)[1]
+                    # .nii.gz → extension double
+                    if fname_lower.endswith('.nii.gz'):
+                        ext = '.gz'
+                    if ext not in ALLOWED_EXTENSIONS:
+                        transaction.set_rollback(True)
+                        return JsonResponse({
+                            'ok': False,
+                            'error': f'Extension « {ext} » non autorisée pour le fichier « {uploaded_file.name} ». Formats acceptés : NIfTI, DICOM, JPEG, PNG, TIFF, BMP.'
+                        }, status=400)
+                    file_size = getattr(uploaded_file, 'size', 0) or 0
+                    if file_size > MAX_FILE_SIZE_BYTES:
+                        transaction.set_rollback(True)
+                        return JsonResponse({
+                            'ok': False,
+                            'error': f'Le fichier « {uploaded_file.name} » dépasse la limite de {MAX_FILE_SIZE_MB} Mo ({file_size // (1024*1024)} Mo).'
+                        }, status=400)
+
+                    rel_from_client = relative_paths[index] if index < len(relative_paths) else ''
+                    safe_rel = _safe_relative_path(rel_from_client, uploaded_file.name)
+                    storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
+                    saved_path = default_storage.save(storage_path, uploaded_file)
+
+                    MRIFile.objects.create(
+                        patient=patient,
+                        file=saved_path,
+                        original_filename=uploaded_file.name,
+                        relative_path=safe_rel,
+                        file_size=int(getattr(uploaded_file, 'size', 0) or 0),
+                    )
+        except IntegrityError:
+            return JsonResponse({'ok': False, 'error': f'Le numéro de dossier « {dossier_number} » existe déjà. Veuillez choisir un numéro unique.'}, status=409)
 
         out_serializer = PatientSerializer(patient, context={'request': request})
         return JsonResponse(

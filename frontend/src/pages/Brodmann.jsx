@@ -1,67 +1,84 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api';
 import BrodmannIdentificationView from '../components/BrodmannIdentificationView';
+import BrodmannSyncedViewer from '../components/BrodmannSyncedViewer';
+import BrodmannZone3D from '../components/BrodmannZone3D';
 
-const DEFAULT_AXIS = 'axial';
+// ── Brodmann areas catalogue ───────────────────────────────────────────────────
+const BRODMANN_AREAS = [
+  { id: 1,  name: 'Somatosensoriel I',       group: 'Pariétal' },
+  { id: 2,  name: 'Somatosensoriel II',      group: 'Pariétal' },
+  { id: 3,  name: 'Somatosensoriel III',     group: 'Pariétal' },
+  { id: 4,  name: 'Moteur Primaire',         group: 'Frontal' },
+  { id: 5,  name: 'Somatosensoriel Assoc.', group: 'Pariétal' },
+  { id: 6,  name: 'Prémoteur',              group: 'Frontal' },
+  { id: 7,  name: 'Pariétal Supérieur',     group: 'Pariétal' },
+  { id: 8,  name: 'Frontal Oculomoteur',    group: 'Frontal' },
+  { id: 9,  name: 'Préfrontal DL',          group: 'Frontal' },
+  { id: 10, name: 'Préfrontal Ant.',        group: 'Frontal' },
+  { id: 11, name: 'Orbitofrontal',          group: 'Frontal' },
+  { id: 17, name: 'Visuel Primaire',        group: 'Occipital' },
+  { id: 18, name: 'Visuel Associatif',      group: 'Occipital' },
+  { id: 19, name: 'Visuel Assoc. II',       group: 'Occipital' },
+  { id: 20, name: 'Temporal Inférieur',     group: 'Temporal' },
+  { id: 21, name: 'Temporal Moyen',         group: 'Temporal' },
+  { id: 22, name: 'Wernicke',               group: 'Temporal' },
+  { id: 24, name: 'Cingulaire Ant.',        group: 'Cingulaire' },
+  { id: 37, name: 'Fusiforme',              group: 'Temporal' },
+  { id: 39, name: 'Gyrus Angulaire',        group: 'Pariétal' },
+  { id: 40, name: 'Pariétal Inférieur',     group: 'Pariétal' },
+  { id: 41, name: 'Auditif Primaire',       group: 'Temporal' },
+  { id: 42, name: 'Auditif Assoc.',         group: 'Temporal' },
+  { id: 44, name: 'Broca (pars op.)',       group: 'Frontal' },
+  { id: 45, name: 'Broca (pars tri.)',      group: 'Frontal' },
+  { id: 46, name: 'Préfrontal',             group: 'Frontal' },
+  { id: 47, name: 'Frontal Inférieur',      group: 'Frontal' },
+];
+
+const GROUP_COLORS = {
+  Frontal:    'text-blue-400',
+  Pariétal:   'text-emerald-400',
+  Temporal:   'text-amber-400',
+  Occipital:  'text-violet-400',
+  Cingulaire: 'text-rose-400',
+};
+
+// ── Component ──────────────────────────────────────────────────────────────────
 
 export default function BrodmannPage() {
   const [jobId, setJobId] = useState('');
-  const [axis, setAxis] = useState(DEFAULT_AXIS);
-  const [index, setIndex] = useState(0);
-  const [maxIndex, setMaxIndex] = useState(0);
 
-  const [atlasImage, setAtlasImage] = useState('');
-  const [patientImage, setPatientImage] = useState('');
-
+  // Zone identification state
   const [zone, setZone] = useState(null);
   const [insideBrain, setInsideBrain] = useState(false);
-  const [selectedRatios, setSelectedRatios] = useState(null);
+  const [hasAttempt, setHasAttempt] = useState(false);
+  const [mniCoords, setMniCoords] = useState(null);
+  const [activeLabelId, setActiveLabelId] = useState(null);
 
+  // Workflow state
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [autoAlignIters, setAutoAlignIters] = useState(60);
   const [alignRuns, setAlignRuns] = useState([]);
-
   const [uploadFile, setUploadFile] = useState(null);
-  const viewerRef = useRef(null);
+
+  // View tab: '2d' | '3d'
+  const [activeTab, setActiveTab] = useState('2d');
+  const [showMetrics, setShowMetrics] = useState(false);
 
   const canWork = useMemo(() => !!jobId, [jobId]);
 
-  const refreshAtlasSlice = async (nextAxis = axis, nextIndex = index) => {
-    const res = await api.get('/volume/atlas_slice', {
-      params: { axis: nextAxis, index: nextIndex },
-    });
-    const data = res.data || {};
-    if (data.image) setAtlasImage(data.image);
-    if (typeof data.index === 'number') setIndex(data.index);
-    if (typeof data.max_index === 'number') setMaxIndex(data.max_index);
-  };
+  // Auto-switch to 3D tab when a zone is identified
+  useEffect(() => {
+    if (activeLabelId) setActiveTab('3d');
+  }, [activeLabelId]);
 
-  const refreshPatientSlice = async (nextJobId = jobId, nextAxis = axis, nextIndex = index) => {
-    const res = await api.get('/volume/patient_slice', {
-      params: { jobId: nextJobId, axis: nextAxis, index: nextIndex },
-    });
-    const data = res.data || {};
-    if (data.image) setPatientImage(data.image);
-    if (typeof data.index === 'number') setIndex(data.index);
-    if (typeof data.max_index === 'number') setMaxIndex(data.max_index);
-  };
-
-  const syncSlices = async (nextJobId = jobId, nextAxis = axis, nextIndex = index) => {
-    await refreshAtlasSlice(nextAxis, nextIndex);
-    if (nextJobId) {
-      await refreshPatientSlice(nextJobId, nextAxis, nextIndex);
-    }
-  };
+  // ── Patient loading ──────────────────────────────────────────────────────────
 
   const loadDemoPatient = async (options = {}) => {
     const silent = !!options.silent;
-    if (!silent) {
-      setBusy(true);
-      setError('');
-      setMessage('Chargement du patient demo...');
-    }
+    if (!silent) { setBusy(true); setError(''); setMessage('Chargement du patient demo...'); }
     try {
       const res = await api.post('/volume/load-demo');
       const data = res.data || {};
@@ -69,58 +86,30 @@ export default function BrodmannPage() {
       if (!nextJobId) throw new Error('jobId manquant');
       setJobId(nextJobId);
       sessionStorage.setItem('volumeJobId', nextJobId);
-
-      const nextIndex = typeof data.z === 'number' ? data.z : 0;
-      if (typeof data.max_z === 'number') setMaxIndex(data.max_z);
-      setIndex(nextIndex);
-      if (data.median_slice) setPatientImage(data.median_slice);
-
-      await refreshAtlasSlice(axis, nextIndex);
-      if (!silent) {
-        setMessage('Patient demo charge. Vous pouvez lancer le recalage atlas.');
-      }
+      if (!silent) setMessage('Patient demo chargé.');
       return nextJobId;
-    } catch (e) {
-      if (!silent) {
-        setError('Impossible de charger le patient demo.');
-        setMessage('');
-      }
+    } catch {
+      if (!silent) { setError('Impossible de charger le patient demo.'); setMessage(''); }
       return '';
     } finally {
-      if (!silent) {
-        setBusy(false);
-      }
+      if (!silent) setBusy(false);
     }
   };
 
   const uploadPatientVolume = async () => {
-    if (!uploadFile) {
-      setError('Choisissez un fichier patient (.nii/.nii.gz ou image).');
-      return;
-    }
-    setBusy(true);
-    setError('');
-    setMessage('Upload du volume patient...');
+    if (!uploadFile) { setError('Choisissez un fichier patient (.nii/.nii.gz ou image).'); return; }
+    setBusy(true); setError(''); setMessage('Upload du volume patient...');
     try {
       const fd = new FormData();
       fd.append('file', uploadFile);
-      const res = await api.post('/volume/upload', fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const res = await api.post('/volume/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
       const data = res.data || {};
       const nextJobId = data.jobId;
       if (!nextJobId) throw new Error('jobId manquant');
-
       setJobId(nextJobId);
       sessionStorage.setItem('volumeJobId', nextJobId);
-      const nextIndex = typeof data.z === 'number' ? data.z : 0;
-      if (typeof data.max_z === 'number') setMaxIndex(data.max_z);
-      setIndex(nextIndex);
-      if (data.median_slice) setPatientImage(data.median_slice);
-
-      await refreshAtlasSlice(axis, nextIndex);
-      setMessage('Volume patient charge. Lancez le recalage atlas.');
-    } catch (e) {
+      setMessage('Volume chargé. Lancez le recalage.');
+    } catch {
       setError('Echec upload volume patient.');
       setMessage('');
     } finally {
@@ -128,19 +117,15 @@ export default function BrodmannPage() {
     }
   };
 
+  // ── Registration ─────────────────────────────────────────────────────────────
+
   const runAutoAlign = async () => {
     if (!jobId) return;
-    setBusy(true);
-    setError('');
-    setMessage(`Recalage atlas automatique en cours (${autoAlignIters} iterations)...`);
+    setBusy(true); setError('');
+    setMessage(`Recalage en cours (${autoAlignIters} iters)...`);
     try {
       const res = await api.post('/volume/auto-align', { jobId, n_iters: autoAlignIters });
       const data = res.data || {};
-      if (data.images?.atlas) setAtlasImage(data.images.atlas);
-      if (data.images?.patient) setPatientImage(data.images.patient);
-      if (!data.images?.atlas || !data.images?.patient) {
-        await syncSlices(jobId, axis, index);
-      }
       const metrics = data.metrics || {};
       const runSummary = {
         n_iters: Number(data.n_iters || metrics.n_iters || autoAlignIters),
@@ -149,10 +134,11 @@ export default function BrodmannPage() {
         processing_time_ms: Number(metrics.processing_time_ms || 0),
         mi_quality: metrics.mi_quality || 'N/A',
       };
-      setAlignRuns((prev) => [runSummary, ...prev].slice(0, 5));
-      setMessage('Recalage atlas termine. Comparez les metriques et validez si correct.');
-    } catch (e) {
-      setError('Recalage atlas automatique echoue.');
+      setAlignRuns(prev => [runSummary, ...prev].slice(0, 5));
+      setMessage('Recalage terminé. Validez si correct.');
+      setShowMetrics(true);
+    } catch {
+      setError('Recalage automatique échoué.');
       setMessage('');
     } finally {
       setBusy(false);
@@ -160,18 +146,14 @@ export default function BrodmannPage() {
   };
 
   const validateRegistration = async () => {
-    if (!jobId) return;
-    setBusy(true);
-    setError('');
+    if (!jobId) return false;
+    setBusy(true); setError('');
     try {
-      const res = await api.post('/volume/validate-registration', { jobId });
-      const data = res.data || {};
-      if (data.images?.atlas) setAtlasImage(data.images.atlas);
-      if (data.images?.patient) setPatientImage(data.images.patient);
-      setMessage('Recalage valide et applique au volume complet.');
+      await api.post('/volume/validate-registration', { jobId });
+      setMessage('Recalage validé et appliqué.');
       return true;
-    } catch (e) {
-      setError('Validation du recalage echouee.');
+    } catch {
+      setError('Validation du recalage échouée.');
       return false;
     } finally {
       setBusy(false);
@@ -179,16 +161,14 @@ export default function BrodmannPage() {
   };
 
   const rejectRegistration = async () => {
-    if (!jobId) return;
-    setBusy(true);
-    setError('');
+    if (!jobId) return false;
+    setBusy(true); setError('');
     try {
       await api.post('/volume/reject-registration', { jobId });
-      await syncSlices(jobId, axis, index);
-      setMessage('Resultat rejete. Vous pouvez relancer le recalage.');
+      setMessage('Résultat rejeté. Vous pouvez relancer.');
       return true;
-    } catch (e) {
-      setError('Rejet du recalage echoue.');
+    } catch {
+      setError('Rejet du recalage échoué.');
       return false;
     } finally {
       setBusy(false);
@@ -196,302 +176,283 @@ export default function BrodmannPage() {
   };
 
   const proceedToIdentification = async () => {
-    const ok = await validateRegistration();
-    if (ok && viewerRef.current) {
-      viewerRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
+    await validateRegistration();
   };
 
-  const handleAxisChange = async (nextAxis) => {
-    setAxis(nextAxis);
-    setZone(null);
-    setInsideBrain(false);
-    setSelectedRatios(null);
-    if (!jobId) {
-      await refreshAtlasSlice(nextAxis, 0);
-      return;
-    }
-    await syncSlices(jobId, nextAxis, index);
+  // ── Zone identification callback ─────────────────────────────────────────────
+
+  const handleZoneIdentified = (identifiedZone, isInside, mni) => {
+    setZone(identifiedZone);
+    setInsideBrain(isInside);
+    setMniCoords(mni);
+    setHasAttempt(true);
+    setActiveLabelId(identifiedZone?.id ?? null);
+    setMessage(isInside ? 'Zone Brodmann identifiée.' : 'Point hors cerveau.');
   };
 
-  const handleIndexChange = async (nextIndex) => {
-    setIndex(nextIndex);
-    setZone(null);
-    setInsideBrain(false);
-    setSelectedRatios(null);
-    if (!jobId) {
-      await refreshAtlasSlice(axis, nextIndex);
-      return;
-    }
-    await syncSlices(jobId, axis, nextIndex);
-  };
-
-  const identifyFromClick = async (event) => {
-    if (!jobId) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const xr = (event.clientX - rect.left) / Math.max(1, rect.width);
-    const yr = (event.clientY - rect.top) / Math.max(1, rect.height);
-    const xRatio = Math.max(0, Math.min(1, xr));
-    const yRatio = Math.max(0, Math.min(1, yr));
-
-    setBusy(true);
-    setError('');
-    try {
-      const res = await api.get('/volume/brodmann', {
-        params: { jobId, axis, index, xRatio, yRatio },
-      });
-      const data = res.data || {};
-      setZone(data.zone || null);
-      setInsideBrain(!!data.insideBrain);
-      setSelectedRatios({ xRatio, yRatio });
-      if (data.images?.atlas) setAtlasImage(data.images.atlas);
-      if (data.images?.patient) setPatientImage(data.images.patient);
-      setMessage(data.insideBrain ? 'Zone Brodmann identifiee.' : 'Point hors cerveau.');
-    } catch (e) {
-      setError('Identification de zone echouee.');
-    } finally {
-      setBusy(false);
-    }
-  };
+  // ── Init ─────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     const init = async () => {
       const saved = sessionStorage.getItem('volumeJobId') || '';
-      try {
-        await refreshAtlasSlice(axis, index);
-        if (saved) {
-          try {
-            setJobId(saved);
-            await syncSlices(saved, axis, index);
-            setMessage('Session volume restauree automatiquement.');
-            return;
-          } catch (savedError) {
-            setJobId('');
-            sessionStorage.removeItem('volumeJobId');
-          }
-        }
-
-        const demoJobId = await loadDemoPatient({ silent: true });
-        if (demoJobId) {
-          setMessage('Atlas et patient test charges automatiquement.');
-        } else {
-          setMessage('Atlas charge. Chargez un volume patient ou utilisez le mode demo.');
-        }
-      } catch (e) {
-        setJobId('');
-        sessionStorage.removeItem('volumeJobId');
-        await refreshAtlasSlice(axis, index);
-        setMessage('Atlas charge. Chargez un volume patient ou utilisez le mode demo.');
+      if (saved) {
+        setJobId(saved);
+        setMessage('Session restaurée.');
+        return;
       }
+      const demoJobId = await loadDemoPatient({ silent: true });
+      if (demoJobId) setMessage('Atlas et patient test chargés.');
+      else setMessage('Chargez un volume ou utilisez le mode démo.');
     };
     init();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
-    <div className="relative min-h-screen overflow-x-hidden bg-slate-950 pb-36 text-slate-100">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(16,185,129,0.18),_transparent_45%),radial-gradient(circle_at_20%_20%,_rgba(59,130,246,0.2),_transparent_38%)]" />
+    <div className="h-screen flex flex-col bg-slate-950 text-slate-100 overflow-hidden">
 
-      <div className="relative mx-auto max-w-7xl space-y-5 p-4 md:p-6">
-        <header className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_10px_45px_rgba(2,6,23,0.6)] backdrop-blur">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+      {/* ── Top header: title + controls ──────────────────────────────────────── */}
+      <header className="shrink-0 border-b border-white/5 bg-slate-900/80 backdrop-blur">
+
+        {/* Row 1: title + session */}
+        <div className="flex items-center justify-between px-5 py-2.5 border-b border-white/[0.04]">
+          <div className="flex items-center gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-emerald-300/80">NeuroScan Workflow</p>
-              <h1 className="mt-2 text-2xl font-semibold text-white md:text-3xl">Recalage Atlas et Identification Brodmann</h1>
-              <p className="mt-2 max-w-3xl text-sm text-slate-300">
-                Pipeline clinique: chargez le volume, lancez le recalage automatique, puis confirmez ou rejetez le resultat avant l'identification precise des zones.
+              <p className="text-[9px] font-black uppercase tracking-[0.25em] text-emerald-400/80">NeuroScan</p>
+              <h1 className="text-sm font-bold text-white leading-tight">Recalage Atlas · Identification Brodmann</h1>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            {(message || error) && (
+              <p className={`text-[10px] font-semibold max-w-xs truncate ${error ? 'text-rose-300' : 'text-cyan-300/80'}`}>
+                {error || message}
               </p>
-            </div>
-            <div className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-              <p className="text-xs uppercase tracking-wider text-emerald-300/70">Session active</p>
-              <p className="mt-1 font-mono">{jobId || 'Aucun Job ID'}</p>
+            )}
+            <div className="text-right">
+              <p className="text-[8px] uppercase tracking-[0.2em] text-slate-600">Session</p>
+              <p className="text-[10px] font-mono text-emerald-300/80">{jobId || '—'}</p>
             </div>
           </div>
-        </header>
+        </div>
 
-        <section className="rounded-3xl border border-white/10 bg-slate-900/70 p-4 shadow-[0_10px_40px_rgba(15,23,42,0.55)] backdrop-blur md:p-5">
-          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-5">
-            <input
-              type="file"
-              accept=".nii,.nii.gz,image/*"
-              onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
-              className="rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-blue-400"
-            />
-            <button
-              onClick={uploadPatientVolume}
-              disabled={busy}
-              className="rounded-xl bg-gradient-to-r from-blue-500 to-cyan-400 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Charger volume patient
-            </button>
-            <button
-              onClick={loadDemoPatient}
-              disabled={busy}
-              className="rounded-xl border border-cyan-300/30 bg-cyan-500/10 px-3 py-2 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Charger patient demo
-            </button>
-            <button
-              onClick={runAutoAlign}
-              disabled={busy || !canWork}
-              className="rounded-xl bg-gradient-to-r from-emerald-400 to-teal-300 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Lancer recalage auto
-            </button>
-            <label className="flex items-center gap-2 rounded-xl border border-emerald-300/25 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100">
-              <span className="whitespace-nowrap">Iterations</span>
-              <input
-                type="number"
-                min={30}
-                max={1000}
-                step={10}
-                value={autoAlignIters}
-                onChange={(e) => setAutoAlignIters(Number(e.target.value || 120))}
-                className="w-24 rounded-md border border-emerald-200/30 bg-slate-900/80 px-2 py-1 text-sm text-white outline-none focus:border-cyan-300"
-              />
-            </label>
-          </div>
-
-          {(message || error) && (
-            <div className="mt-4 grid gap-2 md:grid-cols-2">
-              {message && <p className="rounded-xl border border-cyan-300/20 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100">{message}</p>}
-              {error && <p className="rounded-xl border border-rose-300/25 bg-rose-500/10 px-3 py-2 text-sm font-medium text-rose-200">{error}</p>}
-            </div>
-          )}
-
-          {alignRuns.length > 0 && (
-            <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/50 p-3">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-300">Comparaison des derniers recalages</p>
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-left text-xs text-slate-200">
-                  <thead className="text-slate-400">
-                    <tr>
-                      <th className="px-2 py-1">Iterations</th>
-                      <th className="px-2 py-1">MI</th>
-                      <th className="px-2 py-1">Qualite MI</th>
-                      <th className="px-2 py-1">NCC apres</th>
-                      <th className="px-2 py-1">Temps (s)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {alignRuns.map((run, idxRun) => (
-                      <tr key={`${run.n_iters}-${idxRun}`} className={idxRun === 0 ? 'bg-emerald-500/10' : ''}>
-                        <td className="px-2 py-1 font-semibold text-emerald-200">{run.n_iters}</td>
-                        <td className="px-2 py-1">{run.mutual_information.toFixed(4)}</td>
-                        <td className="px-2 py-1">{run.mi_quality}</td>
-                        <td className="px-2 py-1">{run.ncc_after.toFixed(4)}</td>
-                        <td className="px-2 py-1">{(run.processing_time_ms / 1000).toFixed(1)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </section>
-
-        <div className="grid gap-4 lg:grid-cols-3">
-          <section ref={viewerRef} className="rounded-3xl border border-white/10 bg-slate-900/70 p-4 shadow-[0_10px_40px_rgba(15,23,42,0.55)] backdrop-blur lg:col-span-2 md:p-5">
-            <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/50 p-3">
-              <label className="text-xs font-semibold uppercase tracking-wider text-slate-300">Axe</label>
-              <select
-                value={axis}
-                onChange={(e) => handleAxisChange(e.target.value)}
-                className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm text-slate-100 outline-none focus:border-cyan-400"
-              >
-                <option value="axial">axial</option>
-                <option value="coronal">coronal</option>
-                <option value="sagittal">sagittal</option>
-              </select>
-
-              <label className="ml-1 text-xs font-semibold uppercase tracking-wider text-slate-300">Coupe</label>
-              <input
-                type="range"
-                min={0}
-                max={maxIndex}
-                value={index}
-                onChange={(e) => handleIndexChange(Number(e.target.value))}
-                className="w-full max-w-xs accent-cyan-400"
-              />
-              <span className="rounded-md bg-slate-800 px-2 py-1 text-xs text-cyan-200">{index}/{maxIndex}</span>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Atlas (clic pour identifier)</p>
-                <div className="relative overflow-hidden rounded-2xl border border-slate-700 bg-black/80 shadow-inner shadow-cyan-500/5">
-                  {atlasImage ? (
-                    <img
-                      src={atlasImage}
-                      alt="atlas"
-                      className="block w-full cursor-crosshair"
-                      onClick={identifyFromClick}
-                    />
-                  ) : (
-                    <div className="flex h-64 items-center justify-center text-sm text-slate-500">Atlas indisponible</div>
-                  )}
-
-                  {selectedRatios && (
-                    <div
-                      className="pointer-events-none absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-amber-300 shadow-[0_0_18px_rgba(251,191,36,0.75)]"
-                      style={{ left: `${selectedRatios.xRatio * 100}%`, top: `${selectedRatios.yRatio * 100}%` }}
-                    />
-                  )}
-                </div>
-              </div>
-
-              <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Patient</p>
-                <div className="overflow-hidden rounded-2xl border border-slate-700 bg-black/80 shadow-inner shadow-cyan-500/5">
-                  {patientImage ? (
-                    <img
-                      src={patientImage}
-                      alt="patient"
-                      className="block w-full cursor-crosshair"
-                      onClick={identifyFromClick}
-                    />
-                  ) : (
-                    <div className="flex h-64 items-center justify-center text-sm text-slate-500">Patient indisponible</div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <BrodmannIdentificationView
-            zone={zone}
-            insideBrain={insideBrain}
-            axis={axis}
-            index={index}
-            maxIndex={maxIndex}
-            onAxisChange={handleAxisChange}
-            onIndexChange={handleIndexChange}
+        {/* Row 2: controls */}
+        <div className="flex items-center gap-2 px-5 py-2 flex-wrap">
+          <input
+            type="file"
+            accept=".nii,.nii.gz,image/*"
+            onChange={e => setUploadFile(e.target.files?.[0] || null)}
+            className="text-[11px] text-slate-400 file:mr-2 file:rounded-lg file:border-0 file:bg-slate-800 file:px-3 file:py-1 file:text-[11px] file:text-slate-200 file:cursor-pointer hover:file:bg-slate-700 max-w-[180px]"
           />
+          <button
+            onClick={uploadPatientVolume}
+            disabled={busy}
+            className="rounded-lg bg-blue-500/20 border border-blue-400/30 px-3 py-1 text-[11px] font-semibold text-blue-200 hover:bg-blue-500/30 disabled:opacity-40 transition"
+          >
+            Charger
+          </button>
+          <button
+            onClick={loadDemoPatient}
+            disabled={busy}
+            className="rounded-lg bg-slate-800 border border-white/10 px-3 py-1 text-[11px] font-semibold text-slate-300 hover:bg-slate-700 disabled:opacity-40 transition"
+          >
+            Patient démo
+          </button>
+          <div className="h-4 w-px bg-white/10" />
+          <button
+            onClick={runAutoAlign}
+            disabled={busy || !canWork}
+            className="rounded-lg bg-emerald-500/20 border border-emerald-400/30 px-3 py-1 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/30 disabled:opacity-40 transition"
+          >
+            {busy ? 'En cours…' : 'Recalage auto'}
+          </button>
+          <label className="flex items-center gap-1.5 text-[11px] text-slate-400">
+            Iters
+            <input
+              type="number"
+              min={30} max={1000} step={10}
+              value={autoAlignIters}
+              onChange={e => setAutoAlignIters(Number(e.target.value || 60))}
+              className="w-16 rounded-lg border border-slate-700 bg-slate-900/80 px-2 py-0.5 text-[11px] text-white outline-none focus:border-cyan-400"
+            />
+          </label>
+
+          {/* Metrics toggle */}
+          {alignRuns.length > 0 && (
+            <button
+              onClick={() => setShowMetrics(v => !v)}
+              className="ml-auto rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] font-semibold text-slate-400 hover:bg-white/10 transition"
+            >
+              {showMetrics ? 'Masquer métriques' : `Métriques (${alignRuns.length})`}
+            </button>
+          )}
+        </div>
+
+        {/* Row 3: registration metrics (collapsible) */}
+        {showMetrics && alignRuns.length > 0 && (
+          <div className="px-5 py-2 border-t border-white/[0.04] overflow-x-auto">
+            <table className="min-w-full text-left text-[10px] text-slate-300">
+              <thead className="text-slate-500">
+                <tr>
+                  <th className="pr-4 py-0.5">Itérations</th>
+                  <th className="pr-4 py-0.5">MI</th>
+                  <th className="pr-4 py-0.5">Qualité MI</th>
+                  <th className="pr-4 py-0.5">NCC</th>
+                  <th className="pr-4 py-0.5">Temps (s)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {alignRuns.map((run, i) => (
+                  <tr key={`${run.n_iters}-${i}`} className={i === 0 ? 'text-emerald-200' : ''}>
+                    <td className="pr-4 py-0.5 font-semibold">{run.n_iters}</td>
+                    <td className="pr-4 py-0.5">{run.mutual_information.toFixed(4)}</td>
+                    <td className="pr-4 py-0.5">{run.mi_quality}</td>
+                    <td className="pr-4 py-0.5">{run.ncc_after.toFixed(4)}</td>
+                    <td className="pr-4 py-0.5">{(run.processing_time_ms / 1000).toFixed(1)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </header>
+
+      {/* ── Main 3-column layout ───────────────────────────────────────────────── */}
+      <div className="flex flex-1 overflow-hidden">
+
+        {/* LEFT: Zone description panel */}
+        <aside className="w-64 shrink-0 border-r border-white/5 bg-slate-900/30 overflow-hidden flex flex-col">
+          <div className="px-4 py-2.5 border-b border-white/5 shrink-0">
+            <p className="text-[9px] font-black uppercase tracking-[0.25em] text-slate-500">
+              Description de zone
+            </p>
+          </div>
+          <div className="flex-1 overflow-hidden">
+            <BrodmannIdentificationView
+              zone={zone}
+              insideBrain={insideBrain}
+              hasAttempt={hasAttempt}
+              mniCoords={mniCoords}
+              className="h-full"
+            />
+          </div>
+        </aside>
+
+        {/* CENTER: Tab viewer */}
+        <main className="flex-1 flex flex-col overflow-hidden">
+
+          {/* Tab bar */}
+          <div className="flex items-center gap-1 px-3 py-2 border-b border-white/5 bg-slate-900/20 shrink-0">
+            <button
+              onClick={() => setActiveTab('2d')}
+              className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold transition ${
+                activeTab === '2d'
+                  ? 'bg-blue-500/20 border border-blue-400/30 text-blue-200'
+                  : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              Coupes 2D
+            </button>
+            <button
+              onClick={() => setActiveTab('3d')}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-semibold transition ${
+                activeTab === '3d'
+                  ? 'bg-violet-500/20 border border-violet-400/30 text-violet-200'
+                  : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              Visualisation 3D
+              {activeLabelId && (
+                <span className="h-1.5 w-1.5 rounded-full bg-violet-400 animate-pulse" />
+              )}
+            </button>
+          </div>
+
+          {/* Tab content */}
+          <div className="flex-1 overflow-auto p-4">
+            {activeTab === '2d' ? (
+              <BrodmannSyncedViewer
+                jobId={jobId}
+                onZoneIdentified={handleZoneIdentified}
+                hasAttempt={hasAttempt}
+              />
+            ) : (
+              <div className="h-full min-h-[400px]">
+                <BrodmannZone3D
+                  labelId={activeLabelId}
+                  zoneName={zone?.name}
+                  className="h-full"
+                />
+              </div>
+            )}
+          </div>
+        </main>
+
+        {/* RIGHT: Brodmann zones list */}
+        <aside className="w-52 shrink-0 border-l border-white/5 bg-slate-900/30 flex flex-col overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-white/5 shrink-0">
+            <p className="text-[9px] font-black uppercase tracking-[0.25em] text-slate-500">
+              Atlas Brodmann
+            </p>
+            <p className="text-[8px] text-slate-600 mt-0.5">{BRODMANN_AREAS.length} aires disponibles</p>
+          </div>
+
+          <div className="flex-1 overflow-y-auto custom-scrollbar py-1">
+            {BRODMANN_AREAS.map(area => {
+              const isActive = activeLabelId === area.id;
+              const groupColor = GROUP_COLORS[area.group] || 'text-slate-400';
+              return (
+                <div
+                  key={area.id}
+                  className={`flex items-center gap-2.5 px-3 py-2 border-b border-white/[0.02] transition-all duration-200 cursor-default ${
+                    isActive
+                      ? 'bg-blue-500/15 border-l-2 border-l-blue-400'
+                      : 'hover:bg-white/[0.02]'
+                  }`}
+                >
+                  <span className={`text-[9px] font-black font-mono w-7 shrink-0 ${isActive ? 'text-blue-300' : 'text-slate-600'}`}>
+                    {area.id}
+                  </span>
+                  <div className="min-w-0">
+                    <p className={`text-[10px] font-semibold leading-tight truncate ${isActive ? 'text-white' : 'text-slate-400'}`}>
+                      {area.name}
+                    </p>
+                    <p className={`text-[8px] ${groupColor} opacity-70`}>{area.group}</p>
+                  </div>
+                  {isActive && (
+                    <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse ml-auto" />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </aside>
+
+      </div>
+
+      {/* ── Bottom validation bar ──────────────────────────────────────────────── */}
+      <div className="shrink-0 border-t border-white/10 bg-slate-950/95 px-5 py-3 backdrop-blur flex items-center justify-between gap-3">
+        <p className="text-[10px] uppercase tracking-[0.15em] text-slate-400">
+          Décision clinique — confirmer ou rejeter le recalage
+        </p>
+        <div className="flex gap-2">
+          <button
+            onClick={rejectRegistration}
+            disabled={busy || !canWork}
+            className="rounded-xl border border-rose-400/25 bg-rose-500/10 px-4 py-2 text-[11px] font-semibold text-rose-300 hover:bg-rose-500/20 disabled:opacity-40 transition"
+          >
+            Rejeter
+          </button>
+          <button
+            onClick={proceedToIdentification}
+            disabled={busy || !canWork}
+            className="rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 px-4 py-2 text-[11px] font-semibold text-slate-950 hover:brightness-110 disabled:opacity-40 transition"
+          >
+            Valider → Identification
+          </button>
         </div>
       </div>
 
-      <div className="fixed bottom-0 left-0 right-0 z-20 border-t border-white/15 bg-slate-950/90 px-4 py-3 backdrop-blur-lg">
-        <div className="mx-auto flex w-full max-w-7xl flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-xs uppercase tracking-[0.16em] text-slate-300">
-            Decision medicale finale: confirmer pour identifier les zones ou rejeter le recalage
-          </p>
-          <div className="flex gap-2">
-            <button
-              onClick={rejectRegistration}
-              disabled={busy || !canWork}
-              className="rounded-xl border border-rose-300/35 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-200 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Rejeter le resultat
-            </button>
-            <button
-              onClick={proceedToIdentification}
-              disabled={busy || !canWork}
-              className="rounded-xl bg-gradient-to-r from-emerald-400 to-lime-300 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Passer a l'identification des zones
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

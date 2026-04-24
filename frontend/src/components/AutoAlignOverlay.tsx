@@ -39,19 +39,22 @@ const AutoAlignOverlay: React.FC<AutoAlignOverlayProps> = ({
   algorithm = 'MINE',
 }) => {
   const [elapsedTime, setElapsedTime] = useState(0);
-  /** Pas de pourcentage factice : l'API ne stream pas l'avancement des itérations. */
   const [indeterminate, setIndeterminate] = useState(true);
 
+  // ✅ FIX: timer ne dépend QUE de `status` — si progressOverride change, le timer ne se remet PAS à 0
   useEffect(() => {
-    if (status === 'processing') {
-      setElapsedTime(0);
-      setIndeterminate(typeof progressOverride !== 'number');
-      const timer = setInterval(() => {
-        setElapsedTime((prev) => prev + 0.1);
-      }, 100);
-      return () => clearInterval(timer);
-    }
-  }, [status, progressOverride]);
+    if (status !== 'processing') return;
+    setElapsedTime(0);
+    const timer = setInterval(() => {
+      setElapsedTime((prev) => prev + 0.1);
+    }, 100);
+    return () => clearInterval(timer);
+  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Mise à jour du mode indéterminé uniquement
+  useEffect(() => {
+    setIndeterminate(typeof progressOverride !== 'number');
+  }, [progressOverride]);
 
   if (!isVisible) return null;
 
@@ -89,13 +92,14 @@ const AutoAlignOverlay: React.FC<AutoAlignOverlayProps> = ({
             <h2 className="overlay-title">Recalage en cours…</h2>
             <p className="overlay-subtitle">
               {algorithm === 'MINE'
-                ? 'Le serveur exécute MINE (calcul lourd : plusieurs minutes en CPU, plus rapide avec PyTorch+CUDA).'
-                : "L'algorithme ANTs SyN traite vos données"}
+                ? 'Alignement neuronal automatique — veuillez patienter.'
+                : 'Optimisation ANTs SyN en cours — veuillez patienter.'}
             </p>
             {stageMessage && (
-              <p className="overlay-subtitle" style={{ marginTop: '-1.25rem', marginBottom: '1.25rem', fontWeight: 600 }}>
-                Etape: {stageMessage}
-              </p>
+              <div className="stage-badge">
+                <span className="stage-dot" />
+                {stageMessage}
+              </div>
             )}
             <div className="progress-container">
               <div className="progress-bar-bg">
@@ -116,7 +120,7 @@ const AutoAlignOverlay: React.FC<AutoAlignOverlayProps> = ({
               </div>
               {indeterminate && typeof progressOverride !== 'number' && (
                 <p className="progress-hint">
-                  Avancement non disponible pendant l&apos;appel réseau (pas un pourcentage d&apos;itérations).
+                  Attente des premiers retours du moteur de recalage...
                 </p>
               )}
             </div>
@@ -387,14 +391,14 @@ const AutoAlignOverlay: React.FC<AutoAlignOverlayProps> = ({
  
          .progress-container { margin-bottom: 2rem; }
          .progress-bar-bg { height: 10px; background: #f1f5f9; border-radius: 6px; overflow: hidden; }
-         .progress-fill { position: relative; height: 100%; background: linear-gradient(90deg, #3b82f6, #8062f8); border-radius: 6px; transition: width 0.4s ease; }
+         .progress-fill { position: relative; height: 100%; background: linear-gradient(90deg, #3b82f6, #8062f8); border-radius: 6px; transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1); }
          .progress-fill-indeterminate {
-           width: 40% !important;
-           animation: indeterminateSlide 1.4s ease-in-out infinite;
+           width: 38% !important;
+           animation: indeterminateSlide 1.6s ease-in-out infinite;
          }
          @keyframes indeterminateSlide {
-           0% { transform: translateX(-100%); }
-           100% { transform: translateX(350%); }
+           0%   { transform: translateX(-120%); }
+           100% { transform: translateX(380%); }
          }
          .progress-hint {
            margin: 0.65rem 0 0;
@@ -402,6 +406,37 @@ const AutoAlignOverlay: React.FC<AutoAlignOverlayProps> = ({
            color: #94a3b8;
            text-align: center;
            line-height: 1.35;
+         }
+
+         /* Stage badge */
+         .stage-badge {
+           display: flex;
+           align-items: center;
+           justify-content: center;
+           gap: 0.5rem;
+           margin: -0.75rem auto 1.75rem;
+           padding: 0.45rem 1.1rem;
+           background: rgba(59, 130, 246, 0.07);
+           border: 1px solid rgba(59, 130, 246, 0.18);
+           border-radius: 20px;
+           font-size: 0.82rem;
+           font-weight: 600;
+           color: #2563eb;
+           max-width: 92%;
+           text-align: center;
+           line-height: 1.4;
+         }
+         .stage-dot {
+           flex-shrink: 0;
+           width: 7px;
+           height: 7px;
+           border-radius: 50%;
+           background: #3b82f6;
+           animation: pulseDot 1.4s ease-in-out infinite;
+         }
+         @keyframes pulseDot {
+           0%, 100% { opacity: 1; transform: scale(1); }
+           50%       { opacity: 0.4; transform: scale(0.65); }
          }
          .card-device {
            display: block;

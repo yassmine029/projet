@@ -215,11 +215,17 @@ class Patient(models.Model):
 
 
 class MRIFile(models.Model):
+    FILE_TYPE_CHOICES = [
+        ('original', 'Original'),
+        ('analysis', 'Analyse'),
+    ]
+
     patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='mri_files')
-    file = models.FileField(upload_to='patients_mri_files/')
+    file = models.FileField(upload_to='patients_mri_files/', max_length=500)
     original_filename = models.CharField(max_length=255)
     relative_path = models.CharField(max_length=512, blank=True)
     file_size = models.BigIntegerField(default=0)
+    file_type = models.CharField(max_length=20, choices=FILE_TYPE_CHOICES, default='original')
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

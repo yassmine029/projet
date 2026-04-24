@@ -9,7 +9,7 @@ import os
 import math
 import time
 import random
-from typing import Dict, Tuple
+from typing import Callable, Dict, Optional, Tuple
 
 import numpy as np
 import nibabel as nib
@@ -19,6 +19,11 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 from scipy.ndimage import gaussian_filter, sobel, zoom as scipy_zoom
+
+try:
+    from nibabel.processing import resample_from_to
+except Exception:
+    resample_from_to = None
 
 
 # ============================================================
@@ -308,6 +313,7 @@ def run_mine_3d_nifti(
     early_stop_patience: int = 0,
     early_stop_min_delta: float = 5e-4,
     early_stop_min_iters: int = 35,
+    progress_callback: Optional[Callable[[int, str], None]] = None,
 ) -> dict:
     """
     Complete 3D MINE registration pipeline for NIfTI volumes.
@@ -346,6 +352,8 @@ def run_mine_3d_nifti(
     # ──── Load NIfTI images ────────────────────────────────────────────────
     I_nib = nib.load(fixed_path)
     J_nib = nib.load(moving_path)
+
+    # Bring both volumes to RAS-like canonical axis order first.
     I_nib = nib.as_closest_canonical(I_nib)
     J_nib = nib.as_closest_canonical(J_nib)
 
@@ -357,10 +365,29 @@ def run_mine_3d_nifti(
     if J_raw.ndim == 4:
         J_raw = J_raw[..., 0]
 
-    # Resample J to I grid if shapes differ
-    if I_raw.shape != J_raw.shape:
-        factors = tuple(s_i / s_j for s_i, s_j in zip(I_raw.shape, J_raw.shape))
-        J_raw = scipy_zoom(J_raw, factors, order=3)
+    # Critical: canonicalization alone does NOT guarantee same world-space grid.
+    # Resample moving image to fixed image grid when shape OR affine differs.
+    shape_mismatch = I_raw.shape != J_raw.shape
+    affine_mismatch = not np.allclose(I_nib.affine, J_nib.affine, atol=1e-4)
+    if shape_mismatch or affine_mismatch:
+        if resample_from_to is not None:
+            try:
+                J_resampled_nib = resample_from_to(
+                    J_nib,
+                    (I_nib.shape, I_nib.affine),
+                    order=3,
+                    mode='nearest',
+                    cval=0.0,
+                )
+                J_nib = nib.as_closest_canonical(J_resampled_nib)
+                J_raw = J_nib.get_fdata(dtype=np.float32)
+            except Exception:
+                # Fallback to shape-based zoom if affine-aware resampling fails.
+                factors = tuple(s_i / s_j for s_i, s_j in zip(I_raw.shape, J_raw.shape))
+                J_raw = scipy_zoom(J_raw, factors, order=3)
+        else:
+            factors = tuple(s_i / s_j for s_i, s_j in zip(I_raw.shape, J_raw.shape))
+            J_raw = scipy_zoom(J_raw, factors, order=3)
 
     # ──── Normalize & smooth ───────────────────────────────────────────────
     I0 = robust_norm01(I_raw)
@@ -440,6 +467,13 @@ def run_mine_3d_nifti(
     best_metric = float('-inf')
     stagnant = 0
     log_every = max(1, min(50, n_iters // 8))
+    progress_step = max(1, n_iters // 100)
+
+    if progress_callback is not None:
+        try:
+            progress_callback(0, 'Initialisation MINE 3D')
+        except Exception:
+            pass
 
     for itr in range(n_iters):
         optimizer.zero_grad(set_to_none=True)
@@ -475,6 +509,15 @@ def run_mine_3d_nifti(
 
         if (itr + 1) % log_every == 0 or itr == 0:
             print(f"  iter {itr+1}/{n_iters} | MI proxy: {mi_curve[-1]:.4f}")
+
+        if progress_callback is not None:
+            should_emit = ((itr + 1) % progress_step == 0) or (itr + 1 == n_iters) or (itr == 0)
+            if should_emit:
+                try:
+                    pct = int(round(((itr + 1) / max(1, n_iters)) * 100.0))
+                    progress_callback(pct, f'Optimisation MINE {itr + 1}/{n_iters}')
+                except Exception:
+                    pass
 
     # ──── Warp full resolution ─────────────────────────────────────────────
     I_full = robust_norm01(I_raw)

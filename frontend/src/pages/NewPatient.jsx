@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Upload, Info, Lock, CheckCircle, FileImage, UserPlus, ArrowLeft } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Upload, Info, Lock, CheckCircle, FileImage, UserPlus, ArrowLeft, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { createPatient } from '../api';
 import PageHeader from '../components/ui/PageHeader';
@@ -33,6 +33,23 @@ export default function NewPatient() {
   const [errors, setErrors] = useState({});
   const [uploadError, setUploadError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [loadingDossier, setLoadingDossier] = useState(false);
+
+  const fetchNextDossier = async () => {
+    setLoadingDossier(true);
+    try {
+      const res = await fetch('/api/patients/next-dossier/');
+      const data = await res.json();
+      if (data.ok) {
+        setForm(prev => ({ ...prev, dossier_number: data.dossier_number }));
+        setErrors(prev => ({ ...prev, dossier_number: '' }));
+      }
+    } catch { /* silencieux */ } finally {
+      setLoadingDossier(false);
+    }
+  };
+
+  useEffect(() => { fetchNextDossier(); }, []);
 
   const extractApiError = (err) => {
     const data = err?.response?.data;
@@ -61,15 +78,60 @@ export default function NewPatient() {
     const files = Array.from(e.target.files || []);
     setForm(prev => ({ ...prev, files }));
     setUploadError('');
+    // Clear input values to allow re-selecting the same thing if needed
+    e.target.value = '';
   };
+
+  const today = new Date().toISOString().split('T')[0];
 
   const validate = () => {
     const nextErrors = {};
-    if (!form.dossier_number.trim()) nextErrors.dossier_number = 'Requis';
-    if (!form.date_naissance) nextErrors.date_naissance = 'Requis';
+    if (!form.dossier_number.trim()) {
+      nextErrors.dossier_number = 'Requis';
+    } else if (!/^DOS-\d{4}-\d{4}$/.test(form.dossier_number.trim())) {
+      nextErrors.dossier_number = 'Format invalide — attendu : DOS-YYYY-NNNN (ex: DOS-2026-0001)';
+    } else {
+      const year = parseInt(form.dossier_number.trim().split('-')[1], 10);
+      const currentYear = new Date().getFullYear();
+      if (year < 2000 || year > currentYear) {
+        nextErrors.dossier_number = `L'année dans le numéro doit être entre 2000 et ${currentYear}.`;
+      }
+    }
+    if (!form.date_naissance) {
+      nextErrors.date_naissance = 'Requis';
+    } else if (form.date_naissance > today) {
+      nextErrors.date_naissance = 'La date de naissance ne peut pas être dans le futur.';
+    } else {
+      const birthYear = new Date(form.date_naissance).getFullYear();
+      const currentYear = new Date().getFullYear();
+      if (currentYear - birthYear > 130) {
+        nextErrors.date_naissance = 'Date invalide — âge supérieur à 130 ans.';
+      }
+    }
     if (!form.sexe) nextErrors.sexe = 'Requis';
+    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      nextErrors.email = 'Adresse e-mail invalide.';
+    }
+    if (form.telephone) {
+      // Format tunisien : (+216) XX XXX XXX — 8 chiffres commençant par 2x, 5x, 7x ou 9x
+      const TN_PHONE = /^(\+216[\s\-]?|00216[\s\-]?)?([2579]\d)[\s\-]?(\d{3})[\s\-]?(\d{3})$/;
+      if (!TN_PHONE.test(form.telephone.trim())) {
+        nextErrors.telephone = 'Numéro tunisien invalide — format attendu : XX XXX XXX (ex: 22 123 456 ou +216 22 123 456).';
+      }
+    }
     if (!form.files || form.files.length === 0) setUploadError('Veuillez selectionner un dossier contenant au moins un fichier.');
     return nextErrors;
+  };
+
+  const checkDossierUnique = async (value) => {
+    if (!value || !/^DOS-\d{4}-\d{4}$/.test(value)) return;
+    try {
+      const res = await fetch(`/api/patients/?num_dossier=${encodeURIComponent(value)}`);
+      const data = await res.json();
+      if (data.ok && data.patients?.length > 0) {
+        setErrors(prev => ({ ...prev, dossier_number: `Le numéro « ${value} » est déjà utilisé.` }));
+      }
+    } catch { /* silencieux */ }
   };
 
   const handleSubmit = async (e) => {
@@ -131,13 +193,22 @@ export default function NewPatient() {
             <h2 className="text-base font-bold text-slate-900">Identification patient</h2>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <FormField label="Numero de dossier" required error={errors.dossier_number} hint="Format: DOS-YYYY-NNNN">
-              <input name="dossier_number" value={form.dossier_number} onChange={handleChange}
-                pattern="^DOS-\d{4}-\d{4}$" title="Format attendu: DOS-YYYY-NNNN"
-                className={inputCls(errors.dossier_number)} placeholder="Ex: DOS-2026-0001" />
+            <FormField label="Numero de dossier" required error={errors.dossier_number} hint="Généré automatiquement — modifiable si besoin">
+              <div className="flex gap-2">
+                <input name="dossier_number" value={form.dossier_number} onChange={handleChange}
+                  onBlur={e => checkDossierUnique(e.target.value.trim())}
+                  className={`${inputCls(errors.dossier_number)} flex-1`} placeholder="Ex: DOS-2026-0001" />
+                <button type="button" onClick={fetchNextDossier} disabled={loadingDossier}
+                  title="Générer le prochain numéro disponible"
+                  className="flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-600 transition hover:bg-blue-100 disabled:opacity-50">
+                  <RefreshCw className={`w-3.5 h-3.5 ${loadingDossier ? 'animate-spin' : ''}`} />
+                  Générer
+                </button>
+              </div>
             </FormField>
             <FormField label="Date de naissance" required error={errors.date_naissance}>
               <input type="date" name="date_naissance" value={form.date_naissance} onChange={handleChange}
+                max={today}
                 className={inputCls(errors.date_naissance)} />
             </FormField>
             <FormField label="Sexe" required error={errors.sexe}>
@@ -147,13 +218,13 @@ export default function NewPatient() {
                 <option value="F">Feminin</option>
               </select>
             </FormField>
-            <FormField label="Telephone">
+            <FormField label="Telephone" error={errors.telephone} hint="Format : XX XXX XXX ou +216 XX XXX XXX">
               <input name="telephone" value={form.telephone} onChange={handleChange}
-                className={inputCls(false)} placeholder="Numero de telephone" />
+                className={inputCls(errors.telephone)} placeholder="Ex: 22 123 456" />
             </FormField>
-            <FormField label="Adresse e-mail">
+            <FormField label="Adresse e-mail" error={errors.email}>
               <input name="email" value={form.email} onChange={handleChange}
-                className={inputCls(false)} placeholder="Adresse e-mail" />
+                className={inputCls(errors.email)} placeholder="Adresse e-mail" />
             </FormField>
           </div>
         </Card>
@@ -215,12 +286,22 @@ export default function NewPatient() {
             <div className="w-14 h-14 bg-blue-100 rounded-2xl flex items-center justify-center mb-3">
               <Upload className="w-7 h-7 text-blue-600" />
             </div>
-            <p className="font-semibold text-slate-900 text-sm mb-1">Selectionnez un dossier contenant vos fichiers</p>
-            <p className="text-xs text-slate-500 mb-3">Formats supportes : NIfTI, DICOM, JPEG, PNG, TIFF, BMP</p>
-            <input type="file" multiple webkitdirectory="" directory="" onChange={handleFileChange} className="hidden" id="file-upload" />
-            <label htmlFor="file-upload" className="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-xl text-xs font-bold cursor-pointer hover:from-blue-700 hover:to-blue-800 transition-all shadow-lg shadow-blue-600/20 active:scale-[0.98]">
-              Choisir un dossier
-            </label>
+            <p className="font-semibold text-slate-900 text-sm mb-1 text-center">Selectionnez vos fichiers ou un dossier complet</p>
+            <p className="text-xs text-slate-500 mb-4 text-center">Formats supportes : NIfTI, DICOM, JPEG, PNG, TIFF, BMP</p>
+            
+            <input type="file" multiple webkitdirectory="" directory="" onChange={handleFileChange} className="hidden" id="folder-upload" />
+            <input type="file" multiple onChange={handleFileChange} className="hidden" id="file-upload" />
+            
+            <div className="flex flex-col sm:flex-row gap-3">
+              <label htmlFor="folder-upload" className="flex items-center justify-center gap-2 px-6 py-2.5 bg-white border-2 border-blue-500 text-blue-600 rounded-xl text-xs font-black uppercase tracking-wider cursor-pointer hover:bg-blue-50 transition-all shadow-md active:scale-[0.98]">
+                <Upload className="w-4 h-4" />
+                Dossier
+              </label>
+              <label htmlFor="file-upload" className="flex items-center justify-center gap-2 px-6 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider cursor-pointer hover:from-blue-700 hover:to-blue-800 transition-all shadow-lg shadow-blue-600/20 active:scale-[0.98]">
+                <FileImage className="w-4 h-4" />
+                Fichiers
+              </label>
+            </div>
             <div className="flex gap-1.5 mt-4 flex-wrap justify-center">
               {['.nii', '.nii.gz', '.dcm', '.jpg', '.png', '.tif', '.bmp'].map(ext => (
                 <span key={ext} className="px-2 py-0.5 rounded-md bg-blue-100 text-blue-700 text-[10px] font-bold">{ext}</span>

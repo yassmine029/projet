@@ -1,6 +1,24 @@
+import React from 'react'
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { Moon, Sun } from 'lucide-react'
+
+class ExplorationErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ minHeight:'100vh', background:'#050b17', color:'#e2e8f0', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:40, fontFamily:'monospace' }}>
+          <h2 style={{ color:'#f87171', marginBottom:16 }}>Erreur lors du chargement de la page</h2>
+          <pre style={{ color:'#94a3b8', fontSize:12, maxWidth:800, whiteSpace:'pre-wrap' }}>{this.state.error?.message}{'\n'}{this.state.error?.stack}</pre>
+          <button onClick={() => { this.setState({ error: null }); window.history.back(); }} style={{ marginTop:24, padding:'8px 20px', background:'#1d4ed8', color:'white', border:'none', borderRadius:8, cursor:'pointer' }}>Retour</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 import Login from './pages/Login'
 import AdminDashboard from './pages/AdminDashboard'
@@ -248,6 +266,7 @@ export default function App() {
           <Route path="/dashboard/patients" element={<PatientsList />} />
           <Route path="/dashboard/patients/:id" element={<PatientDetail />} />
           <Route path="/dashboard/analysesMRI" element={<AnalysesMRI />} />
+          <Route path="/dashboard/reports" element={<AnalysesMRI />} />
           <Route path="/dashboard/mri" element={<Navigate to="/dashboard/analysesMRI" replace />} />
           <Route path="/dashboard/reclamations" element={<ReclamationsList />} />
           <Route path="/dashboard/profile" element={<MonProfil />} />
@@ -260,10 +279,10 @@ export default function App() {
           <Route path="/prediction" element={<PredictionPage />} />
           <Route path="/brodmann" element={<BrodmannPage />} />
           <Route path="/brodmann3D" element={<Brodmann3DPage />} />
-          <Route path="/exploration" element={<ExplorationPage />} />
         </Route>
 
         {/* ── Full-screen tools (no sidebar) ── */}
+        <Route path="/exploration" element={<Protected user={user}><ExplorationErrorBoundary><ExplorationPage /></ExplorationErrorBoundary></Protected>} />
         <Route path="/segmentation/nouvelle" element={<Protected user={user}><NouvelleSegmentation /></Protected>} />
         <Route path="/segmentation/modelisation" element={<Protected user={user}><Modelisation3D /></Protected>} />
         <Route path="/registration" element={<Protected user={user}><RegistrationPage user={user} accessToken={null} onNavigate={handleNavigate} /></Protected>} />

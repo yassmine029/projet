@@ -16,6 +16,34 @@ DEFAULT_NORMATIVE_TOTAL_MEAN_MM3 = 4860.14
 DEFAULT_NORMATIVE_TOTAL_STD_MM3 = 201.16
 
 
+def _normalize_mask_shapes(masks: List[np.ndarray]) -> Tuple[List[np.ndarray], Tuple[int, int], int]:
+    if not masks:
+        raise ValueError('Aucun masque disponible pour normalisation.')
+
+    shape_counts: Dict[Tuple[int, int], int] = {}
+    for m in masks:
+        if m is None or m.ndim != 2:
+            raise ValueError('Un masque invalide a ete detecte (format 2D attendu).')
+        shape = (int(m.shape[0]), int(m.shape[1]))
+        shape_counts[shape] = shape_counts.get(shape, 0) + 1
+
+    # Use the dominant shape to keep the majority untouched.
+    target_shape = max(shape_counts.items(), key=lambda item: item[1])[0]
+
+    normalized: List[np.ndarray] = []
+    resized_count = 0
+    target_h, target_w = target_shape
+    for m in masks:
+        if m.shape != target_shape:
+            resized = cv2.resize(m, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
+            normalized.append((resized > 0).astype(np.uint8))
+            resized_count += 1
+        else:
+            normalized.append((m > 0).astype(np.uint8))
+
+    return normalized, target_shape, resized_count
+
+
 def _to_float(value, default):
     try:
         parsed = float(value)
@@ -255,6 +283,7 @@ def run_modelisation_3d(
     for row in rows:
         masks.append(_load_mask(row.mask_file))
 
+    masks, target_shape, resized_count = _normalize_mask_shapes(masks)
     full_volume = np.stack(masks, axis=0).astype(np.uint8)  # (Z, Y, X)
     volume = _apply_structure(full_volume, structure)
     volume = _sanitize_connected_components(volume, structure)
@@ -313,6 +342,8 @@ def run_modelisation_3d(
         'smoothing': smoothing,
         'spacing': {'z': dz, 'y': dy, 'x': dx},
         'slices_used': len(rows),
+        'slice_shape_yx': {'y': int(target_shape[0]), 'x': int(target_shape[1])},
+        'resized_slices_count': int(resized_count),
         'mesh_vertices': int(len(mesh.vertices)),
         'mesh_faces': int(len(mesh.faces)),
         'is_watertight': bool(mesh.is_watertight),

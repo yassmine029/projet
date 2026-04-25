@@ -226,6 +226,8 @@ class MRIFile(models.Model):
     relative_path = models.CharField(max_length=512, blank=True)
     file_size = models.BigIntegerField(default=0)
     file_type = models.CharField(max_length=20, choices=FILE_TYPE_CHOICES, default='original')
+    image_width = models.PositiveIntegerField(null=True, blank=True)
+    image_height = models.PositiveIntegerField(null=True, blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -242,7 +244,7 @@ class SegmentationRun(models.Model):
     patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='segmentation_runs')
     doctor = models.ForeignKey(User, on_delete=models.CASCADE, related_name='segmentation_runs')
     model_key = models.CharField(max_length=40, default='unetpp')
-    threshold = models.FloatField(default=0.25)
+    threshold = models.FloatField(default=0.75)
     selected_count = models.IntegerField(default=0)
     processed_count = models.IntegerField(default=0)
     status = models.CharField(max_length=12, choices=STATUS_CHOICES, default='running')
@@ -255,6 +257,11 @@ class SegmentationRun(models.Model):
 
 
 class SegmentationMaskResult(models.Model):
+    class ReviewStatus(models.TextChoices):
+        PENDING = 'pending', 'En attente'
+        VALIDATED = 'validated', 'Validée'
+        REJECTED = 'rejected', 'Rejetée'
+
     run = models.ForeignKey(SegmentationRun, on_delete=models.CASCADE, related_name='results')
     patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='segmentation_masks')
     mri_file = models.ForeignKey(MRIFile, on_delete=models.CASCADE, related_name='segmentation_masks')
@@ -264,6 +271,34 @@ class SegmentationMaskResult(models.Model):
     source_url = models.CharField(max_length=1024, blank=True, null=True)
     mask_file = models.CharField(max_length=512)
     mask_url = models.CharField(max_length=1024, blank=True, null=True)
+    mask_model_key = models.CharField(
+        max_length=40,
+        blank=True,
+        default='',
+        help_text='Modèle ayant produit le masque courant (vide = modèle du run à la création).',
+    )
+    review_status = models.CharField(
+        max_length=16,
+        choices=ReviewStatus.choices,
+        default=ReviewStatus.VALIDATED,
+        db_index=True,
+    )
+    prior_mask_file = models.CharField(max_length=512, blank=True, default='')
+    prior_mask_url = models.CharField(max_length=1024, blank=True, null=True)
+    prior_mask_model_key = models.CharField(
+        max_length=40,
+        blank=True,
+        default='',
+        help_text='Modèle du masque archivé avant la dernière relance (nnU-Net / SwinUNETR / etc.).',
+    )
+    initial_mask_file = models.CharField(max_length=512, blank=True, default='')
+    initial_mask_url = models.CharField(max_length=1024, blank=True, null=True)
+    initial_mask_model_key = models.CharField(
+        max_length=40,
+        blank=True,
+        default='',
+        help_text='Masque du premier lancement (Modèle 1), conservé comme référence permanente.',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

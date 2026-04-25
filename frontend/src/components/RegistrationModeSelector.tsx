@@ -1,5 +1,9 @@
 import React from 'react';
-import { MousePointer2, BrainCircuit, HelpCircle } from 'lucide-react';
+import { MousePointer2, BrainCircuit } from 'lucide-react';
+
+const GuideIcon = () => (
+  <img src="/assets/images/creative.png" alt="guide" className="h-10 w-10 object-contain" />
+);
 
 interface RegistrationModeSelectorProps {
   selectedMode: 'manual' | 'mine';
@@ -93,7 +97,7 @@ const RegistrationModeSelector: React.FC<RegistrationModeSelectorProps> = ({
               title="Guide d'utilisation"
               className="absolute right-2.5 top-1/2 -translate-y-1/2 z-10 text-blue-400 hover:text-blue-600 transition-colors"
             >
-              <HelpCircle className="h-4 w-4" />
+              <GuideIcon />
             </button>
           )}
         </div>

@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Box, ArrowLeft, X, FileText, Download, UserRound, Hash, CalendarDays, Brain, Activity, BarChart3 } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
-import MeshViewerVTK from '../components/MeshViewerVTK.jsx';
+import ModelViewerBlender from '../components/ModelViewerBlender.jsx';
 import api from '../api';
 
 function clamp(value, min, max) {
@@ -586,10 +586,20 @@ function ReportPreviewModal({
                               className="h-full w-full object-cover"
                             />
                             {slice?.mask_url ? (
-                              <img
-                                src={toAbsoluteMediaUrl(slice.mask_url)}
-                                alt={`mask-${slice.slice_index || idx + 1}`}
-                                className="absolute inset-0 h-full w-full object-cover mix-blend-screen opacity-70"
+                              <div
+                                aria-hidden
+                                className="pointer-events-none absolute inset-0 h-full w-full"
+                                style={{
+                                  backgroundColor: 'rgba(6, 182, 212, 0.55)',
+                                  WebkitMaskImage: `url(${toAbsoluteMediaUrl(slice.mask_url)})`,
+                                  maskImage: `url(${toAbsoluteMediaUrl(slice.mask_url)})`,
+                                  WebkitMaskRepeat: 'no-repeat',
+                                  maskRepeat: 'no-repeat',
+                                  WebkitMaskPosition: 'center',
+                                  maskPosition: 'center',
+                                  WebkitMaskSize: 'cover',
+                                  maskSize: 'cover',
+                                }}
                               />
                             ) : null}
                           </>
@@ -604,7 +614,7 @@ function ReportPreviewModal({
               </div>
               <div className="lg:col-span-4 overflow-hidden rounded-xl border border-slate-200 bg-white p-3">
                 <p className="mb-2 text-[11px] uppercase tracking-[0.12em] text-slate-500">Visualisation 3D claire</p>
-                <MeshViewerVTK
+                <ModelViewerBlender
                   variant="mini"
                   objUrl={toAbsoluteMediaUrl(modelingResult?.obj_url)}
                   stlUrl={toAbsoluteMediaUrl(modelingResult?.stl_url)}
@@ -746,7 +756,7 @@ export default function Modelisation3D() {
     structure: 'both',
     quality: 'standard',
     smoothing: 'low',
-    threshold: '0.25',
+    threshold: '0.75',
     knowsSpacing: false,
     spacingZ: '1.0',
     spacingY: '1.0',
@@ -1050,7 +1060,7 @@ export default function Modelisation3D() {
                       value={standardMode.threshold}
                       onChange={handleChange}
                       className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 focus:ring-3 focus:ring-blue-500/10 transition-all"
-                      placeholder="0.25"
+                      placeholder="0.75"
                     />
                   </div>
                 </div>
@@ -1154,20 +1164,124 @@ export default function Modelisation3D() {
               {modelingResult ? (
                 <div className="mt-6 space-y-6">
                   <div className="rounded-2xl border border-slate-200/60 bg-white p-6 shadow-card">
-                    <div className="flex items-center gap-3 mb-4">
+                    <div className="flex items-center gap-3 mb-5">
                       <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
                         <Box className="h-5 w-5 text-white" />
                       </div>
                       <div>
-                        <h3 className="text-base font-bold text-slate-900">Visualisation 3D interactive</h3>
-                        <p className="text-xs text-slate-500 font-medium">Explorez la reconstruction hippocampique en temps reel</p>
+                        <h3 className="text-base font-bold text-slate-900">Visualisation 3D — viewport</h3>
+                        <p className="text-xs text-slate-500 font-medium">Eclairage PBR, grille et navigation type logiciel 3D professionnel</p>
                       </div>
                     </div>
 
-                    <MeshViewerVTK
-                      objUrl={toAbsoluteMediaUrl(modelingResult.obj_url)}
-                      stlUrl={toAbsoluteMediaUrl(modelingResult.stl_url)}
-                    />
+                    <div className="flex flex-col gap-5 xl:flex-row xl:items-stretch">
+                      <div className="min-w-0 flex-1">
+                        <ModelViewerBlender
+                          objUrl={toAbsoluteMediaUrl(modelingResult.obj_url)}
+                          stlUrl={toAbsoluteMediaUrl(modelingResult.stl_url)}
+                        />
+                      </div>
+                      <aside className="flex w-full shrink-0 flex-col gap-3 xl:w-56">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Volumes hippocampe</p>
+                        {[
+                          {
+                            label: 'Gauche',
+                            mm3: modelingResult?.volumes_mm3?.left,
+                            ml: modelingResult?.volumes_ml?.left,
+                            border: 'border-blue-100',
+                            bg: 'bg-blue-50/80',
+                            accent: 'text-blue-700',
+                          },
+                          {
+                            label: 'Droit',
+                            mm3: modelingResult?.volumes_mm3?.right,
+                            ml: modelingResult?.volumes_ml?.right,
+                            border: 'border-violet-100',
+                            bg: 'bg-violet-50/80',
+                            accent: 'text-violet-700',
+                          },
+                          {
+                            label: 'Total',
+                            mm3: modelingResult?.volumes_mm3?.total,
+                            ml: modelingResult?.volumes_ml?.total,
+                            border: 'border-emerald-100',
+                            bg: 'bg-emerald-50/80',
+                            accent: 'text-emerald-700',
+                          },
+                        ].map((v) => (
+                          <div
+                            key={v.label}
+                            className={`rounded-xl border ${v.border} ${v.bg} px-4 py-3 shadow-sm`}
+                          >
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{v.label}</p>
+                            <p className={`mt-1 text-xl font-black tabular-nums ${v.accent}`}>
+                              {Number(v.mm3 || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 })} mm³
+                            </p>
+                            <p className="mt-0.5 text-[11px] font-semibold text-slate-500">
+                              {Number(v.ml || 0).toFixed(3)} mL
+                            </p>
+                          </div>
+                        ))}
+                      </aside>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200/60 bg-white p-6 shadow-card">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-10 h-10 bg-gradient-to-br from-slate-600 to-slate-800 rounded-xl flex items-center justify-center shadow-lg shadow-slate-600/20">
+                        <Brain className="h-5 w-5 text-white" />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold text-slate-900">Hippocampe dans le contexte IRM</h3>
+                        <p className="text-xs text-slate-500 font-medium">
+                          Enveloppe 3D estimee a partir des coupes du run ; hippocampe superpose (meme grille que ci-dessus).
+                        </p>
+                      </div>
+                    </div>
+                    {modelingResult.context_brain_volume_voxel_mm3 != null ? (
+                      <div className="mb-4 rounded-xl border border-slate-200/80 bg-slate-50 px-4 py-3 text-sm shadow-sm">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                          Volume enveloppe (approximation)
+                        </p>
+                        <p className="mt-1 text-lg font-black tabular-nums text-slate-900">
+                          {Number(modelingResult.context_brain_volume_voxel_mm3).toLocaleString('fr-FR', {
+                            maximumFractionDigits: 0,
+                          })}{' '}
+                          mm³
+                          <span className="ml-2 text-base font-bold text-slate-600">
+                            ({Number(modelingResult.context_brain_volume_voxel_ml || 0).toFixed(2)} mL)
+                          </span>
+                        </p>
+                        {modelingResult.context_brain_volume_mesh_mm3 != null ? (
+                          <p className="mt-1 text-xs text-slate-600">
+                            Volume surface fermee (maillage)&nbsp;:{' '}
+                            {Number(modelingResult.context_brain_volume_mesh_mm3).toLocaleString('fr-FR', {
+                              maximumFractionDigits: 0,
+                            })}{' '}
+                            mm³
+                          </p>
+                        ) : null}
+                        <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                          On compte combien de petits cubes 3D (voxels) sont a l&apos;interieur du masque IRM, puis on multiplie par la
+                          taille d&apos;un cube (espacement des coupes). Ce n&apos;est pas un volume osseux au scanner : c&apos;est une
+                          enveloppe tissulaire / cavite estimee a partir des images du run.
+                        </p>
+                      </div>
+                    ) : null}
+                    {modelingResult.context_brain_obj_url ? (
+                      <ModelViewerBlender
+                        brainObjUrl={toAbsoluteMediaUrl(modelingResult.context_brain_obj_url)}
+                        objUrl={toAbsoluteMediaUrl(modelingResult.obj_url)}
+                        stlUrl={toAbsoluteMediaUrl(modelingResult.stl_url)}
+                        meshColor="#e11d48"
+                        brainOpacity={0.2}
+                      />
+                    ) : (
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                        {modelingResult.context_brain_error ||
+                          'Vue contexte non disponible (previews IRM du run requises). Relancez la modelisation apres mise a jour du serveur.'}
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-2 gap-3 md:grid-cols-4">

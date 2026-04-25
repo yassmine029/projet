@@ -312,9 +312,20 @@ function DashboardHome() {
             {loading ? (
               <div className="py-20 flex justify-center"><span className="h-6 w-6 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" /></div>
             ) : recentRuns.length === 0 ? (
-              <div className="py-12 text-center">
-                <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-3"><Activity className="w-5 h-5 text-slate-300" /></div>
-                <p className="text-xs font-bold text-slate-400">Aucune analyse récente</p>
+              <div className="flex flex-col items-center justify-center py-8 text-center">
+                <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center mb-4">
+                  <FileImage className="w-8 h-8 text-slate-300" />
+                </div>
+                <p className="text-sm font-bold text-slate-500 mb-1">Aucune analyse récente</p>
+                <p className="text-[11px] text-slate-400 max-w-xs leading-relaxed mb-4">
+                  Lancez votre première analyse hippocampique pour voir apparaître vos analyses ici.
+                </p>
+                <button
+                  onClick={() => navigate('/segmentation/nouvelle')}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white text-[12px] font-bold rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-600/20 transition-all active:scale-95"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Nouvelle segmentation
+                </button>
               </div>
             ) : (
               <div className="divide-y divide-slate-50">

@@ -83,6 +83,19 @@ class MRIFileSerializer(serializers.ModelSerializer):
     class Meta:
         model = MRIFile
         fields = ('id', 'patient', 'file', 'file_url', 'preview_url', 'original_filename', 'relative_path', 'file_size', 'file_type', 'uploaded_at')
+        fields = (
+            'id',
+            'patient',
+            'file',
+            'file_url',
+            'preview_url',
+            'original_filename',
+            'relative_path',
+            'file_size',
+            'image_width',
+            'image_height',
+            'uploaded_at',
+        )
 
     def get_file_url(self, obj):
         try:
@@ -104,7 +117,31 @@ class MRIFileSerializer(serializers.ModelSerializer):
         return url
 
 
+def _model_key_to_label(key: str):
+    k = str(key or '').strip().lower()
+    if k == 'unetpp':
+        return 'Modèle 1'
+    if k == 'nnunet':
+        return 'Modèle 2'
+    if k == 'swinunetr':
+        return 'Modèle 3'
+    return k or None
+
+
 class SegmentationMaskResultSerializer(serializers.ModelSerializer):
+    mask_model_version = serializers.SerializerMethodField(read_only=True)
+    prior_mask_model_version = serializers.SerializerMethodField(read_only=True)
+    initial_mask_model_version = serializers.SerializerMethodField(read_only=True)
+
+    def get_mask_model_version(self, obj):
+        return _model_key_to_label(getattr(obj, 'mask_model_key', '') or '')
+
+    def get_prior_mask_model_version(self, obj):
+        return _model_key_to_label(getattr(obj, 'prior_mask_model_key', '') or '')
+
+    def get_initial_mask_model_version(self, obj):
+        return _model_key_to_label(getattr(obj, 'initial_mask_model_key', '') or '')
+
     class Meta:
         model = SegmentationMaskResult
         fields = (
@@ -116,6 +153,17 @@ class SegmentationMaskResultSerializer(serializers.ModelSerializer):
             'source_url',
             'mask_file',
             'mask_url',
+            'mask_model_key',
+            'mask_model_version',
+            'prior_mask_file',
+            'prior_mask_url',
+            'prior_mask_model_key',
+            'prior_mask_model_version',
+            'initial_mask_file',
+            'initial_mask_url',
+            'initial_mask_model_key',
+            'initial_mask_model_version',
+            'review_status',
             'created_at',
         )
 
@@ -125,14 +173,7 @@ class SegmentationRunSerializer(serializers.ModelSerializer):
     model_version = serializers.SerializerMethodField(read_only=True)
 
     def get_model_version(self, obj):
-        key = str(getattr(obj, 'model_key', '') or '').strip().lower()
-        if key == 'nnunet':
-            return 'nnU-Net fold0 2D ONNX'
-        if key == 'unetpp':
-            return 'U-Net++ ONNX'
-        if key == 'swinunetr':
-            return 'SwinUNETR ONNX'
-        return key or 'Modele inconnu'
+        return _model_key_to_label(getattr(obj, 'model_key', '') or '') or 'Modèle inconnu'
 
     class Meta:
         model = SegmentationRun

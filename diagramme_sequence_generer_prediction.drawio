@@ -1,0 +1,348 @@
+<mxfile host="app.diagrams.net" modified="2026-04-16T00:00:00.000Z" agent="Cursor" version="22.1.0" type="device">
+  <diagram id="seq-generer-prediction" name="Générer prédiction (template)">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1300" pageHeight="1700" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="&lt;b&gt;Diagramme de séquence — « Générer prédiction » (segmentation)&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Template aligné : acteurs, Router, View, Service IA, Modèle ORM, PostgreSQL — flèche pleine = requête/appel, pointillée = réponse/retour&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="20" y="10" width="1240" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Participants (lifeline headers) -->
+        <mxCell id="ph_med" value="&lt;&lt;Actor&gt;&gt;&lt;br&gt;&lt;b&gt;Médecin&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=0" vertex="1" parent="1">
+          <mxGeometry x="20" y="70" width="110" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="ph_fe" value="&lt;&lt;React&gt;&gt;&lt;br&gt;&lt;b&gt;NouvelleSegmentation.jsx&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=0" vertex="1" parent="1">
+          <mxGeometry x="155" y="70" width="200" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="ph_url" value="&lt;&lt;Router&gt;&gt;&lt;br&gt;&lt;b&gt;urls.py&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=0" vertex="1" parent="1">
+          <mxGeometry x="375" y="70" width="115" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="ph_view" value="&lt;&lt;View&gt;&gt;&lt;br&gt;&lt;b&gt;views.py&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=0" vertex="1" parent="1">
+          <mxGeometry x="505" y="70" width="115" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="ph_ia" value="&lt;&lt;Service&gt;&gt;&lt;br&gt;&lt;b&gt;segmentation_inference.py&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;ONNX Runtime&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=0" vertex="1" parent="1">
+          <mxGeometry x="635" y="70" width="205" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="ph_model" value="&lt;&lt;Model&gt;&gt;&lt;br&gt;&lt;b&gt;ORM Django&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;SegmentationRun, SegmentationMaskResult, Patient, MRIFile&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=0" vertex="1" parent="1">
+          <mxGeometry x="855" y="70" width="185" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="ph_db" value="&lt;&lt;Database&gt;&gt;&lt;br&gt;&lt;b&gt;PostgreSQL&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=0" vertex="1" parent="1">
+          <mxGeometry x="1055" y="70" width="130" height="52" as="geometry" />
+        </mxCell>
+
+        <!-- Vertical lifelines (dashed) -->
+        <mxCell id="ll_med" value="" style="endArrow=none;dashed=1;html=1;strokeWidth=1;strokeColor=#666666;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="75" y="130" as="sourcePoint" />
+            <mxPoint x="75" y="1580" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="ll_fe" value="" style="endArrow=none;dashed=1;html=1;strokeWidth=1;strokeColor=#666666;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="255" y="130" as="sourcePoint" />
+            <mxPoint x="255" y="1580" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="ll_url" value="" style="endArrow=none;dashed=1;html=1;strokeWidth=1;strokeColor=#666666;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="432" y="130" as="sourcePoint" />
+            <mxPoint x="432" y="1580" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="ll_view" value="" style="endArrow=none;dashed=1;html=1;strokeWidth=1;strokeColor=#666666;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="562" y="130" as="sourcePoint" />
+            <mxPoint x="562" y="1580" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="ll_ia" value="" style="endArrow=none;dashed=1;html=1;strokeWidth=1;strokeColor=#666666;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="737" y="130" as="sourcePoint" />
+            <mxPoint x="737" y="1580" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="ll_model" value="" style="endArrow=none;dashed=1;html=1;strokeWidth=1;strokeColor=#666666;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="947" y="130" as="sourcePoint" />
+            <mxPoint x="947" y="1580" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="ll_db" value="" style="endArrow=none;dashed=1;html=1;strokeWidth=1;strokeColor=#666666;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1120" y="130" as="sourcePoint" />
+            <mxPoint x="1120" y="1580" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Phase A -->
+        <mxCell id="phaseA" value="&lt;b&gt;Phase A — Chargement des listes&lt;/b&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="20" y="135" width="1165" height="22" as="geometry" />
+        </mxCell>
+
+        <mxCell id="m01" value="1. Ouvrir « Nouvelle segmentation » (navigation SPA)" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="75" y="168" as="sourcePoint" />
+            <mxPoint x="255" y="168" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m02" value="2. Rendu de l’interface" style="endArrow=open;dashed=1;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="255" y="188" as="sourcePoint" />
+            <mxPoint x="75" y="188" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m03" value="3. &lt;b&gt;GET /patients/&lt;/b&gt; (liste patients du médecin)" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="255" y="218" as="sourcePoint" />
+            <mxPoint x="432" y="218" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m04" value="4. &lt;i&gt;patients_list_create()&lt;/i&gt; (GET)" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="432" y="242" as="sourcePoint" />
+            <mxPoint x="562" y="242" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m05" value="5. ORM : &lt;i&gt;Patient.objects.filter(doctor=user)&lt;/i&gt;&lt;br&gt;SQL équivalent : &lt;i&gt;SELECT … FROM patient WHERE doctor_id = …&lt;/i&gt;" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="562" y="278" as="sourcePoint" />
+            <mxPoint x="1120" y="278" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m06" value="6. Retour : lignes patients (QuerySet)" style="endArrow=open;dashed=1;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1120" y="308" as="sourcePoint" />
+            <mxPoint x="562" y="308" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m07" value="7. &lt;b&gt;200 OK&lt;/b&gt; JSON &lt;i&gt;{ ok, patients: [ { id, nom, dossier_number, … } ] }&lt;/i&gt;" style="endArrow=open;dashed=1;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="562" y="332" as="sourcePoint" />
+            <mxPoint x="255" y="332" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m08" value="8. Sélectionner un patient" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="75" y="362" as="sourcePoint" />
+            <mxPoint x="255" y="362" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m09" value="9. &lt;b&gt;GET /patients/{id}/mri-files/&lt;/b&gt;" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="255" y="392" as="sourcePoint" />
+            <mxPoint x="432" y="392" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m10" value="10. &lt;i&gt;mri_files_list_upload()&lt;/i&gt; branche GET / liste" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="432" y="416" as="sourcePoint" />
+            <mxPoint x="562" y="416" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m11" value="11. ORM : &lt;i&gt;MRIFile.objects.filter(patient=…)&lt;/i&gt;&lt;br&gt;SQL : &lt;i&gt;SELECT … FROM mri_file WHERE patient_id = …&lt;/i&gt;" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="562" y="452" as="sourcePoint" />
+            <mxPoint x="1120" y="452" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m12" value="12. Retour : coupes IRM (QuerySet)" style="endArrow=open;dashed=1;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1120" y="482" as="sourcePoint" />
+            <mxPoint x="562" y="482" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m13" value="13. &lt;b&gt;200 OK&lt;/b&gt; JSON &lt;i&gt;{ ok, mri_files: [ { id, original_filename, url, … } ] }&lt;/i&gt;" style="endArrow=open;dashed=1;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="562" y="506" as="sourcePoint" />
+            <mxPoint x="255" y="506" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Phase B -->
+        <mxCell id="phaseB" value="&lt;b&gt;Phase B — Saisie &amp; validation&lt;/b&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="20" y="530" width="1165" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="m14" value="14. &lt;i&gt;opt&lt;/i&gt; : cocher &lt;b&gt;file_ids&lt;/b&gt;, choisir &lt;b&gt;model&lt;/b&gt; (ex. unetpp), &lt;b&gt;threshold&lt;/b&gt; (ex. 0.25)" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="75" y="568" as="sourcePoint" />
+            <mxPoint x="255" y="568" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="alt_jwt_frame" value="&lt;b&gt;alt&lt;/b&gt; [JWT / session invalide]" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffcccc;strokeColor=#b85450;align=left;verticalAlign=top;spacingLeft=8;spacingTop=4;fontSize=10;dashed=1;dashPattern=8 8;" vertex="1" parent="1">
+          <mxGeometry x="20" y="595" width="1165" height="85" as="geometry" />
+        </mxCell>
+        <mxCell id="m15" value="15. &lt;b&gt;POST&lt;/b&gt; …/segment/ + &lt;i&gt;Authorization: Bearer …&lt;/i&gt; (invalide)" style="endArrow=block;html=1;rounded=0;fontSize=10;strokeColor=#b85450;fontColor=#b85450;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="255" y="628" as="sourcePoint" />
+            <mxPoint x="432" y="628" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m16" value="16. &lt;b&gt;401 Unauthorized&lt;/b&gt; — arrêt du flux" style="endArrow=open;dashed=1;html=1;rounded=0;fontSize=10;strokeColor=#b85450;fontColor=#b85450;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="432" y="652" as="sourcePoint" />
+            <mxPoint x="255" y="652" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="alt_data_frame" value="&lt;b&gt;alt&lt;/b&gt; [données invalides : seuil hors [0,1], file_ids incorrect, aucune coupe…]" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff4cc;strokeColor=#d6b656;align=left;verticalAlign=top;spacingLeft=8;spacingTop=4;fontSize=10;dashed=1;dashPattern=8 8;" vertex="1" parent="1">
+          <mxGeometry x="20" y="688" width="1165" height="72" as="geometry" />
+        </mxCell>
+        <mxCell id="m17" value="17. &lt;b&gt;400&lt;/b&gt; JSON &lt;i&gt;{ ok: false, error: &quot;…&quot; }&lt;/i&gt; — affichage erreur dans le React" style="endArrow=open;dashed=1;html=1;rounded=0;fontSize=10;strokeColor=#d6b656;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="562" y="722" as="sourcePoint" />
+            <mxPoint x="255" y="722" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Phase C-D -->
+        <mxCell id="phaseC" value="&lt;b&gt;Phase C — Lancement (données valides + authentifié)&lt;/b&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="20" y="772" width="1165" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="m18" value="18. &lt;b&gt;POST /patients/{id}/segment/&lt;/b&gt; body JSON &lt;i&gt;{ model, file_ids, threshold }&lt;/i&gt;" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="255" y="808" as="sourcePoint" />
+            <mxPoint x="432" y="808" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m19" value="19. &lt;i&gt;launch_patient_segmentation(request, patient_id)&lt;/i&gt;" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="432" y="832" as="sourcePoint" />
+            <mxPoint x="562" y="832" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m20" value="20. ORM : &lt;i&gt;get_object_or_404(Patient, …)&lt;/i&gt; + &lt;i&gt;MRIFile.objects.filter(…)&lt;/i&gt;&lt;br&gt;SQL : &lt;i&gt;SELECT&lt;/i&gt; patient + fichiers" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="562" y="868" as="sourcePoint" />
+            <mxPoint x="1120" y="868" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m21" value="21. Retour objets Patient + liste MRIFile" style="endArrow=open;dashed=1;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1120" y="898" as="sourcePoint" />
+            <mxPoint x="562" y="898" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m22" value="22. ORM : &lt;i&gt;SegmentationRun.objects.create(status='running', …)&lt;/i&gt;&lt;br&gt;SQL : &lt;i&gt;INSERT&lt;/i&gt; dans &lt;i&gt;segmentation_run&lt;/i&gt;" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="562" y="928" as="sourcePoint" />
+            <mxPoint x="1120" y="928" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m23" value="23. Retour instance &lt;i&gt;run&lt;/i&gt; (id, status=running)" style="endArrow=open;dashed=1;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1120" y="952" as="sourcePoint" />
+            <mxPoint x="562" y="952" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="loop_frame" value="&lt;b&gt;loop&lt;/b&gt; [pour chaque MRIFile sélectionné]" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;align=left;verticalAlign=top;spacingLeft=8;spacingTop=4;fontSize=10;dashed=1;dashPattern=8 8;" vertex="1" parent="1">
+          <mxGeometry x="20" y="978" width="1165" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="m24" value="24. &lt;i&gt;run_segmentation_on_files(mri_files, model_key, threshold)&lt;/i&gt;" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="562" y="1012" as="sourcePoint" />
+            <mxPoint x="737" y="1012" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m25" value="25. Interne IA : lecture image (OpenCV) → tenseur → &lt;i&gt;session.run&lt;/i&gt; ONNX → post-traitement + seuil → PNG masque + storage" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;align=left;fontSize=9;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1035" width="1125" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="m26" value="26. Retour : élément &lt;i&gt;{ file_id, mask_url, source_url, … }&lt;/i&gt;" style="endArrow=open;dashed=1;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="737" y="1088" as="sourcePoint" />
+            <mxPoint x="562" y="1088" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="m27" value="27. &lt;i&gt;transaction.atomic()&lt;/i&gt; : &lt;i&gt;SegmentationMaskResult.objects.create&lt;/i&gt; (par coupe)&lt;br&gt;SQL : &lt;i&gt;INSERT&lt;/i&gt; dans &lt;i&gt;segmentation_mask_result&lt;/i&gt;" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="562" y="1122" as="sourcePoint" />
+            <mxPoint x="1120" y="1122" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m28" value="28. &lt;i&gt;run.save&lt;/i&gt; : status=&lt;i&gt;done&lt;/i&gt;, processed_count, completed_at&lt;br&gt;SQL : &lt;i&gt;UPDATE segmentation_run&lt;/i&gt;" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="562" y="1158" as="sourcePoint" />
+            <mxPoint x="1120" y="1158" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m29" value="29. &lt;b&gt;200 OK&lt;/b&gt; JSON &lt;i&gt;{ ok, run_id, results: […], model, threshold, count }&lt;/i&gt;" style="endArrow=open;dashed=1;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="562" y="1188" as="sourcePoint" />
+            <mxPoint x="255" y="1188" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m30" value="30. React : &lt;i&gt;setLaunchResult(response.data)&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;align=left;fontSize=9;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="180" y="1205" width="330" height="26" as="geometry" />
+        </mxCell>
+
+        <mxCell id="alt_err_frame" value="&lt;b&gt;alt&lt;/b&gt; [exception pipeline / fichier modèle manquant / erreur I/O]" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffcccc;strokeColor=#b85450;align=left;verticalAlign=top;spacingLeft=8;spacingTop=4;fontSize=10;dashed=1;dashPattern=8 8;" vertex="1" parent="1">
+          <mxGeometry x="20" y="1240" width="1165" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="m31" value="31. &lt;i&gt;run.save&lt;/i&gt; status=&lt;i&gt;failed&lt;/i&gt;, error_message — SQL &lt;i&gt;UPDATE segmentation_run&lt;/i&gt;" style="endArrow=block;html=1;rounded=0;fontSize=10;strokeColor=#b85450;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="562" y="1275" as="sourcePoint" />
+            <mxPoint x="1120" y="1275" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m32" value="32. &lt;b&gt;400 / 500&lt;/b&gt; JSON erreur vers le React" style="endArrow=open;dashed=1;html=1;rounded=0;fontSize=10;strokeColor=#b85450;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="562" y="1299" as="sourcePoint" />
+            <mxPoint x="255" y="1299" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Phase F opt -->
+        <mxCell id="phaseF" value="&lt;b&gt;Phase F — opt : détail du run (affichage enrichi)&lt;/b&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="20" y="1330" width="1165" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="m33" value="33. Médecin : ouvrir le détail des résultats" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="75" y="1370" as="sourcePoint" />
+            <mxPoint x="255" y="1370" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m34" value="34. &lt;b&gt;GET /segmentation-runs/{run_id}/&lt;/b&gt;" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="255" y="1396" as="sourcePoint" />
+            <mxPoint x="432" y="1396" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m35" value="35. &lt;i&gt;segmentation_run_detail()&lt;/i&gt;" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="432" y="1420" as="sourcePoint" />
+            <mxPoint x="562" y="1420" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m36" value="36. ORM : chargement run + &lt;i&gt;results&lt;/i&gt; — SQL &lt;i&gt;SELECT&lt;/i&gt; + jointures / prefetch" style="endArrow=block;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="562" y="1450" as="sourcePoint" />
+            <mxPoint x="1120" y="1450" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m37" value="37. Retour lignes" style="endArrow=open;dashed=1;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1120" y="1474" as="sourcePoint" />
+            <mxPoint x="562" y="1474" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m38" value="38. &lt;b&gt;200 OK&lt;/b&gt; JSON &lt;i&gt;run&lt;/i&gt; sérialisé + masques" style="endArrow=open;dashed=1;html=1;rounded=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="562" y="1498" as="sourcePoint" />
+            <mxPoint x="255" y="1498" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m39" value="39. &lt;i&gt;setPersistedResults&lt;/i&gt;, &lt;i&gt;setShowResults&lt;/i&gt; — affichage UI" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;align=left;fontSize=9;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="180" y="1515" width="380" height="26" as="geometry" />
+        </mxCell>
+
+        <mxCell id="legend" value="&lt;b&gt;Légende&lt;/b&gt; : même logique que le diagramme d’inscription — &lt;b&gt;Router&lt;/b&gt; = urls.py, &lt;b&gt;View&lt;/b&gt; = views.py, &lt;b&gt;Service&lt;/b&gt; = pipeline ONNX (remplace Email), &lt;b&gt;Model&lt;/b&gt; = entités ORM liées à la segmentation, &lt;b&gt;PostgreSQL&lt;/b&gt; = persistance. Les cadres &lt;b&gt;alt&lt;/b&gt;/&lt;b&gt;loop&lt;/b&gt;/&lt;b&gt;opt&lt;/b&gt; reprennent les fragments UML." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="20" y="1555" width="1165" height="72" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

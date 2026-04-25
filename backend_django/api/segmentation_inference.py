@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 from typing import Dict, List
 
@@ -11,10 +12,13 @@ from django.core.files.storage import default_storage
 
 from .models import MRIFile
 
+_ONNX_IMPORT_ERROR: str = ''
+
 try:
     import onnxruntime as ort
-except Exception:  # pragma: no cover
-    ort = None
+except Exception as exc:  # pragma: no cover
+    ort = None  # type: ignore
+    _ONNX_IMPORT_ERROR = f'{type(exc).__name__}: {exc}'
 
 
 _SESSIONS: Dict[str, "ort.InferenceSession"] = {}
@@ -23,7 +27,35 @@ _SESSIONS: Dict[str, "ort.InferenceSession"] = {}
 MODEL_INPUT_SIZE = 256
 NORM_MEAN = 0.1311
 NORM_STD = 0.1250
-DEFAULT_THRESHOLD = 0.25
+# Probabilité minimale (après sigmoid si besoin) pour compter un pixel comme lésion.
+# Plus haut = moins de faux positifs sur coupes faibles / bruit ; peut rogner les bords fins.
+DEFAULT_THRESHOLD = 0.75
+
+# Coupes quasi vides (noir / sans signal) : ne pas appeler l'ONNX (évite des masques aberrants).
+_EMPTY_SLICE_MAX_RAW = 1.0
+_EMPTY_SLICE_P99_MAX = 4.0
+_EMPTY_SLICE_MEAN_MAX = 1.5
+
+
+def _is_effectively_empty_slice(gray_u8: np.ndarray) -> bool:
+    """
+    True si la coupe n'a pas de signal exploitable (noir, tout à zéro, ou quasi uniforme ~0).
+    Entrée : image 2D uint8 (0–255), même lecture que pour l'inférence.
+    """
+    if gray_u8 is None or gray_u8.size == 0:
+        return True
+    if gray_u8.ndim != 2:
+        gray_u8 = np.squeeze(gray_u8)
+        if gray_u8.ndim != 2:
+            return True
+    mx = float(np.max(gray_u8))
+    if mx < _EMPTY_SLICE_MAX_RAW:
+        return True
+    mean = float(np.mean(gray_u8))
+    p99 = float(np.percentile(gray_u8, 99))
+    if p99 <= _EMPTY_SLICE_P99_MAX and mean <= _EMPTY_SLICE_MEAN_MAX:
+        return True
+    return False
 
 
 def _sigmoid(x: np.ndarray) -> np.ndarray:
@@ -67,7 +99,12 @@ def _normalize_model_key(model_key: str) -> str:
 
 def _build_session(model_path: str):
     if ort is None:
-        raise RuntimeError("onnxruntime n'est pas installe sur le backend.")
+        hint = (
+            f"onnxruntime n'est pas utilisable sur le backend (Python: {sys.executable}). "
+            f"Lancez le serveur avec le venv du projet (ex. .venv\\Scripts\\python.exe manage.py runserver). "
+            f"Detail import: {_ONNX_IMPORT_ERROR or 'inconnu'}"
+        )
+        raise RuntimeError(hint)
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Modele ONNX introuvable: {model_path}")
 
@@ -103,11 +140,9 @@ def _infer_input_spec(session) -> tuple:
     return False, 1, height, width
 
 
-def _prepare_input(image_path: str, target_h: int, target_w: int, model_key: str, expects_3d: bool, target_d: int) -> tuple:
-    image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-    if image is None:
-        raise ValueError(f"Impossible de lire l'image: {image_path}")
-
+def _prepare_input_from_array(
+    image: np.ndarray, target_h: int, target_w: int, model_key: str, expects_3d: bool, target_d: int
+) -> tuple:
     original_h, original_w = image.shape[:2]
     model_kind = _normalize_model_key(model_key)
 
@@ -134,9 +169,18 @@ def _prepare_input(image_path: str, target_h: int, target_w: int, model_key: str
     return tensor, (original_h, original_w)
 
 
+def _prepare_input(image_path: str, target_h: int, target_w: int, model_key: str, expects_3d: bool, target_d: int) -> tuple:
+    image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if image is None:
+        raise ValueError(f"Impossible de lire l'image: {image_path}")
+    return _prepare_input_from_array(image, target_h, target_w, model_key, expects_3d, target_d)
+
+
 def _post_traitement(binary_mask: np.ndarray) -> np.ndarray:
     """Replicates post_traitement from user's evaluation scripts."""
     clean = ndimage.binary_opening(binary_mask, iterations=1).astype(np.uint8)
+    clean = ndimage.binary_closing(clean, iterations=1).astype(np.uint8)
+    clean = ndimage.binary_fill_holes(clean).astype(np.uint8)
     labeled, n = ndimage.label(clean)
     if n == 0:
         return clean
@@ -173,6 +217,8 @@ def _postprocess_mask(output: np.ndarray, original_shape: tuple, threshold: floa
             if np.min(score) < 0.0 or np.max(score) > 1.0:
                 score = _sigmoid(score)
             binary = (score >= float(threshold)).astype(np.uint8)
+        binary = ndimage.binary_closing(binary, iterations=1).astype(np.uint8)
+        binary = ndimage.binary_fill_holes(binary).astype(np.uint8)
     else:
         if mask.ndim == 5:
             mask = mask[0, 0, mask.shape[2] // 2]
@@ -207,12 +253,8 @@ def _save_mask(mask_u8: np.ndarray, patient_id: int, mri_file_id: int, model_key
     return saved_path
 
 
-def _save_source_preview(source_path: str, patient_id: int, mri_file_id: int, source_name: str) -> str:
-    """Create a PNG preview for original slices (e.g. TIFF) so browsers can render it."""
-    source_u8 = cv2.imread(source_path, cv2.IMREAD_GRAYSCALE)
-    if source_u8 is None:
-        raise ValueError(f"Impossible de lire la source pour preview: {source_path}")
-
+def _save_source_preview_from_array(source_u8: np.ndarray, patient_id: int, mri_file_id: int, source_name: str) -> str:
+    """Encode une preview PNG à partir du tableau grayscale déjà chargé."""
     base_name = os.path.splitext(_truncate_filename(source_name))[0]
     file_name = f"{int(time.time())}_{mri_file_id}_{base_name}_source.png"
     storage_path = f"patients/{patient_id}/segmentations/{file_name}"
@@ -223,6 +265,14 @@ def _save_source_preview(source_path: str, patient_id: int, mri_file_id: int, so
 
     saved_path = default_storage.save(storage_path, ContentFile(encoded.tobytes()))
     return saved_path
+
+
+def _save_source_preview(source_path: str, patient_id: int, mri_file_id: int, source_name: str) -> str:
+    """Create a PNG preview for original slices (e.g. TIFF) so browsers can render it."""
+    source_u8 = cv2.imread(source_path, cv2.IMREAD_GRAYSCALE)
+    if source_u8 is None:
+        raise ValueError(f"Impossible de lire la source pour preview: {source_path}")
+    return _save_source_preview_from_array(source_u8, patient_id, mri_file_id, source_name)
 
 
 def run_segmentation_on_files(mri_files: List[MRIFile], model_key: str, threshold: float = DEFAULT_THRESHOLD) -> List[dict]:
@@ -237,17 +287,25 @@ def run_segmentation_on_files(mri_files: List[MRIFile], model_key: str, threshol
         if not source_path:
             raise ValueError(f"Fichier source invalide pour MRIFile {mri.id}")
 
-        source_preview_path = _save_source_preview(source_path, mri.patient_id, mri.id, mri.original_filename)
-        tensor, original_shape = _prepare_input(
-            source_path,
-            target_h,
-            target_w,
-            model_key=model_key,
-            expects_3d=expects_3d,
-            target_d=target_d,
-        )
-        output = session.run([output_name], {input_name: tensor})[0]
-        mask_u8 = _postprocess_mask(output, original_shape, threshold, model_key=model_key)
+        image = cv2.imread(source_path, cv2.IMREAD_GRAYSCALE)
+        if image is None:
+            raise ValueError(f"Impossible de lire l'image: {source_path}")
+
+        source_preview_path = _save_source_preview_from_array(image, mri.patient_id, mri.id, mri.original_filename)
+
+        if _is_effectively_empty_slice(image):
+            mask_u8 = np.zeros(image.shape[:2], dtype=np.uint8)
+        else:
+            tensor, original_shape = _prepare_input_from_array(
+                image,
+                target_h,
+                target_w,
+                model_key=model_key,
+                expects_3d=expects_3d,
+                target_d=target_d,
+            )
+            output = session.run([output_name], {input_name: tensor})[0]
+            mask_u8 = _postprocess_mask(output, original_shape, threshold, model_key=model_key)
         saved_path = _save_mask(mask_u8, mri.patient_id, mri.id, model_key, mri.original_filename)
 
         file_url = None

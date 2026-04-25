@@ -73,6 +73,7 @@ from .models import (
 )
 from .serializers import (
     ReclamationSerializer, PatientSerializer, MRIFileSerializer, SegmentationRunSerializer,
+    SegmentationMaskResultSerializer,
     ProfileSerializer, ChangePasswordSerializer, UserSettingsSerializer, ContactRequestSerializer,
     PatientImageSerializer, OrientationSerializer
 )
@@ -737,13 +738,13 @@ def _apply_preprocess_method(img_u8, method, intensity):
 
 def _segmentation_model_label(model_key):
     key = str(model_key or '').strip().lower()
-    if key == 'nnunet':
-        return 'nnU-Net fold0 2D ONNX'
     if key == 'unetpp':
-        return 'U-Net++ ONNX'
+        return 'Modèle 1'
+    if key == 'nnunet':
+        return 'Modèle 2'
     if key == 'swinunetr':
-        return 'SwinUNETR ONNX'
-    return key or 'Modele inconnu'
+        return 'Modèle 3'
+    return key or 'Modèle inconnu'
 
 
 def _safe_relative_path(raw_path, fallback_name):
@@ -2151,13 +2152,13 @@ def launch_patient_segmentation(request, patient_id):
             {
                 "model": "unetpp" | "nnunet",
                 "file_ids": [1,2,3],
-                "threshold": 0.25
+                "threshold": 0.75
             }
     """
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
 
     model = (request.data.get('model') or 'unetpp').strip().lower()
-    threshold = request.data.get('threshold', 0.25)
+    threshold = request.data.get('threshold', 0.75)
 
     try:
         threshold = float(threshold)
@@ -2209,6 +2210,11 @@ def launch_patient_segmentation(request, patient_id):
                     source_url=item.get('source_url') or '',
                     mask_file=item.get('mask_file') or '',
                     mask_url=item.get('mask_url') or '',
+                    mask_model_key=model,
+                    initial_mask_file=item.get('mask_file') or '',
+                    initial_mask_url=item.get('mask_url') or '',
+                    initial_mask_model_key=model,
+                    review_status=SegmentationMaskResult.ReviewStatus.VALIDATED,
                 )
                 created_results.append(seg_row)
 
@@ -2304,6 +2310,188 @@ def segmentation_run_detail(request, run_id):
     run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
     serializer = SegmentationRunSerializer(run)
     return JsonResponse({'ok': True, 'run': serializer.data}, status=200)
+
+
+ALT_SEGMENTATION_MODELS = frozenset({'nnunet', 'swinunetr'})
+RESEGMENT_MODEL_KEYS = frozenset({'unetpp', 'nnunet', 'swinunetr'})
+ADOPT_MODEL_KEYS = frozenset({'unetpp', 'nnunet', 'swinunetr'})
+
+
+@csrf_exempt
+@api_view(['PATCH'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def segmentation_mask_review(request, run_id, mask_id):
+    run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
+    mask = get_object_or_404(SegmentationMaskResult, id=mask_id, run=run)
+    status_val = (request.data.get('review_status') or request.data.get('status') or '').strip().lower()
+    allowed = {c[0] for c in SegmentationMaskResult.ReviewStatus.choices}
+    if status_val not in allowed:
+        return JsonResponse(
+            {'ok': False, 'error': 'review_status doit etre pending, validated ou rejected.'},
+            status=400,
+        )
+    mask.review_status = status_val
+    mask.save(update_fields=['review_status'])
+    return JsonResponse({'ok': True, 'result': SegmentationMaskResultSerializer(mask).data}, status=200)
+
+
+def _resolve_adopt_mask_source(row: SegmentationMaskResult, model_key: str):
+    """Retourne (file, url, model_key) du masque à promouvoir en référence, ou None."""
+    mk = (model_key or '').strip().lower()
+    cur = (row.mask_model_key or '').strip().lower()
+    prior_k = (row.prior_mask_model_key or '').strip().lower()
+    if mk == 'unetpp':
+        if cur == 'unetpp' and (row.mask_file or '').strip():
+            return row.mask_file, (row.mask_url or '').strip() or None, 'unetpp'
+        if cur == 'swinunetr' and prior_k == 'unetpp' and (row.prior_mask_file or '').strip():
+            return row.prior_mask_file, (row.prior_mask_url or '').strip() or None, 'unetpp'
+        return None
+    if mk == 'nnunet':
+        if cur == 'swinunetr' and prior_k == 'nnunet' and (row.prior_mask_file or '').strip():
+            return row.prior_mask_file, (row.prior_mask_url or '').strip() or None, 'nnunet'
+        if cur == 'nnunet' and (row.mask_file or '').strip():
+            return row.mask_file, (row.mask_url or '').strip() or None, 'nnunet'
+        return None
+    if mk == 'swinunetr':
+        if cur == 'swinunetr' and (row.mask_file or '').strip():
+            return row.mask_file, (row.mask_url or '').strip() or None, 'swinunetr'
+        return None
+    return None
+
+
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def segmentation_mask_adopt_reference(request, run_id, mask_id):
+    """Adopte le masque M1, M2 ou M3 comme référence clinique (remplace initial + courant, efface prior)."""
+    run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
+    if run.status != 'done':
+        return JsonResponse({'ok': False, 'error': 'Le run doit etre termine.'}, status=400)
+    row = get_object_or_404(SegmentationMaskResult, id=mask_id, run=run)
+    model = (request.data.get('model_key') or request.data.get('model') or '').strip().lower()
+    if model not in ADOPT_MODEL_KEYS:
+        return JsonResponse(
+            {'ok': False, 'error': 'model_key doit etre unetpp (M1), nnunet (M2) ou swinunetr (M3).'},
+            status=400,
+        )
+    resolved = _resolve_adopt_mask_source(row, model)
+    if not resolved:
+        return JsonResponse(
+            {'ok': False, 'error': 'Ce masque alternatif est indisponible pour cette coupe (etat actuel incompatible).'},
+            status=400,
+        )
+    chosen_file, chosen_url, chosen_key = resolved
+    row.initial_mask_file = chosen_file
+    row.initial_mask_url = chosen_url or ''
+    row.initial_mask_model_key = chosen_key
+    row.mask_file = chosen_file
+    row.mask_url = chosen_url or ''
+    row.mask_model_key = chosen_key
+    row.prior_mask_file = ''
+    row.prior_mask_url = ''
+    row.prior_mask_model_key = ''
+    row.review_status = SegmentationMaskResult.ReviewStatus.VALIDATED
+    row.save(
+        update_fields=[
+            'initial_mask_file',
+            'initial_mask_url',
+            'initial_mask_model_key',
+            'mask_file',
+            'mask_url',
+            'mask_model_key',
+            'prior_mask_file',
+            'prior_mask_url',
+            'prior_mask_model_key',
+            'review_status',
+        ]
+    )
+    return JsonResponse({'ok': True, 'result': SegmentationMaskResultSerializer(row).data}, status=200)
+
+
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def segmentation_run_resegment_masks(request, run_id):
+    run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
+    if run.status != 'done':
+        return JsonResponse({'ok': False, 'error': 'Le run doit etre termine avant une nouvelle segmentation.'}, status=400)
+
+    model = (request.data.get('model') or '').strip().lower()
+    if model not in RESEGMENT_MODEL_KEYS:
+        return JsonResponse(
+            {'ok': False, 'error': 'Lancement possible avec le Modèle 1 (unetpp), le Modèle 2 ou le Modèle 3.'},
+            status=400,
+        )
+
+    file_ids = request.data.get('mri_file_ids') or request.data.get('file_ids') or []
+    if isinstance(file_ids, str):
+        try:
+            file_ids = json.loads(file_ids)
+        except Exception:
+            return JsonResponse({'ok': False, 'error': 'mri_file_ids invalide'}, status=400)
+    if not isinstance(file_ids, list) or not file_ids:
+        return JsonResponse({'ok': False, 'error': 'mri_file_ids (liste non vide) requis.'}, status=400)
+    try:
+        file_ids_int = [int(x) for x in file_ids]
+    except (TypeError, ValueError):
+        return JsonResponse({'ok': False, 'error': 'mri_file_ids doit contenir des entiers.'}, status=400)
+
+    unique_ids = list(dict.fromkeys(file_ids_int))
+    mask_rows = list(
+        SegmentationMaskResult.objects.filter(run=run, mri_file_id__in=unique_ids).select_related('mri_file')
+    )
+    found_ids = {r.mri_file_id for r in mask_rows}
+    if len(found_ids) != len(unique_ids):
+        return JsonResponse({'ok': False, 'error': 'Certaines coupes ne font pas partie de ce run.'}, status=400)
+
+    id_order = {fid: i for i, fid in enumerate(unique_ids)}
+    mask_rows.sort(key=lambda r: id_order[r.mri_file_id])
+    mri_files = [row.mri_file for row in mask_rows]
+
+    try:
+        results = run_segmentation_on_files(mri_files, model_key=model, threshold=float(run.threshold))
+    except FileNotFoundError as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=500)
+    except ValueError as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=400)
+    except RuntimeError as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=500)
+    except Exception as e:
+        return JsonResponse({'ok': False, 'error': f'Echec segmentation: {str(e)}'}, status=500)
+
+    by_file = {item['file_id']: item for item in results}
+    updated_payload = []
+    for row in mask_rows:
+        item = by_file.get(row.mri_file_id)
+        if not item:
+            return JsonResponse({'ok': False, 'error': f'Pas de resultat pour MRIFile {row.mri_file_id}'}, status=500)
+        # Conserver une trace du masque remplacé (comparaison avant / après relance)
+        prev_model = (row.mask_model_key or '').strip() or (run.model_key or '')
+        if row.mask_file:
+            row.prior_mask_file = row.mask_file
+            row.prior_mask_url = row.mask_url or ''
+            row.prior_mask_model_key = prev_model
+        row.mask_file = item['mask_file']
+        row.mask_url = item['mask_url']
+        row.mask_model_key = model
+        row.review_status = SegmentationMaskResult.ReviewStatus.VALIDATED
+        row.save(
+            update_fields=[
+                'prior_mask_file',
+                'prior_mask_url',
+                'prior_mask_model_key',
+                'mask_file',
+                'mask_url',
+                'mask_model_key',
+                'review_status',
+            ]
+        )
+        updated_payload.append(SegmentationMaskResultSerializer(row).data)
+
+    return JsonResponse({'ok': True, 'results': updated_payload}, status=200)
 
 
 @csrf_exempt
@@ -2812,8 +3000,10 @@ def _build_report_pdf(run, modelisation):
     story.append(mt)
     story.append(PageBreak())
 
-    # ——— 2. Coupes en grille (toutes les coupes, ordre croissant) ———
-    result_rows = list(run.results.all().order_by('slice_index', 'id'))
+    # ——— 2. Coupes en grille (coupes non rejetées, ordre croissant) ———
+    result_rows = list(
+        run.results.exclude(review_status=SegmentationMaskResult.ReviewStatus.REJECTED).order_by('slice_index', 'id')
+    )
     if result_rows:
         story.append(Paragraph('SECTION 2', sec_num))
         story.append(Paragraph('Coupe IRM et contour de segmentation', sec_title))
@@ -3914,41 +4104,41 @@ def patients_list_create(request):
                 MAX_FILE_SIZE_MB = 500
                 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
-                for index, uploaded_file in enumerate(files):
-                    fname_lower = uploaded_file.name.lower()
-                    ext = os.path.splitext(fname_lower)[1]
-                    # .nii.gz → extension double
-                    if fname_lower.endswith('.nii.gz'):
-                        ext = '.gz'
-                    if ext not in ALLOWED_EXTENSIONS:
-                        transaction.set_rollback(True)
-                        return JsonResponse({
-                            'ok': False,
-                            'error': f'Extension « {ext} » non autorisée pour le fichier « {uploaded_file.name} ». Formats acceptés : NIfTI, DICOM, JPEG, PNG, TIFF, BMP.'
-                        }, status=400)
-                    file_size = getattr(uploaded_file, 'size', 0) or 0
-                    if file_size > MAX_FILE_SIZE_BYTES:
-                        transaction.set_rollback(True)
-                        return JsonResponse({
-                            'ok': False,
-                            'error': f'Le fichier « {uploaded_file.name} » dépasse la limite de {MAX_FILE_SIZE_MB} Mo ({file_size // (1024*1024)} Mo).'
-                        }, status=400)
+for index, uploaded_file in enumerate(files):
+    fname_lower = uploaded_file.name.lower()
+    ext = os.path.splitext(fname_lower)[1]
+    if fname_lower.endswith('.nii.gz'):
+        ext = '.gz'
+    if ext not in ALLOWED_EXTENSIONS:
+        transaction.set_rollback(True)
+        return JsonResponse({
+            'ok': False,
+            'error': f'Extension « {ext} » non autorisée pour le fichier « {uploaded_file.name} ». Formats acceptés : NIfTI, DICOM, JPEG, PNG, TIFF, BMP.'
+        }, status=400)
+    file_size = getattr(uploaded_file, 'size', 0) or 0
+    if file_size > MAX_FILE_SIZE_BYTES:
+        transaction.set_rollback(True)
+        return JsonResponse({
+            'ok': False,
+            'error': f'Le fichier « {uploaded_file.name} » dépasse la limite de {MAX_FILE_SIZE_MB} Mo ({file_size // (1024*1024)} Mo).'
+        }, status=400)
 
-                    rel_from_client = relative_paths[index] if index < len(relative_paths) else ''
-                    safe_rel = _safe_relative_path(rel_from_client, uploaded_file.name)
-                    storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
-                    saved_path = default_storage.save(storage_path, uploaded_file)
+    rel_from_client = relative_paths[index] if index < len(relative_paths) else ''
+    safe_rel = _safe_relative_path(rel_from_client, uploaded_file.name)
+    storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
+    saved_path = default_storage.save(storage_path, uploaded_file)
 
-                    MRIFile.objects.create(
-                        patient=patient,
-                        file=saved_path,
-                        original_filename=uploaded_file.name,
-                        relative_path=safe_rel,
-                        file_size=int(getattr(uploaded_file, 'size', 0) or 0),
-                    )
-        except IntegrityError:
-            return JsonResponse({'ok': False, 'error': f'Le numéro de dossier « {dossier_number} » existe déjà. Veuillez choisir un numéro unique.'}, status=409)
+    mri_rec = MRIFile.objects.create(
+        patient=patient,
+        file=saved_path,
+        original_filename=uploaded_file.name,
+        relative_path=safe_rel,
+        file_size=int(getattr(uploaded_file, 'size', 0) or 0),
+    )
+    _ensure_mri_file_dimensions(mri_rec)  # ✅ ajout de nadine
 
+except IntegrityError:
+    return JsonResponse({'ok': False, 'error': f'Le numéro de dossier « {dossier_number} » existe déjà. Veuillez choisir un numéro unique.'}, status=409)
         out_serializer = PatientSerializer(patient, context={'request': request})
         return JsonResponse(
             {
@@ -4048,13 +4238,14 @@ def upload_mri_files(request, patient_id: int):
             storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
             saved_path = default_storage.save(storage_path, f)
             
-            MRIFile.objects.create(
+            rec = MRIFile.objects.create(
                 patient=patient,
                 file=saved_path,
                 original_filename=f.name,
                 relative_path=safe_rel,
                 file_size=int(getattr(f, 'size', 0) or 0),
             )
+            _ensure_mri_file_dimensions(rec)
             uploaded_count += 1
         except Exception as e:
             errors.append(f"Failed to upload {f.name}: {str(e)}")
@@ -4065,12 +4256,56 @@ def upload_mri_files(request, patient_id: int):
     return JsonResponse({'ok': True, 'message': f'Successfully uploaded {uploaded_count} files for patient {patient.dossier_number}'})
 
 
+def _probe_mri_file_dimensions(mri_file_obj):
+    """Retourne (largeur, hauteur) en pixels ou (None, None)."""
+    try:
+        f = mri_file_obj.file
+        path = getattr(f, 'path', None)
+        if not path or not os.path.isfile(path):
+            return None, None
+        with Image.open(path) as im:
+            w, h = im.size
+            if w > 0 and h > 0:
+                return int(w), int(h)
+    except Exception:
+        pass
+    try:
+        f = mri_file_obj.file
+        path = getattr(f, 'path', None)
+        if not path or not os.path.isfile(path):
+            return None, None
+        img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            return None, None
+        if img.ndim == 2:
+            h, w = img.shape
+        else:
+            h, w = img.shape[:2]
+        if w > 0 and h > 0:
+            return int(w), int(h)
+    except Exception:
+        pass
+    return None, None
+
+
+def _ensure_mri_file_dimensions(mri):
+    if getattr(mri, 'image_width', None) and getattr(mri, 'image_height', None):
+        return
+    w, h = _probe_mri_file_dimensions(mri)
+    if w and h:
+        MRIFile.objects.filter(pk=mri.pk).update(image_width=w, image_height=h)
+        mri.image_width = w
+        mri.image_height = h
+
+
 @api_view(['GET'])
 @login_required
 def list_mri_files(request, patient_id: int):
     print(f"Nadine Yassmine - list_mri_files endpoint works - patient_id: {patient_id}, user: {request.user.username}")
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
-    mri_files = MRIFile.objects.filter(patient=patient).order_by('-uploaded_at')
+    mri_files = list(MRIFile.objects.filter(patient=patient).order_by('-uploaded_at'))
+    for m in mri_files:
+        _ensure_mri_file_dimensions(m)
     serializer = MRIFileSerializer(mri_files, many=True, context={'request': request})
     return JsonResponse({'ok': True, 'mri_files': serializer.data})
 

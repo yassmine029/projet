@@ -1,0 +1,96 @@
+@startuml VisionMed_Segmentation_Flux_Reel
+' Rendu compatible editeur en ligne : eviter "..." dans les messages (mot-clef PlantUML)
+skinparam sequenceMessageAlign center
+skinparam BoxPadding 10
+
+title FIGURE - Diagramme de sequence Segmentation hippocampique\nFlux page segmentation nouvelle (NouvelleSegmentation.jsx)
+
+actor "Medecin" as Doc
+
+box "FrontEnd React" #LightBlue
+  participant "NouvelleSegmentation.jsx" as V
+  participant "api.js Axios" as AX
+end box
+
+box "BackEnd Django REST" #MistyRose
+  participant "routage api urls" as RTR
+  participant "launch_patient_segmentation" as Cseg
+  participant "run_segmentation_on_files" as INF
+  participant "segmentation_run_detail" as Cdet
+end box
+
+box "Donnees" #LightGreen
+  database "PostgreSQL" as PG
+  participant "MEDIA fichiers" as FS
+end box
+
+== 0. Acces page ==
+Doc -> V : navigate vers route segmentation nouvelle\nvia bouton Nouvelle segmentation
+note right of V
+  Route Protected App.jsx
+  Session requise
+end note
+
+== 1. Etape 1 - Selection patient ==
+V -> V : Onglets: 1. Selection du patient, 2. Coupes IRM, 3. Segmentation Modele 1
+V -> AX : GET patients
+AX -> RTR : HTTP GET
+RTR --> AX : 200 liste patients
+AX --> V : patients
+
+Doc -> V : Recherche et selection ligne patient
+Doc -> V : Clic bouton Confirmer le patient
+
+== 2. Etape 2 - Coupes IRM ==
+V -> V : setStep(2)
+note right of V
+  Barre Coupe k sur N
+  workflowSliceCounter
+end note
+
+V -> AX : GET patients id mri-files
+AX -> RTR : HTTP GET
+RTR --> AX : coupes IRM
+AX --> V : liste slices
+
+Doc -> V : Tout selectionner ou clic cartes
+Doc -> V : Clic Lancer la segmentation (Modele 1)
+
+== 3. Etape 3 - Inference ==
+V -> V : setStep(3)\nEtape 3 sur 3 Segmentation en cours\nChecklist et barre Progression
+
+V -> AX : POST patients id segment\nbody model file_ids threshold
+AX -> RTR : HTTP POST
+RTR -> Cseg : launch_patient_segmentation
+
+Cseg -> PG : INSERT SegmentationRun running
+Cseg -> INF : run_segmentation_on_files
+loop chaque MRIFile
+  INF -> FS : PNG preview et masque
+end
+INF --> Cseg : liste results
+Cseg -> PG : INSERT SegmentationMaskResult\nUPDATE SegmentationRun done
+Cseg --> AX : 200 JSON ok run_id results count
+AX --> V : launchResult
+
+alt Segmentation OK
+  V --> Doc : Segmentation terminee\nbouton Voir les resultats
+  Doc -> V : Clic bouton Voir les resultats
+  V -> AX : GET segmentation-runs run_id
+  AX -> RTR : HTTP GET
+  RTR -> Cdet : segmentation_run_detail
+  Cdet -> PG : SELECT run et masks
+  Cdet --> AX : 200 JSON ok et run
+  AX --> V : persistedResults
+  V --> Doc : Ecran Resultats de segmentation
+else Erreur API
+  V --> Doc : Erreur Reessayer ou Retour aux coupes
+end
+
+note over V
+  Composant modale SegmentationModal.jsx
+  et SegmentationFlow.jsx existent mais ne sont
+  pas montes dans App.jsx flux alternatif inutilise
+end note
+
+@enduml

@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Plus, Search, X, Users, ChevronRight, Filter, UserCircle2 } from 'lucide-react';
+import { Plus, Search, X } from 'lucide-react';
 import api from '../../api';
+import PatientModal from '../../components/dashboard/PatientModal';
 import PageHeader from '../../components/ui/PageHeader';
 import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
+import Input from '../../components/ui/Input';
 import Badge from '../../components/ui/Badge';
 
 export default function PatientsList() {
@@ -12,34 +14,48 @@ export default function PatientsList() {
   const location = useLocation();
   const [patients, setPatients] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editingPatient, setEditingPatient] = useState(null);
   const [editForm, setEditForm] = useState({
-    dossier_number: '', date_naissance: '', sexe: '', telephone: '',
-    email: '', pathologie: '', stade: '', antecedents: '',
-    autres_maladies: '', notes: '',
+    dossier_number: '',
+    date_naissance: '',
+    sexe: '',
+    telephone: '',
+    email: '',
+    pathologie: '',
+    stade: '',
+    antecedents: '',
+    autres_maladies: '',
+    notes: '',
   });
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState('');
-  const [showFilters, setShowFilters] = useState(false);
 
   const getSlicesCount = (patient) => {
     if (typeof patient?.slices_count === 'number') return patient.slices_count;
     if (Array.isArray(patient?.mri_files)) return patient.mri_files.length;
     return null;
   };
-
+  
+  // Filter states
   const [filters, setFilters] = useState({
-    id: '', num_dossier: '', date_naissance: '', sexe: '', autres_maladies: ''
+    id: '',
+    num_dossier: '',
+    date_naissance: '',
+    sexe: '',
+    autres_maladies: ''
   });
 
   const fetchPatients = async () => {
     setLoading(true);
     try {
+      // Build query string
       const params = new URLSearchParams();
       Object.keys(filters).forEach(key => {
         if (filters[key]) params.append(key, filters[key]);
       });
+      
       const res = await api.get(`/patients/?${params.toString()}`);
       if (res.data && res.data.ok) {
         setPatients(res.data.patients || []);
@@ -51,7 +67,9 @@ export default function PatientsList() {
     }
   };
 
-  useEffect(() => { fetchPatients(); }, []);
+  useEffect(() => {
+    fetchPatients();
+  }, []);
 
   const handleFilterChange = (e) => {
     const { name, value } = e.target;
@@ -63,10 +81,15 @@ export default function PatientsList() {
     fetchPatients();
   };
 
+  const handlePatientCreated = () => {
+    fetchPatients();
+  };
+
   const handleDeletePatient = async (patient) => {
     const fullName = `${patient?.nom || ''} ${patient?.prenom || ''}`.trim() || `patient #${patient?.id}`;
     const ok = window.confirm(`Supprimer ${fullName} de la base de donnees ? Cette action est irreversible.`);
     if (!ok) return;
+
     try {
       await api.delete(`/patients/${patient.id}/`);
       fetchPatients();
@@ -162,7 +185,8 @@ export default function PatientsList() {
       if (apiErrors && typeof apiErrors === 'object') {
         const key = Object.keys(apiErrors)[0];
         const val = apiErrors[key];
-        setEditError(`${key}: ${Array.isArray(val) ? val[0] : val}`);
+        const msg = Array.isArray(val) ? val[0] : val;
+        setEditError(`${key}: ${msg}`);
       } else {
         setEditError(err?.response?.data?.error || 'La modification du patient a échoué.');
       }
@@ -171,186 +195,134 @@ export default function PatientsList() {
     }
   };
 
-  const getInitials = (nom, prenom) => {
-    return `${(nom || '')[0] || ''}${(prenom || '')[0] || ''}`.toUpperCase() || '?';
-  };
-
-  const getAvatarColor = (id) => {
-    const colors = [
-      'from-blue-500 to-blue-600',
-      'from-emerald-500 to-emerald-600',
-      'from-violet-500 to-violet-600',
-      'from-amber-500 to-amber-600',
-      'from-rose-500 to-rose-600',
-      'from-cyan-500 to-cyan-600',
-    ];
-    return colors[(id || 0) % colors.length];
-  };
-
   return (
-    <div className="max-w-[1200px] space-y-6 animate-fade-in">
-      {location.state?.createdPatientId && (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3.5 text-sm font-semibold text-emerald-700 flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-emerald-500" />
-          Patient cree avec succes. ID patient genere : PID-{location.state.createdPatientId}
+    <div className="max-w-[1200px] space-y-6 bg-[#f5f7ff]">
+      {location.state?.createdPatientId ? (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
+          Patient créé avec succès. ID patient généré : PID-{location.state.createdPatientId}
         </div>
-      )}
+      ) : null}
 
       <PageHeader
-        icon={Users}
         title="Mes Patients"
-        subtitle={`${patients.length} patient${patients.length !== 1 ? 's' : ''} enregistre${patients.length !== 1 ? 's' : ''} dans votre base clinique`}
+        subtitle={`${patients.length} patients enregistres`}
         actions={
-          <div className="flex items-center gap-2">
-            <Button variant="soft" onClick={() => setShowFilters(!showFilters)}>
-              <Filter className="w-4 h-4" />
-              Filtres
-            </Button>
-            <Button variant="primary" onClick={() => navigate('/new-patient')}>
-              <Plus className="w-4 h-4" />
-              Nouveau Patient
-            </Button>
-          </div>
+          <Button variant="primary" onClick={() => navigate('/new-patient')} className="flex items-center gap-2 shadow-card">
+            <Plus className="w-5 h-5" />
+            Nouveau Patient
+          </Button>
         }
       />
 
-      {/* Search + Filters */}
-      <Card padding="md">
-        <form onSubmit={handleSearch} className="flex items-center gap-3">
-          <div className="relative flex-1">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input
-              name="id"
-              value={filters.id}
+      <Card padding="md" className="rounded-[14px]">
+        <form onSubmit={handleSearch} className="grid grid-cols-1 gap-4 items-end md:grid-cols-5">
+          <Input
+            label="Rechercher"
+            name="id"
+            value={filters.id}
+            onChange={handleFilterChange}
+            placeholder="Nom, ID patient..."
+            icon={<Search className="w-4 h-4" />}
+          />
+          <Input
+            label="N° Dossier"
+            name="num_dossier"
+            value={filters.num_dossier}
+            onChange={handleFilterChange}
+            placeholder="DOS-XXXX..."
+          />
+          <div>
+            <label className="text-sm font-medium text-primary mb-1.5 block">Sexe</label>
+            <select
+              name="sexe"
+              value={filters.sexe}
               onChange={handleFilterChange}
-              placeholder="Rechercher par nom, ID, dossier..."
-              className="w-full pl-10 pr-4 py-2.5 text-sm border border-slate-200 rounded-xl bg-white placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-3 focus:ring-blue-500/10 transition-all"
-            />
+              className="w-full border border-surface-border rounded-md px-4 py-2.5 text-sm text-primary bg-white focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
+            >
+              <option value="">Tous</option>
+              <option value="M">Masculin</option>
+              <option value="F">Feminin</option>
+            </select>
           </div>
-          <Button type="submit" variant="outline">
+          <Input
+            label="Diagnostic"
+            name="autres_maladies"
+            value={filters.autres_maladies}
+            onChange={handleFilterChange}
+            placeholder="Mots cles..."
+          />
+          <Button type="submit" variant="outline" className="h-[42px] flex items-center justify-center gap-2">
             <Search className="w-4 h-4" />
-            Rechercher
+            Filtrer
           </Button>
         </form>
-
-        {showFilters && (
-          <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-1 gap-3 md:grid-cols-4 animate-slide-up">
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">N° Dossier</label>
-              <input name="num_dossier" value={filters.num_dossier} onChange={handleFilterChange}
-                placeholder="DOS-XXXX..." className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-3 focus:ring-blue-500/10" />
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Sexe</label>
-              <select name="sexe" value={filters.sexe} onChange={handleFilterChange}
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:border-blue-500 focus:ring-3 focus:ring-blue-500/10">
-                <option value="">Tous</option>
-                <option value="M">Masculin</option>
-                <option value="F">Feminin</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Diagnostic</label>
-              <input name="autres_maladies" value={filters.autres_maladies} onChange={handleFilterChange}
-                placeholder="Mots cles..." className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-3 focus:ring-blue-500/10" />
-            </div>
-            <div className="flex items-end">
-              <Button type="button" variant="outline" onClick={() => { setFilters({ id: '', num_dossier: '', date_naissance: '', sexe: '', autres_maladies: '' }); }} className="w-full">
-                Reinitialiser
-              </Button>
-            </div>
-          </div>
-        )}
       </Card>
 
-      {/* Patient Table */}
-      <Card padding="none" className="overflow-hidden">
+      <Card padding="sm" className="rounded-[14px] overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left">
+          <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="bg-slate-50/80 border-b border-slate-200/60">
-                <th className="px-5 py-3.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Patient</th>
-                <th className="px-5 py-3.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest">N° Dossier</th>
-                <th className="px-5 py-3.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Date Naissance</th>
-                <th className="px-5 py-3.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Sexe</th>
-                <th className="px-5 py-3.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Coupes MRI</th>
-                <th className="px-5 py-3.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Diagnostics</th>
-                <th className="px-5 py-3.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Actions</th>
+              <tr className="bg-[#f5f7ff] border-b border-surface-border">
+                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">N° Dossier</th>
+                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Nom</th>
+                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Prenom</th>
+                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Date Naissance</th>
+                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Sexe</th>
+                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Coupes MRI</th>
+                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Diagnostics</th>
+                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-surface-border">
               {loading ? (
                 <tr>
-                  <td colSpan="7" className="px-5 py-16 text-center">
-                    <span className="inline-block h-8 w-8 animate-spin rounded-full border-[3px] border-blue-600 border-t-transparent" />
-                    <p className="text-sm text-slate-500 mt-3">Chargement des patients...</p>
-                  </td>
+                  <td colSpan="8" className="p-8 text-center text-gray-600">Chargement des patients...</td>
                 </tr>
               ) : patients.length === 0 ? (
                 <tr>
-                  <td colSpan="7" className="px-5 py-16 text-center">
-                    <UserCircle2 className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-                    <p className="text-sm font-semibold text-slate-500 mb-1">Aucun patient trouve</p>
-                    <p className="text-xs text-slate-400 mb-4">Ajoutez votre premier patient pour commencer.</p>
-                    <Button variant="primary" size="sm" onClick={() => navigate('/new-patient')}>
-                      <Plus className="w-3.5 h-3.5" /> Ajouter un patient
-                    </Button>
-                  </td>
+                  <td colSpan="8" className="p-8 text-center text-gray-600">Aucun patient trouve.</td>
                 </tr>
               ) : (
                 patients.map(patient => (
-                  <tr 
-                    key={patient.id} 
-                    onClick={() => navigate(`/dashboard/patients/${patient.id}`)}
-                    className="hover:bg-blue-50/50 transition-colors cursor-pointer group"
-                  >
-                    <td className="px-5 py-3.5">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-9 h-9 bg-gradient-to-br ${getAvatarColor(patient.id)} rounded-xl flex items-center justify-center text-white text-xs font-bold shadow-sm`}>
-                          {getInitials(patient.nom, patient.prenom)}
-                        </div>
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900">{patient.nom} {patient.prenom}</p>
-                          <p className="text-[11px] text-slate-400 font-medium">PID-{patient.id}</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-5 py-3.5 text-sm font-medium text-slate-700">{patient.num_dossier || '—'}</td>
-                    <td className="px-5 py-3.5 text-sm text-slate-600">{patient.date_naissance || '—'}</td>
-                    <td className="px-5 py-3.5">
-                      <Badge variant={patient.sexe === 'M' ? 'info' : 'success'} dot>
-                        {patient.sexe === 'M' ? 'Homme' : 'Femme'}
-                      </Badge>
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <span className="text-sm font-semibold text-slate-700">{getSlicesCount(patient) ?? '—'}</span>
-                    </td>
-                    <td className="px-5 py-3.5 text-sm text-slate-500 truncate max-w-[180px]">
-                      {patient.autres_maladies || <span className="text-slate-300">—</span>}
-                    </td>
-                    <td className="px-5 py-3.5 text-right">
-                      <div className="inline-flex items-center gap-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); navigate(`/dashboard/patients/${patient.id}`); }}
-                          className="px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
-                        >
-                          Voir
-                        </button>
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); openEditModal(patient); }}
-                          className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-                        >
-                          Modifier
-                        </button>
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); handleDeletePatient(patient); }}
-                          className="px-3 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
-                        >
-                          Supprimer
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+<tr 
+  key={patient.id} 
+  onClick={() => navigate(`/dashboard/patients/${patient.id}`)}
+  className="hover:bg-blue-50/50 transition-colors cursor-pointer group"
+>
+  <td className="p-4 text-sm font-semibold text-primary">{patient.num_dossier}</td>
+  <td className="p-4 text-sm font-medium text-primary">{patient.nom}</td>
+  <td className="p-4 text-sm text-gray-600">{patient.prenom}</td>
+  <td className="p-4 text-sm text-gray-600">{patient.date_naissance}</td>
+  <td className="p-4">
+    <Badge variant="info">{patient.sexe === 'M' ? 'Homme' : 'Femme'}</Badge>
+  </td>
+  <td className="p-4 text-sm text-gray-600">{getSlicesCount(patient) ?? '—'}</td>
+  <td className="p-4 text-sm text-gray-600 truncate max-w-[200px]">
+    {patient.autres_maladies || '—'}
+  </td>
+  <td className="p-4 text-right">
+    <div className="inline-flex items-center gap-1.5">
+      <button 
+        onClick={(e) => { e.stopPropagation(); navigate(`/dashboard/patients/${patient.id}`); }}
+        className="px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+      >
+        Voir
+      </button>
+      <button 
+        onClick={(e) => { e.stopPropagation(); openEditModal(patient); }}
+        className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+      >
+        Modifier
+      </button>
+      <button 
+        onClick={(e) => { e.stopPropagation(); handleDeletePatient(patient); }}
+        className="px-3 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
+      >
+        Supprimer
+      </button>
+    </div>
+  </td>
+</tr>
                 ))
               )}
             </tbody>
@@ -358,77 +330,157 @@ export default function PatientsList() {
         </div>
       </Card>
 
-      {/* Edit Modal */}
-      {isEditOpen && editingPatient && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-navy-900/60 backdrop-blur-sm p-4 md:p-6" onClick={closeEditModal}>
+      {/* Create Patient Modal (disabled for reset) */}
+      {/*
+      <PatientModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onPatientCreated={handlePatientCreated}
+      />
+      */}
+
+      {isEditOpen && editingPatient ? (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 p-4 md:p-6" onClick={closeEditModal}>
           <div className="flex min-h-full items-start justify-center py-4 md:py-8">
-            <div className="w-full max-w-3xl rounded-2xl bg-white shadow-glass max-h-[92vh] overflow-hidden animate-slide-up" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-                <div>
-                  <h3 className="text-lg font-bold text-slate-900">Modifier patient</h3>
-                  <p className="text-xs text-slate-500 mt-0.5">Mettez a jour les champs cliniques du patient.</p>
+          <div
+            className="w-full max-w-3xl rounded-2xl border border-slate-200 bg-white shadow-2xl max-h-[92vh] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+              <div>
+                <h3 className="text-lg font-bold text-[#1a1f3c]">Modifier patient</h3>
+                <p className="text-xs text-slate-500 mt-1">Mettez a jour les champs cliniques du patient.</p>
+              </div>
+              <button
+                onClick={closeEditModal}
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                title="Fermer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditSubmit} className="space-y-5 px-6 py-5 overflow-y-auto max-h-[calc(92vh-88px)]">
+              {editError ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {editError}
                 </div>
-                <button onClick={closeEditModal} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors">
-                  <X className="w-5 h-5" />
-                </button>
+              ) : null}
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-[#1a1f3c]">Numero dossier</label>
+                  <input
+                    name="dossier_number"
+                    value={editForm.dossier_number}
+                    onChange={handleEditChange}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-[#1a2b6d] focus:ring-2 focus:ring-[#1a2b6d]/10"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-[#1a1f3c]">Date de naissance</label>
+                  <input
+                    type="date"
+                    name="date_naissance"
+                    value={editForm.date_naissance || ''}
+                    onChange={handleEditChange}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-[#1a2b6d] focus:ring-2 focus:ring-[#1a2b6d]/10"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-[#1a1f3c]">Sexe</label>
+                  <select
+                    name="sexe"
+                    value={editForm.sexe}
+                    onChange={handleEditChange}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-[#1a2b6d] focus:ring-2 focus:ring-[#1a2b6d]/10"
+                  >
+                    <option value="">Selectionner</option>
+                    <option value="M">Masculin</option>
+                    <option value="F">Feminin</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-[#1a1f3c]">Telephone</label>
+                  <input
+                    name="telephone"
+                    value={editForm.telephone || ''}
+                    onChange={handleEditChange}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-[#1a2b6d] focus:ring-2 focus:ring-[#1a2b6d]/10"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-[#1a1f3c]">Email</label>
+                  <input
+                    type="email"
+                    name="email"
+                    value={editForm.email || ''}
+                    onChange={handleEditChange}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-[#1a2b6d] focus:ring-2 focus:ring-[#1a2b6d]/10"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-[#1a1f3c]">Pathologie</label>
+                  <input
+                    name="pathologie"
+                    value={editForm.pathologie || ''}
+                    onChange={handleEditChange}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-[#1a2b6d] focus:ring-2 focus:ring-[#1a2b6d]/10"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-[#1a1f3c]">Stade</label>
+                  <input
+                    name="stade"
+                    value={editForm.stade || ''}
+                    onChange={handleEditChange}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-[#1a2b6d] focus:ring-2 focus:ring-[#1a2b6d]/10"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-semibold text-[#1a1f3c]">Antecedents</label>
+                  <input
+                    name="antecedents"
+                    value={editForm.antecedents || ''}
+                    onChange={handleEditChange}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-[#1a2b6d] focus:ring-2 focus:ring-[#1a2b6d]/10"
+                  />
+                </div>
               </div>
 
-              <form onSubmit={handleEditSubmit} className="space-y-5 px-6 py-5 overflow-y-auto max-h-[calc(92vh-88px)]">
-                {editError && (
-                  <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700 font-medium">{editError}</div>
-                )}
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-[#1a1f3c]">Autres maladies</label>
+                <textarea
+                  name="autres_maladies"
+                  value={editForm.autres_maladies || ''}
+                  onChange={handleEditChange}
+                  className="min-h-[90px] w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-[#1a2b6d] focus:ring-2 focus:ring-[#1a2b6d]/10"
+                />
+              </div>
 
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  {[
-                    { name: 'dossier_number', label: 'Numero dossier' },
-                    { name: 'date_naissance', label: 'Date de naissance', type: 'date' },
-                    { name: 'telephone', label: 'Telephone' },
-                    { name: 'email', label: 'Email', type: 'email' },
-                    { name: 'pathologie', label: 'Pathologie' },
-                    { name: 'stade', label: 'Stade' },
-                    { name: 'antecedents', label: 'Antecedents' },
-                  ].map(({ name, label, type }) => (
-                    <div key={name}>
-                      <label className="mb-1.5 block text-[11px] font-bold text-slate-500 uppercase tracking-widest">{label}</label>
-                      <input
-                        type={type || 'text'} name={name} value={editForm[name] || ''} onChange={handleEditChange}
-                        className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-3 focus:ring-blue-500/10"
-                      />
-                    </div>
-                  ))}
-                  <div>
-                    <label className="mb-1.5 block text-[11px] font-bold text-slate-500 uppercase tracking-widest">Sexe</label>
-                    <select name="sexe" value={editForm.sexe} onChange={handleEditChange}
-                      className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-3 focus:ring-blue-500/10">
-                      <option value="">Selectionner</option>
-                      <option value="M">Masculin</option>
-                      <option value="F">Feminin</option>
-                    </select>
-                  </div>
-                </div>
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-[#1a1f3c]">Notes</label>
+                <textarea
+                  name="notes"
+                  value={editForm.notes || ''}
+                  onChange={handleEditChange}
+                  className="min-h-[90px] w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-[#1a2b6d] focus:ring-2 focus:ring-[#1a2b6d]/10"
+                />
+              </div>
 
-                {[
-                  { name: 'autres_maladies', label: 'Autres maladies' },
-                  { name: 'notes', label: 'Notes' },
-                ].map(({ name, label }) => (
-                  <div key={name}>
-                    <label className="mb-1.5 block text-[11px] font-bold text-slate-500 uppercase tracking-widest">{label}</label>
-                    <textarea name={name} value={editForm[name] || ''} onChange={handleEditChange}
-                      className="min-h-[80px] w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-3 focus:ring-blue-500/10" />
-                  </div>
-                ))}
-
-                <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
-                  <Button type="button" variant="outline" onClick={closeEditModal}>Annuler</Button>
-                  <Button type="submit" variant="primary" disabled={editLoading}>
-                    {editLoading ? 'Enregistrement...' : 'Enregistrer'}
-                  </Button>
-                </div>
-              </form>
-            </div>
+              <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
+                <Button type="button" variant="outline" onClick={closeEditModal}>
+                  Annuler
+                </Button>
+                <Button type="submit" variant="primary" disabled={editLoading}>
+                  {editLoading ? 'Enregistrement...' : 'Enregistrer les modifications'}
+                </Button>
+              </div>
+            </form>
+          </div>
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

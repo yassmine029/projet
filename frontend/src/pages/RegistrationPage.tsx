@@ -7,8 +7,12 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, ArrowDown, Upload, X, Eye, Download, Trash2, Check,
   MousePointer2, ZoomIn, ZoomOut, RotateCcw, Keyboard, BrainCircuit, Brain, Undo2,
-  Box, Loader2, FileText, Users, ChevronRight, Search, ScanSearch, Zap, HelpCircle
+  Box, Loader2, FileText, Users, ChevronRight, Search, ScanSearch, Zap
 } from 'lucide-react';
+
+const GuideIcon = () => (
+  <img src="/assets/images/creative.png" alt="guide" className="h-6 w-6 object-contain" />
+);
 import api from '../api';
 import RegistrationModeSelector from '../components/RegistrationModeSelector';
 import AutoAlignOverlay from '../components/AutoAlignOverlay';
@@ -3094,7 +3098,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                       className="absolute right-2.5 top-1/2 -translate-y-1/2 z-10 text-white/60 hover:text-white transition-colors"
                       title="Guide d'utilisation"
                     >
-                      <HelpCircle className="h-4 w-4" />
+                      <GuideIcon />
                     </button>
                   </div>
 
@@ -3132,7 +3136,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                         className="absolute right-2.5 top-1/2 -translate-y-1/2 z-10 text-white/60 hover:text-white transition-colors"
                         title="Guide d'utilisation"
                       >
-                        <HelpCircle className="h-4 w-4" />
+                        <GuideIcon />
                       </button>
                     )}
                   </div>

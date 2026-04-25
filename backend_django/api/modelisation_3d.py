@@ -1,5 +1,5 @@
 import os
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -9,7 +9,12 @@ from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from skimage import measure
 
-from .models import SegmentationRun
+from .models import SegmentationMaskResult, SegmentationRun
+
+try:
+    from skimage.filters import threshold_otsu
+except Exception:  # pragma: no cover
+    threshold_otsu = None  # type: ignore
 
 
 DEFAULT_NORMATIVE_TOTAL_MEAN_MM3 = 4860.14
@@ -127,6 +132,20 @@ def _sanitize_connected_components(volume: np.ndarray, structure: str) -> np.nda
         return out
 
     return _keep_largest_component(volume)
+
+
+def _repair_hippocampus_volume(volume: np.ndarray) -> np.ndarray:
+    """
+    Comble les cavites internes et referme les micro-deconnexions entre coupes
+    avant marching cubes (evite les « trous » visibles sur le maillage 3D).
+    """
+    v = (volume > 0).astype(bool)
+    if not np.any(v):
+        return volume.astype(np.uint8)
+    struct3 = ndimage.generate_binary_structure(3, 1)
+    v = ndimage.binary_closing(v, structure=struct3, iterations=1)
+    v = ndimage.binary_fill_holes(v)
+    return v.astype(np.uint8)
 
 
 def _safe_asymmetry_index_percent(left_mm3: float, right_mm3: float) -> float:
@@ -266,6 +285,158 @@ def _save_mesh_outputs(run: SegmentationRun, mesh: trimesh.Trimesh) -> Dict[str,
     }
 
 
+def _load_source_gray(path: str) -> Optional[np.ndarray]:
+    if not path or not str(path).strip():
+        return None
+    if not default_storage.exists(path):
+        return None
+    with default_storage.open(path, 'rb') as fp:
+        data = fp.read()
+    arr = np.frombuffer(data, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        return None
+    mx = float(np.max(img)) if img.size else 1.0
+    if mx <= 0:
+        mx = 1.0
+    return (img.astype(np.float32) / mx).clip(0.0, 1.0)
+
+
+def _stack_source_mri_volume(rows) -> Tuple[Optional[np.ndarray], Optional[str]]:
+    """Empile les previews IRM (Z,Y,X), meme ordre que les masques."""
+    slices: List[np.ndarray] = []
+    ref_hw: Optional[Tuple[int, int]] = None
+    for row in rows:
+        src = _load_source_gray(getattr(row, 'source_file', '') or '')
+        if src is None:
+            return None, 'preview_irm_manquante'
+        h, w = src.shape[:2]
+        if ref_hw is None:
+            ref_hw = (h, w)
+        elif (h, w) != ref_hw:
+            src = cv2.resize(src, (ref_hw[1], ref_hw[0]), interpolation=cv2.INTER_LINEAR)
+        slices.append(src.astype(np.float32))
+    if not slices:
+        return None, 'aucune_coupe'
+    vol = np.stack(slices, axis=0).astype(np.float32)
+    return vol, None
+
+
+def _brain_shell_mask_from_mri(vol: np.ndarray) -> Optional[np.ndarray]:
+    """Binaire grossier du parenchyme / tete a partir du volume IRM empile."""
+    vn = vol.astype(np.float32)
+    lo, hi = np.percentile(vn, 2.0), np.percentile(vn, 99.5)
+    if hi <= lo:
+        return None
+    vn = np.clip((vn - lo) / (hi - lo), 0.0, 1.0).astype(np.float32)
+    vn = ndimage.gaussian_filter(vn, sigma=1.1).astype(np.float32)
+
+    mid = int(vn.shape[0]) // 2
+    sl_u8 = np.clip(vn[mid] * 255.0, 0, 255).astype(np.uint8)
+    if threshold_otsu is not None:
+        try:
+            thr = float(threshold_otsu(sl_u8)) / 255.0
+        except Exception:
+            thr = float(np.percentile(vn, 42.0))
+    else:
+        thr = float(np.percentile(vn, 42.0))
+
+    binary = (vn > max(thr, 0.08)).astype(np.uint8)
+    binary = ndimage.binary_closing(binary, iterations=2).astype(np.uint8)
+    binary = ndimage.binary_fill_holes(binary).astype(np.uint8)
+    labeled, num = ndimage.label(binary)
+    if num <= 0:
+        return None
+    sizes = ndimage.sum(binary, labeled, index=np.arange(1, num + 1))
+    keep = int(np.argmax(sizes)) + 1
+    shell = (labeled == keep).astype(np.uint8)
+    return shell
+
+
+def _save_brain_context_mesh(run: SegmentationRun, mesh: trimesh.Trimesh) -> Dict[str, str]:
+    base_dir = f'patients/{run.patient_id}/modelisation3d/run_{run.id}'
+    obj_path = f'{base_dir}/brain_context_{run.id}.obj'
+    obj_blob = mesh.export(file_type='obj')
+    if isinstance(obj_blob, str):
+        obj_blob = obj_blob.encode('utf-8')
+    saved_obj = default_storage.save(obj_path, ContentFile(obj_blob))
+    obj_url = default_storage.url(saved_obj)
+    return {'context_brain_obj_url': obj_url}
+
+
+def _try_build_brain_context_mesh(
+    run: SegmentationRun,
+    rows: List,
+    spacing: Tuple[float, float, float],
+    quality: str,
+) -> Dict[str, Any]:
+    """
+    Maillage enveloppe (marching cubes) sur le volume des previews source, aligne sur la grille des masques.
+    """
+    err: Dict[str, Any] = {
+        'context_brain_obj_url': None,
+        'context_brain_error': None,
+        'context_brain_volume_voxel_mm3': None,
+        'context_brain_volume_voxel_ml': None,
+        'context_brain_volume_mesh_mm3': None,
+        'context_brain_volume_mesh_ml': None,
+    }
+    vol, emsg = _stack_source_mri_volume(rows)
+    if vol is None:
+        err['context_brain_error'] = (
+            'Impossible de charger les previews IRM du run pour le contexte cerveau.'
+            if emsg == 'preview_irm_manquante'
+            else 'Volume IRM contexte indisponible.'
+        )
+        return err
+
+    shell = _brain_shell_mask_from_mri(vol)
+    if shell is None or int(shell.sum()) < 64:
+        err['context_brain_error'] = 'Segmentation grossiere du volume IRM impossible (trop peu de signal).'
+        return err
+
+    dz, dy, dx = spacing
+    voxel_unit_mm3 = float(dz * dy * dx)
+    context_voxel_mm3 = float(np.sum(shell > 0)) * voxel_unit_mm3
+    err['context_brain_volume_voxel_mm3'] = context_voxel_mm3
+    err['context_brain_volume_voxel_ml'] = context_voxel_mm3 / 1000.0
+    base_step = _resolve_step_size(quality)
+    brain_step = max(int(base_step), 2)
+
+    try:
+        verts, faces, normals, values = measure.marching_cubes(
+            shell.astype(np.float32),
+            level=0.5,
+            spacing=(dz, dy, dx),
+            gradient_direction='ascent',
+            step_size=brain_step,
+            allow_degenerate=True,
+        )
+    except Exception:
+        err['context_brain_error'] = 'Echec marching cubes sur le volume IRM (contexte).'
+        return err
+
+    mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=True)
+    try:
+        trimesh.smoothing.filter_laplacian(mesh, lamb=0.35, iterations=3)
+    except Exception:
+        pass
+
+    mesh_vol_mm3 = float(abs(mesh.volume)) if mesh.is_watertight else None
+    err['context_brain_volume_mesh_mm3'] = mesh_vol_mm3
+    err['context_brain_volume_mesh_ml'] = (mesh_vol_mm3 / 1000.0) if mesh_vol_mm3 is not None else None
+
+    try:
+        urls = _save_brain_context_mesh(run, mesh)
+    except Exception:
+        err['context_brain_error'] = 'Echec enregistrement du maillage contexte cerveau.'
+        return err
+
+    out = dict(err)
+    out.update(urls)
+    return out
+
+
 def run_modelisation_3d(
     run: SegmentationRun,
     structure: str = 'both',
@@ -275,9 +446,11 @@ def run_modelisation_3d(
     normative_total_mean_mm3: float = DEFAULT_NORMATIVE_TOTAL_MEAN_MM3,
     normative_total_std_mm3: float = DEFAULT_NORMATIVE_TOTAL_STD_MM3,
 ) -> Dict:
-    rows = list(run.results.all().order_by('slice_index', 'id'))
+    rows = list(
+        run.results.exclude(review_status=SegmentationMaskResult.ReviewStatus.REJECTED).order_by('slice_index', 'id')
+    )
     if not rows:
-        raise ValueError('Aucun masque disponible pour ce run.')
+        raise ValueError('Aucun masque disponible pour ce run (toutes les coupes sont rejetées ou aucun résultat).')
 
     masks: List[np.ndarray] = []
     for row in rows:
@@ -287,6 +460,7 @@ def run_modelisation_3d(
     full_volume = np.stack(masks, axis=0).astype(np.uint8)  # (Z, Y, X)
     volume = _apply_structure(full_volume, structure)
     volume = _sanitize_connected_components(volume, structure)
+    volume = _repair_hippocampus_volume(volume)
 
     if int(volume.sum()) == 0:
         raise ValueError('Le volume binaire est vide apres filtrage de structure.')
@@ -333,6 +507,8 @@ def run_modelisation_3d(
     ni_percent = (total_mm3 / mean_ref) * 100.0 if mean_ref > 0 else 0.0
     z_score = ((total_mm3 - mean_ref) / std_ref) if std_ref > 0 else 0.0
     interpretation = _interpret_indices(ai_percent, ni_percent, z_score, left_mm3, right_mm3)
+
+    context_assets = _try_build_brain_context_mesh(run, rows, (dz, dy, dx), quality)
 
     return {
         'run_id': run.id,
@@ -384,6 +560,7 @@ def run_modelisation_3d(
         },
         'clinical_interpretation': interpretation,
         **mesh_outputs,
+        **context_assets,
     }
 
 

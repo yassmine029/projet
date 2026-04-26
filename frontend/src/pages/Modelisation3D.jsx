@@ -51,46 +51,36 @@ function LegendDot({ colorClass }) {
   return <span className={`inline-block h-2.5 w-2.5 rounded-full ${colorClass}`} />;
 }
 
-function gaugePoint(angleDeg, radius = 40) {
-  const rad = (angleDeg * Math.PI) / 180;
-  return {
-    x: 50 + radius * Math.cos(rad),
-    y: 50 + radius * Math.sin(rad),
-  };
-}
-
-function GaugeArc({ percentStart, percentEnd, color }) {
-  const start = clamp(percentStart, 0, 1);
-  const end = clamp(percentEnd, 0, 1);
-  if (end <= start) return null;
-
-  // Map [0..1] to the top semicircle from left (180deg) to right (360deg).
-  const startAngle = 180 + start * 180;
-  const endAngle = 180 + end * 180;
-  const p1 = gaugePoint(startAngle);
-  const p2 = gaugePoint(endAngle);
-  const largeArcFlag = end - start > 0.5 ? 1 : 0;
-
+/** Infobulle type plateforme pro : formule visible au survol du libellé. */
+function FormulaTooltip({ label, formula, description }) {
   return (
-    <path
-      d={`M ${p1.x} ${p1.y} A 40 40 0 ${largeArcFlag} 1 ${p2.x} ${p2.y}`}
-      fill="none"
-      stroke={color}
-      strokeWidth="8"
-      strokeLinecap="round"
-    />
+    <span
+      className="group relative inline-flex cursor-help items-center gap-1 border-b border-dotted border-slate-400 text-xs font-semibold text-slate-600 outline-none hover:border-slate-600 hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+      tabIndex={0}
+    >
+      {label}
+      <span
+        className="pointer-events-none absolute bottom-full left-0 z-40 mb-2 w-[min(18rem,calc(100vw-2rem))] rounded-lg border border-slate-200/90 bg-white px-3 py-2.5 text-left shadow-xl shadow-slate-900/10 ring-1 ring-slate-900/5 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100 sm:left-1/2 sm:-translate-x-1/2"
+        role="tooltip"
+      >
+        <span className="block font-mono text-[11px] leading-relaxed text-slate-800">{formula}</span>
+        {description ? (
+          <span className="mt-2 block border-t border-slate-100 pt-2 text-[10px] leading-snug text-slate-500">
+            {description}
+          </span>
+        ) : null}
+      </span>
+    </span>
   );
 }
 
 function AIGauge({ value, interpretation }) {
   const v = Math.abs(Number(value || 0));
   const status = getAiStatus(v);
-  // percent from 0 to 40% (since >30 is severe, let's clamp max at 40%)
   const min = 0;
   const max = 40;
   const percent = clamp((v - min) / (max - min), 0, 1);
 
-  // status color for text
   const valColor = v <= 10 ? 'text-emerald-500' : v <= 20 ? 'text-amber-400' : v <= 30 ? 'text-orange-500' : 'text-red-500';
   const valLabel = v <= 10 ? 'Non significative' : v <= 20 ? 'Moderee' : v <= 30 ? 'Marquee' : 'Severe';
 
@@ -103,42 +93,32 @@ function AIGauge({ value, interpretation }) {
       <h5 className="mt-2 text-lg font-bold text-slate-900">Asymetrie hippocampique</h5>
       <p className="text-xs font-medium text-slate-400">Marqueur MTLE · epilepsie lobe temporal</p>
 
-      <div className="mt-4 rounded-xl bg-slate-50 border border-slate-100 px-4 py-2.5 text-xs font-medium text-slate-500 font-mono tracking-wider text-center">
-        IA = |D - G| / ((D + G) / 2)
+      <div className="mt-3">
+        <FormulaTooltip
+          label="Formule IA"
+          formula="IA = |V_D − V_G| / ((V_D + V_G) / 2) × 100"
+          description="V_D et V_G : volumes hippocampiques droit et gauche (mm³). Résultat exprimé en %."
+        />
       </div>
 
-      <div className="relative w-56 mx-auto mt-8 mb-4">
-        <svg viewBox="0 0 100 62" className="w-full overflow-visible">
-          {/* Base background arc */}
-          <path d="M 10 50 A 40 40 0 0 1 90 50" fill="none" stroke="#f1f5f9" strokeWidth="8" strokeLinecap="round" />
-          
-          {/* 0-10% = 0 to 0.25 (green) */}
-          <GaugeArc percentStart={0} percentEnd={0.25} color="#10b981" />
-          {/* 10-20% = 0.25 to 0.5 (yellow) */}
-          <GaugeArc percentStart={0.25} percentEnd={0.5} color="#fbbf24" />
-          {/* 20-30% = 0.5 to 0.75 (orange) */}
-          <GaugeArc percentStart={0.5} percentEnd={0.75} color="#f97316" />
-          {/* >30% = 0.75 to 1.0 (red) */}
-          <GaugeArc percentStart={0.75} percentEnd={1.0} color="#ef4444" />
-
-          {/* Needle */}
-          <g className="transition-all duration-1000 ease-out">
-            <line
-              x1="50"
-              y1="50"
-              x2={gaugePoint(180 + percent * 180, 34).x}
-              y2={gaugePoint(180 + percent * 180, 34).y}
-              stroke="#334155"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-            />
-            <circle cx="50" cy="50" r="3.8" fill="white" stroke="#334155" strokeWidth="2" />
-          </g>
-        </svg>
-
-        <div className="absolute bottom-1 left-0 right-0 text-center flex flex-col items-center">
-          <p className="text-4xl font-extrabold text-slate-900 tracking-tight">{v.toFixed(2)}</p>
-          <p className={`text-xs font-bold ${valColor} mt-1`}>% — Asymetrie {valLabel.toLowerCase()}</p>
+      <div className="mt-6">
+        <p className="mb-2 text-center text-[10px] font-semibold uppercase tracking-wide text-slate-400">Jauge (0 – 40 %)</p>
+        <div className="relative h-3 w-full overflow-hidden rounded-full border border-slate-200 bg-slate-100 shadow-inner">
+          <div className="flex h-full w-full">
+            <div className="h-full w-1/4 bg-emerald-500" />
+            <div className="h-full w-1/4 bg-amber-400" />
+            <div className="h-full w-1/4 bg-orange-500" />
+            <div className="h-full w-1/4 bg-red-500" />
+          </div>
+          <div
+            className="absolute top-1/2 z-10 h-6 w-1 -translate-y-1/2 rounded-sm border-2 border-white bg-slate-900 shadow-md transition-[left] duration-500 ease-out"
+            style={{ left: `clamp(0px, calc(${percent * 100}% - 2px), calc(100% - 4px))` }}
+            aria-hidden
+          />
+        </div>
+        <div className="mt-4 text-center">
+          <p className="text-3xl font-extrabold tabular-nums tracking-tight text-slate-900">{v.toFixed(2)}</p>
+          <p className={`mt-1 text-xs font-bold ${valColor}`}>% — Asymétrie {valLabel.toLowerCase()}</p>
         </div>
       </div>
 
@@ -172,7 +152,6 @@ function AIGauge({ value, interpretation }) {
 function NIGauge({ value, interpretation }) {
   const v = Number(value || 0);
   const status = getNiStatus(v);
-  // min 0 to max 150. Ranges: <60 (0.4), 60-80 (0.53), 80-90 (0.6), 90-110 (0.73), >110 (1.0)
   const min = 0;
   const max = 150;
   const percent = clamp((v - min) / (max - min), 0, 1);
@@ -180,10 +159,11 @@ function NIGauge({ value, interpretation }) {
   const valColor = v < 60 ? 'text-red-500' : v < 80 ? 'text-orange-500' : v < 90 ? 'text-amber-500' : v <= 110 ? 'text-emerald-500' : 'text-blue-500';
   const valLabel = v < 60 ? 'Reduction severe' : v < 80 ? 'Reduction moderee' : v < 90 ? 'Reduction legere' : v <= 110 ? 'Volume normal' : 'Superieur a la moyenne';
 
-  const p60 = 60 / 150;
-  const p80 = 80 / 150;
-  const p90 = 90 / 150;
-  const p110 = 110 / 150;
+  const w60 = (60 / 150) * 100;
+  const w80 = ((80 - 60) / 150) * 100;
+  const w90 = ((90 - 80) / 150) * 100;
+  const w110 = ((110 - 90) / 150) * 100;
+  const wRest = 100 - w60 - w80 - w90 - w110;
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -194,38 +174,33 @@ function NIGauge({ value, interpretation }) {
       <h5 className="mt-2 text-lg font-bold text-slate-900">Normalisation volumetrique</h5>
       <p className="text-xs font-medium text-slate-400">Quantification atrophie · Alzheimer (MA)</p>
 
-      <div className="mt-4 rounded-xl bg-slate-50 border border-slate-100 px-4 py-2.5 text-xs font-medium text-slate-500 font-mono tracking-wider text-center">
-        IN = (V_patient / V_moy. sains) × 100
+      <div className="mt-3">
+        <FormulaTooltip
+          label="Formule IN"
+          formula="IN = (V_patient / V_moyenne volontaires sains) × 100"
+          description="V_patient : volume hippocampique total patient (mm³). La moyenne de référence est configurable (valeur normative du run)."
+        />
       </div>
 
-      <div className="relative w-56 mx-auto mt-8 mb-4">
-        <svg viewBox="0 0 100 62" className="w-full overflow-visible">
-          <path d="M 10 50 A 40 40 0 0 1 90 50" fill="none" stroke="#f1f5f9" strokeWidth="8" strokeLinecap="round" />
-          
-          <GaugeArc percentStart={0} percentEnd={p60} color="#ef4444" />
-          <GaugeArc percentStart={p60} percentEnd={p80} color="#f97316" />
-          <GaugeArc percentStart={p80} percentEnd={p90} color="#fbbf24" />
-          <GaugeArc percentStart={p90} percentEnd={p110} color="#10b981" />
-          <GaugeArc percentStart={p110} percentEnd={1.0} color="#3b82f6" />
-
-          {/* Needle */}
-          <g className="transition-all duration-1000 ease-out">
-            <line
-              x1="50"
-              y1="50"
-              x2={gaugePoint(180 + percent * 180, 34).x}
-              y2={gaugePoint(180 + percent * 180, 34).y}
-              stroke="#334155"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-            />
-            <circle cx="50" cy="50" r="3.8" fill="white" stroke="#334155" strokeWidth="2" />
-          </g>
-        </svg>
-
-        <div className="absolute bottom-1 left-0 right-0 text-center flex flex-col items-center">
-          <p className="text-4xl font-extrabold text-slate-900 tracking-tight">{v.toFixed(2)}</p>
-          <p className={`text-xs font-bold ${valColor} mt-1`}>% — {valLabel}</p>
+      <div className="mt-6">
+        <p className="mb-2 text-center text-[10px] font-semibold uppercase tracking-wide text-slate-400">Jauge (0 – 150 %)</p>
+        <div className="relative h-3 w-full overflow-hidden rounded-full border border-slate-200 bg-slate-100 shadow-inner">
+          <div className="flex h-full w-full">
+            <div className="h-full bg-red-500" style={{ width: `${w60}%` }} />
+            <div className="h-full bg-orange-500" style={{ width: `${w80}%` }} />
+            <div className="h-full bg-amber-400" style={{ width: `${w90}%` }} />
+            <div className="h-full bg-emerald-500" style={{ width: `${w110}%` }} />
+            <div className="h-full bg-blue-500" style={{ width: `${wRest}%` }} />
+          </div>
+          <div
+            className="absolute top-1/2 z-10 h-6 w-1 -translate-y-1/2 rounded-sm border-2 border-white bg-slate-900 shadow-md transition-[left] duration-500 ease-out"
+            style={{ left: `clamp(0px, calc(${percent * 100}% - 2px), calc(100% - 4px))` }}
+            aria-hidden
+          />
+        </div>
+        <div className="mt-4 text-center">
+          <p className="text-3xl font-extrabold tabular-nums tracking-tight text-slate-900">{v.toFixed(2)}</p>
+          <p className={`mt-1 text-xs font-bold ${valColor}`}>% — {valLabel}</p>
         </div>
       </div>
 
@@ -613,13 +588,11 @@ function ReportPreviewModal({
                 </div>
               </div>
               <div className="lg:col-span-4 overflow-hidden rounded-xl border border-slate-200 bg-white p-3">
-                <p className="mb-2 text-[11px] uppercase tracking-[0.12em] text-slate-500">Visualisation 3D claire</p>
                 <ModelViewerBlender
                   variant="mini"
                   objUrl={toAbsoluteMediaUrl(modelingResult?.obj_url)}
                   stlUrl={toAbsoluteMediaUrl(modelingResult?.stl_url)}
                 />
-                <p className="mt-2 text-xs text-slate-500">Reconstruction 3D des hippocampes (rotation automatique).</p>
               </div>
             </div>
           </div>
@@ -707,7 +680,7 @@ function ReportPreviewModal({
           </div>
 
           <div className="mt-6 rounded-2xl bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-6">
-            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Conclusion synthetique</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Remarques et constatations</p>
             <p className="mt-3 text-base leading-8 font-semibold text-white">{interp.summary || '-'}</p>
             <div className="mt-4 pt-4 border-t border-white/10 flex flex-wrap gap-x-4 gap-y-1">
               {[
@@ -751,6 +724,8 @@ export default function Modelisation3D() {
   const [reportError, setReportError] = useState('');
   const [reportPreviewOpen, setReportPreviewOpen] = useState(false);
   const [reportPatientDetail, setReportPatientDetail] = useState(null);
+  /** Formulaire « mode standard » en popup compact ; se ferme après une modélisation réussie. */
+  const [standardConfigOpen, setStandardConfigOpen] = useState(true);
 
   const [standardMode, setStandardMode] = useState({
     structure: 'both',
@@ -847,6 +822,7 @@ export default function Modelisation3D() {
           return;
         }
         setModelingResult(result);
+        setStandardConfigOpen(false);
       } catch (err) {
         const apiMessage =
           err?.response?.data?.error ||
@@ -963,180 +939,230 @@ export default function Modelisation3D() {
             ? 'Profil volumetrique dans la norme, sans lateralisation nette.'
             : 'Profil global stable avec asymetrie a surveiller.';
 
+  const fieldClass =
+    'w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm transition-colors focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-400/20';
+
   return (
-    <div className="min-h-screen bg-[#f0f4f8] p-6 md:p-10 animate-fade-in">
-      <div className="mx-auto w-full max-w-[1500px] space-y-6">
-        <div className="flex items-center justify-between">
+    <div className="min-h-screen bg-slate-100/90 p-4 md:p-8 animate-fade-in">
+      <div className="mx-auto w-full max-w-[1500px] space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <button
             type="button"
             onClick={() => navigate(`/segmentation/nouvelle?run=${runId}`)}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all shadow-card"
+            className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
           >
-            <ArrowLeft className="h-4 w-4" />
+            <ArrowLeft className="h-4 w-4 shrink-0" />
             Retour aux resultats
           </button>
 
-          <button
-            type="button"
-            onClick={() => navigate('/dashboard/analysesMRI')}
-            className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all shadow-card"
-          >
-            Aller a Analyses MRI
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {modelingResult ? (
+              <button
+                type="button"
+                onClick={() => setStandardConfigOpen(true)}
+                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                Parametres 3D
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => navigate('/dashboard/analysesMRI')}
+              className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+            >
+              Analyses MRI
+            </button>
+          </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200/60 bg-white p-6 shadow-card">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-700 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/20">
-              <Box className="h-6 w-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-slate-900 tracking-tight">Modelisation 3D — Mode standard</h1>
-              <p className="text-sm text-slate-500 font-medium">Configurez les parametres cliniques avant la reconstruction.</p>
-            </div>
+        {loadingRun && (
+          <div className="flex h-32 items-center justify-center">
+            <span className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" />
           </div>
+        )}
 
-          {loadingRun && (
-            <div className="mt-6 h-24 flex items-center justify-center">
-              <span className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
-            </div>
-          )}
+        {!loadingRun && runError ? (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{runError}</div>
+        ) : null}
 
-          {!loadingRun && runError && (
-            <div className="mt-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {runError}
-            </div>
-          )}
-
-          {!loadingRun && !runError && runInfo && (
-            <>
-              <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-3">
-                {[
-                  { label: 'Run ID', value: `#${runInfo.id}`, bg: 'bg-blue-50', text: 'text-blue-600', border: 'border-blue-100' },
-                  { label: 'Modele segmentation', value: runInfo.model_key || 'unetpp', bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-emerald-100' },
-                  { label: 'Coupes traitees', value: `${runInfo.processed_count || 0}/${runInfo.selected_count || 0}`, bg: 'bg-violet-50', text: 'text-violet-600', border: 'border-violet-100' },
-                ].map((item) => (
-                  <div key={item.label} className={`rounded-xl border ${item.border} ${item.bg} px-4 py-3`}>
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{item.label}</p>
-                    <p className={`text-sm font-bold ${item.text} mt-0.5`}>{item.value}</p>
+        {!loadingRun && !runError && runInfo && standardConfigOpen ? (
+          <div
+            className="fixed inset-0 z-[90] flex items-center justify-center p-4 sm:p-6"
+            role="presentation"
+          >
+            <button
+              type="button"
+              aria-label="Fermer la fenetre"
+              className="absolute inset-0 bg-slate-900/45 backdrop-blur-[1px]"
+              onClick={() => setStandardConfigOpen(false)}
+            />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="modelisation-3d-standard-title"
+              className="relative z-10 flex max-h-[min(92vh,880px)] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white shadow-sm">
+                    <Box className="h-5 w-5 text-slate-700" strokeWidth={2} />
                   </div>
-                ))}
+                  <div className="min-w-0">
+                    <h1 id="modelisation-3d-standard-title" className="text-lg font-semibold tracking-tight text-slate-900">
+                      Modelisation 3D — Mode standard
+                    </h1>
+                    <p className="mt-0.5 text-sm text-slate-600">
+                      Configurez les parametres cliniques avant la reconstruction.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setStandardConfigOpen(false)}
+                  className="rounded-md p-2 text-slate-500 hover:bg-slate-200/60 hover:text-slate-900"
+                  aria-label="Fermer"
+                >
+                  <X className="h-5 w-5" />
+                </button>
               </div>
 
-              <div className="mt-6 rounded-2xl border border-slate-200/60 bg-white p-5">
-                <h2 className="text-base font-bold text-slate-900">Parametres medicaux</h2>
-                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <div>
-                    <label className="mb-1.5 block text-xs font-semibold text-slate-600">Structure a reconstruire</label>
-                    <select name="structure" value={standardMode.structure} onChange={handleChange} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 focus:ring-3 focus:ring-blue-500/10 transition-all">
-                      <option value="both">Hippocampe gauche + droit</option>
-                      <option value="left">Hippocampe gauche</option>
-                      <option value="right">Hippocampe droit</option>
-                    </select>
-                  </div>
+              <div className="overflow-y-auto px-5 py-5">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  {[
+                    { label: 'Run ID', value: `#${runInfo.id}` },
+                    { label: 'Modele segmentation', value: runInfo.model_key || 'unetpp' },
+                    {
+                      label: 'Coupes traitees',
+                      value: `${runInfo.processed_count || 0} / ${runInfo.selected_count || 0}`,
+                    },
+                  ].map((item) => (
+                    <div
+                      key={item.label}
+                      className="rounded-md border border-slate-200 bg-slate-50/80 px-4 py-3"
+                    >
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{item.label}</p>
+                      <p className="mt-1 truncate text-sm font-semibold tabular-nums text-slate-900">{item.value}</p>
+                    </div>
+                  ))}
+                </div>
 
-                  <div>
-                    <label className="mb-1.5 block text-xs font-semibold text-slate-600">Qualite maillage</label>
-                    <select name="quality" value={standardMode.quality} onChange={handleChange} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 focus:ring-3 focus:ring-blue-500/10 transition-all">
-                      <option value="fast">Rapide</option>
-                      <option value="standard">Standard</option>
-                      <option value="high">Haute</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="mb-1.5 block text-xs font-semibold text-slate-600">Lissage surface</label>
-                    <select name="smoothing" value={standardMode.smoothing} onChange={handleChange} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 focus:ring-3 focus:ring-blue-500/10 transition-all">
-                      <option value="none">Aucun</option>
-                      <option value="low">Faible</option>
-                      <option value="medium">Moyen</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="mb-1.5 block text-xs font-semibold text-slate-600">Seuil segmentation</label>
-                    <input
-                      name="threshold"
-                      value={standardMode.threshold}
-                      onChange={handleChange}
-                      className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 focus:ring-3 focus:ring-blue-500/10 transition-all"
-                      placeholder="0.75"
-                    />
+                <div className="mt-6">
+                  <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Parametres medicaux</h2>
+                  <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-700">Structure a reconstruire</label>
+                      <select name="structure" value={standardMode.structure} onChange={handleChange} className={fieldClass}>
+                        <option value="both">Hippocampe gauche + droit</option>
+                        <option value="left">Hippocampe gauche</option>
+                        <option value="right">Hippocampe droit</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-700">Qualite maillage</label>
+                      <select name="quality" value={standardMode.quality} onChange={handleChange} className={fieldClass}>
+                        <option value="fast">Rapide</option>
+                        <option value="standard">Standard</option>
+                        <option value="high">Haute</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-700">Lissage surface</label>
+                      <select name="smoothing" value={standardMode.smoothing} onChange={handleChange} className={fieldClass}>
+                        <option value="none">Aucun</option>
+                        <option value="low">Faible</option>
+                        <option value="medium">Moyen</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-700">Seuil segmentation</label>
+                      <input
+                        name="threshold"
+                        value={standardMode.threshold}
+                        onChange={handleChange}
+                        className={fieldClass}
+                        placeholder="0.75"
+                      />
+                    </div>
                   </div>
                 </div>
 
-                <div className="mt-5 rounded-xl border border-slate-200/60 bg-slate-50/70 p-4">
-                  <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700 cursor-pointer">
+                <div className="mt-5 rounded-md border border-slate-200 bg-slate-50 p-4">
+                  <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-800">
                     <input
                       type="checkbox"
                       name="knowsSpacing"
                       checked={standardMode.knowsSpacing}
                       onChange={handleChange}
-                      className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                      className="h-4 w-4 rounded border-slate-400 text-slate-800 focus:ring-slate-500"
                     />
                     Je connais le spacing voxel
                   </label>
-
-                  {standardMode.knowsSpacing && (
-                    <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                  {standardMode.knowsSpacing ? (
+                    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
                       <div>
-                        <label className="mb-1 block text-xs font-semibold text-slate-500">Spacing Z (mm)</label>
-                        <input name="spacingZ" value={standardMode.spacingZ} onChange={handleChange} className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 focus:ring-3 focus:ring-blue-500/10" />
+                        <label className="mb-1 block text-xs font-medium text-slate-600">Spacing X (mm)</label>
+                        <input name="spacingX" value={standardMode.spacingX} onChange={handleChange} className={fieldClass} />
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs font-semibold text-slate-500">Spacing Y (mm)</label>
-                        <input name="spacingY" value={standardMode.spacingY} onChange={handleChange} className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 focus:ring-3 focus:ring-blue-500/10" />
+                        <label className="mb-1 block text-xs font-medium text-slate-600">Spacing Y (mm)</label>
+                        <input name="spacingY" value={standardMode.spacingY} onChange={handleChange} className={fieldClass} />
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs font-semibold text-slate-500">Spacing X (mm)</label>
-                        <input name="spacingX" value={standardMode.spacingX} onChange={handleChange} className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 focus:ring-3 focus:ring-blue-500/10" />
+                        <label className="mb-1 block text-xs font-medium text-slate-600">Spacing Z (mm)</label>
+                        <input name="spacingZ" value={standardMode.spacingZ} onChange={handleChange} className={fieldClass} />
                       </div>
                     </div>
-                  )}
+                  ) : null}
                 </div>
 
-                <div className="mt-4 rounded-xl border border-slate-200/60 bg-slate-50/70 p-4">
-                  <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700 cursor-pointer">
+                <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4">
+                  <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-800">
                     <input
                       type="checkbox"
                       name="useCustomReference"
                       checked={standardMode.useCustomReference}
                       onChange={handleChange}
-                      className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                      className="h-4 w-4 rounded border-slate-400 text-slate-800 focus:ring-slate-500"
                     />
-                    Utiliser une reference normative personnalisee (NI/Z)
+                    Utiliser une reference normative personnalisee (NI / Z-score)
                   </label>
-
-                  {standardMode.useCustomReference && (
-                    <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {standardMode.useCustomReference ? (
+                    <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
                       <div>
-                        <label className="mb-1 block text-xs font-semibold text-slate-500">Volume moyen reference (mm3)</label>
+                        <label className="mb-1 block text-xs font-medium text-slate-600">Volume moyen de reference (mm3)</label>
                         <input
                           name="normativeTotalMeanMm3"
                           value={standardMode.normativeTotalMeanMm3}
                           onChange={handleChange}
-                          className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 focus:ring-3 focus:ring-blue-500/10"
+                          className={fieldClass}
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs font-semibold text-slate-500">Ecart-type reference (mm3)</label>
+                        <label className="mb-1 block text-xs font-medium text-slate-600">Ecart-type de reference (mm3)</label>
                         <input
                           name="normativeTotalStdMm3"
                           value={standardMode.normativeTotalStdMm3}
                           onChange={handleChange}
-                          className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 focus:ring-3 focus:ring-blue-500/10"
+                          className={fieldClass}
                         />
                       </div>
                     </div>
-                  )}
+                  ) : null}
                 </div>
+
+                {modelingError ? (
+                  <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                    {modelingError}
+                  </div>
+                ) : null}
               </div>
 
-              <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4">
                 <button
                   type="button"
                   onClick={() => navigate('/dashboard/analysesMRI')}
-                  className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all"
+                  className="rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
                 >
                   Revenir aux analyses
                 </button>
@@ -1144,205 +1170,215 @@ export default function Modelisation3D() {
                   type="button"
                   onClick={handleLaunchModeling}
                   disabled={modelingLoading}
-                  className="rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 px-6 py-2.5 text-sm font-bold text-white hover:from-blue-700 hover:to-blue-800 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-blue-600/20 transition-all active:scale-[0.98]"
+                  className="inline-flex min-w-[12rem] items-center justify-center gap-2 rounded-md bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {modelingLoading ? (
-                    <span className="inline-flex items-center gap-2">
+                    <>
                       <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
                       Modelisation en cours...
-                    </span>
-                  ) : 'Lancer la modelisation 3D'}
+                    </>
+                  ) : (
+                    'Lancer la modelisation 3D'
+                  )}
                 </button>
               </div>
+            </div>
+          </div>
+        ) : null}
 
-              {modelingError ? (
-                <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {modelingError}
-                </div>
-              ) : null}
+        {!loadingRun && !runError && runInfo && !standardConfigOpen && !modelingResult ? (
+          <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-slate-200 bg-white py-12 shadow-sm">
+            <p className="max-w-md text-center text-sm text-slate-600">
+              La fenetre de configuration est fermee. Rouvrez-la pour regler les parametres et lancer la modelisation 3D.
+            </p>
+            <button
+              type="button"
+              onClick={() => setStandardConfigOpen(true)}
+              className="rounded-md bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
+            >
+              Ouvrir la configuration
+            </button>
+          </div>
+        ) : null}
 
-              {modelingResult ? (
-                <div className="mt-6 space-y-6">
-                  <div className="rounded-2xl border border-slate-200/60 bg-white p-6 shadow-card">
-                    <div className="flex items-center gap-3 mb-5">
-                      <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
-                        <Box className="h-5 w-5 text-white" />
-                      </div>
-                      <div>
-                        <h3 className="text-base font-bold text-slate-900">Visualisation 3D — viewport</h3>
-                        <p className="text-xs text-slate-500 font-medium">Eclairage PBR, grille et navigation type logiciel 3D professionnel</p>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col gap-5 xl:flex-row xl:items-stretch">
+        {modelingResult ? (
+                <div className="space-y-6">
+                  <div className="rounded-2xl border border-slate-200/60 bg-white p-5 shadow-card md:p-6">
+                    <div className="flex flex-col gap-5 xl:flex-row xl:items-start">
                       <div className="min-w-0 flex-1">
-                        <ModelViewerBlender
-                          objUrl={toAbsoluteMediaUrl(modelingResult.obj_url)}
-                          stlUrl={toAbsoluteMediaUrl(modelingResult.stl_url)}
-                        />
+                        {modelingResult.context_brain_obj_url ? (
+                          <ModelViewerBlender
+                            brainObjUrl={toAbsoluteMediaUrl(modelingResult.context_brain_obj_url)}
+                            objUrl={toAbsoluteMediaUrl(modelingResult.obj_url)}
+                            stlUrl={toAbsoluteMediaUrl(modelingResult.stl_url)}
+                            meshColor="#e11d48"
+                            brainOpacity={0.2}
+                          />
+                        ) : (
+                          <div className="space-y-3">
+                            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+                              {modelingResult.context_brain_error ||
+                                "Contexte cerveau indisponible : affichage hippocampe seul (previews IRM du run requises pour l'enveloppe). Les options cerveau dans Outils n'apparaissent qu'avec le double maillage."}
+                            </div>
+                            <ModelViewerBlender
+                              objUrl={toAbsoluteMediaUrl(modelingResult.obj_url)}
+                              stlUrl={toAbsoluteMediaUrl(modelingResult.stl_url)}
+                              meshColor="#e11d48"
+                            />
+                          </div>
+                        )}
                       </div>
-                      <aside className="flex w-full shrink-0 flex-col gap-3 xl:w-56">
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Volumes hippocampe</p>
-                        {[
-                          {
-                            label: 'Gauche',
-                            mm3: modelingResult?.volumes_mm3?.left,
-                            ml: modelingResult?.volumes_ml?.left,
-                            border: 'border-blue-100',
-                            bg: 'bg-blue-50/80',
-                            accent: 'text-blue-700',
-                          },
-                          {
-                            label: 'Droit',
-                            mm3: modelingResult?.volumes_mm3?.right,
-                            ml: modelingResult?.volumes_ml?.right,
-                            border: 'border-violet-100',
-                            bg: 'bg-violet-50/80',
-                            accent: 'text-violet-700',
-                          },
-                          {
-                            label: 'Total',
-                            mm3: modelingResult?.volumes_mm3?.total,
-                            ml: modelingResult?.volumes_ml?.total,
-                            border: 'border-emerald-100',
-                            bg: 'bg-emerald-50/80',
-                            accent: 'text-emerald-700',
-                          },
-                        ].map((v) => (
-                          <div
-                            key={v.label}
-                            className={`rounded-xl border ${v.border} ${v.bg} px-4 py-3 shadow-sm`}
-                          >
-                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{v.label}</p>
-                            <p className={`mt-1 text-xl font-black tabular-nums ${v.accent}`}>
-                              {Number(v.mm3 || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 })} mm³
+
+                      <aside className="flex w-full shrink-0 flex-col gap-4 border-t border-slate-200 pt-5 xl:w-[20rem] xl:border-l xl:border-t-0 xl:pl-5 xl:pt-0 2xl:w-[22rem]">
+                        <p className="text-[11px] font-bold uppercase tracking-widest text-slate-500 xl:hidden">Statistiques</p>
+
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                          <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                            Volumes hippocampe
+                          </p>
+                          <div className="space-y-2">
+                            {[
+                              {
+                                label: 'Gauche',
+                                mm3: modelingResult?.volumes_mm3?.left,
+                                ml: modelingResult?.volumes_ml?.left,
+                                accent: 'text-blue-700',
+                              },
+                              {
+                                label: 'Droit',
+                                mm3: modelingResult?.volumes_mm3?.right,
+                                ml: modelingResult?.volumes_ml?.right,
+                                accent: 'text-violet-700',
+                              },
+                              {
+                                label: 'Total',
+                                mm3: modelingResult?.volumes_mm3?.total,
+                                ml: modelingResult?.volumes_ml?.total,
+                                accent: 'text-emerald-700',
+                                highlight: true,
+                              },
+                            ].map((v) => (
+                              <div
+                                key={v.label}
+                                className={`flex items-baseline justify-between gap-2 rounded-lg border bg-white px-3 py-2.5 ${
+                                  v.highlight ? 'border-emerald-200 ring-1 ring-emerald-100' : 'border-slate-200'
+                                }`}
+                              >
+                                <span className="text-xs font-semibold text-slate-700">{v.label}</span>
+                                <div className="text-right">
+                                  <span className={`block text-sm font-bold tabular-nums ${v.accent}`}>
+                                    {Number(v.mm3 || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 })} mm³
+                                  </span>
+                                  <span className="text-[10px] font-medium text-slate-500">
+                                    {Number(v.ml || 0).toFixed(3)} mL
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {modelingResult.context_brain_volume_voxel_mm3 != null ? (
+                          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                            <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                              Enveloppe cerveau (contexte IRM)
                             </p>
-                            <p className="mt-0.5 text-[11px] font-semibold text-slate-500">
-                              {Number(v.ml || 0).toFixed(3)} mL
+                            <dl className="space-y-2.5 text-sm">
+                              <div className="flex justify-between gap-3 border-b border-slate-100 pb-2">
+                                <dt className="text-slate-600">Volume voxel</dt>
+                                <dd className="text-right">
+                                  <span className="font-semibold tabular-nums text-slate-900">
+                                    {Number(modelingResult.context_brain_volume_voxel_mm3).toLocaleString('fr-FR', {
+                                      maximumFractionDigits: 0,
+                                    })}{' '}
+                                    mm³
+                                  </span>
+                                  <span className="mt-0.5 block text-[11px] text-slate-500">
+                                    {Number(modelingResult.context_brain_volume_voxel_ml || 0).toFixed(2)} mL
+                                  </span>
+                                </dd>
+                              </div>
+                              {modelingResult.context_brain_volume_mesh_mm3 != null ? (
+                                <div className="flex justify-between gap-3">
+                                  <dt className="text-slate-600">Volume maillage</dt>
+                                  <dd className="text-right font-semibold tabular-nums text-slate-900">
+                                    {Number(modelingResult.context_brain_volume_mesh_mm3).toLocaleString('fr-FR', {
+                                      maximumFractionDigits: 0,
+                                    })}{' '}
+                                    mm³
+                                  </dd>
+                                </div>
+                              ) : null}
+                            </dl>
+                            <p className="mt-3 text-[10px] leading-snug text-slate-500">
+                              Approximation à partir des coupes du run (pas un volume osseux scanner).
                             </p>
                           </div>
-                        ))}
+                        ) : null}
+
+                        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                          <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                            Maillage hippocampe &amp; coupes
+                          </p>
+                          <dl className="space-y-2.5 text-sm">
+                            <div className="flex justify-between gap-2 border-b border-slate-100 pb-2">
+                              <dt className="text-slate-600">Volume voxel</dt>
+                              <dd className="text-right font-semibold tabular-nums text-slate-900">
+                                {Number(modelingResult.volume_voxel_mm3 || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 })} mm³
+                                <span className="mt-0.5 block text-[11px] font-normal text-slate-500">
+                                  {Number(modelingResult.volume_voxel_ml || 0).toFixed(3)} mL
+                                </span>
+                              </dd>
+                            </div>
+                            <div className="flex justify-between gap-2 border-b border-slate-100 pb-2">
+                              <dt className="text-slate-600">Volume surface (mesh)</dt>
+                              <dd className="text-right font-semibold tabular-nums text-slate-900">
+                                {modelingResult.volume_mesh_mm3 != null
+                                  ? `${Number(modelingResult.volume_mesh_mm3).toLocaleString('fr-FR', { maximumFractionDigits: 0 })} mm³`
+                                  : '—'}
+                                {modelingResult.volume_mesh_ml != null ? (
+                                  <span className="mt-0.5 block text-[11px] font-normal text-slate-500">
+                                    {Number(modelingResult.volume_mesh_ml).toFixed(3)} mL
+                                  </span>
+                                ) : (
+                                  <span className="mt-0.5 block text-[11px] font-normal text-slate-400">Non watertight</span>
+                                )}
+                              </dd>
+                            </div>
+                            <div className="flex justify-between gap-2">
+                              <dt className="text-slate-600">Coupes utilisées</dt>
+                              <dd className="font-semibold tabular-nums text-slate-900">{modelingResult.slices_used || 0}</dd>
+                            </div>
+                          </dl>
+                        </div>
+
+                        <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-sm">
+                          <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                            Indices cliniques (résumé)
+                          </p>
+                          <dl className="space-y-2.5 text-sm">
+                            <div className="flex justify-between gap-2">
+                              <dt className="text-slate-600">IA · asymétrie</dt>
+                              <dd className="font-bold tabular-nums text-slate-900">{aiValue.toFixed(2)} %</dd>
+                            </div>
+                            <div className="flex justify-between gap-2">
+                              <dt className="text-slate-600">IN · normalisation</dt>
+                              <dd className="font-bold tabular-nums text-slate-900">{niValue.toFixed(2)} %</dd>
+                            </div>
+                            <div className="flex justify-between gap-2">
+                              <dt className="text-slate-600">Z-score</dt>
+                              <dd className="font-bold tabular-nums text-slate-900">
+                                {Number(modelingResult?.clinical_indices?.z_score || 0).toFixed(2)}
+                              </dd>
+                            </div>
+                          </dl>
+                        </div>
                       </aside>
                     </div>
                   </div>
 
                   <div className="rounded-2xl border border-slate-200/60 bg-white p-6 shadow-card">
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-10 h-10 bg-gradient-to-br from-slate-600 to-slate-800 rounded-xl flex items-center justify-center shadow-lg shadow-slate-600/20">
-                        <Brain className="h-5 w-5 text-white" />
-                      </div>
-                      <div>
-                        <h3 className="text-base font-bold text-slate-900">Hippocampe dans le contexte IRM</h3>
-                        <p className="text-xs text-slate-500 font-medium">
-                          Enveloppe 3D estimee a partir des coupes du run ; hippocampe superpose (meme grille que ci-dessus).
-                        </p>
-                      </div>
-                    </div>
-                    {modelingResult.context_brain_volume_voxel_mm3 != null ? (
-                      <div className="mb-4 rounded-xl border border-slate-200/80 bg-slate-50 px-4 py-3 text-sm shadow-sm">
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                          Volume enveloppe (approximation)
-                        </p>
-                        <p className="mt-1 text-lg font-black tabular-nums text-slate-900">
-                          {Number(modelingResult.context_brain_volume_voxel_mm3).toLocaleString('fr-FR', {
-                            maximumFractionDigits: 0,
-                          })}{' '}
-                          mm³
-                          <span className="ml-2 text-base font-bold text-slate-600">
-                            ({Number(modelingResult.context_brain_volume_voxel_ml || 0).toFixed(2)} mL)
-                          </span>
-                        </p>
-                        {modelingResult.context_brain_volume_mesh_mm3 != null ? (
-                          <p className="mt-1 text-xs text-slate-600">
-                            Volume surface fermee (maillage)&nbsp;:{' '}
-                            {Number(modelingResult.context_brain_volume_mesh_mm3).toLocaleString('fr-FR', {
-                              maximumFractionDigits: 0,
-                            })}{' '}
-                            mm³
-                          </p>
-                        ) : null}
-                        <p className="mt-2 text-xs leading-relaxed text-slate-500">
-                          On compte combien de petits cubes 3D (voxels) sont a l&apos;interieur du masque IRM, puis on multiplie par la
-                          taille d&apos;un cube (espacement des coupes). Ce n&apos;est pas un volume osseux au scanner : c&apos;est une
-                          enveloppe tissulaire / cavite estimee a partir des images du run.
-                        </p>
-                      </div>
-                    ) : null}
-                    {modelingResult.context_brain_obj_url ? (
-                      <ModelViewerBlender
-                        brainObjUrl={toAbsoluteMediaUrl(modelingResult.context_brain_obj_url)}
-                        objUrl={toAbsoluteMediaUrl(modelingResult.obj_url)}
-                        stlUrl={toAbsoluteMediaUrl(modelingResult.stl_url)}
-                        meshColor="#e11d48"
-                        brainOpacity={0.2}
-                      />
-                    ) : (
-                      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                        {modelingResult.context_brain_error ||
-                          'Vue contexte non disponible (previews IRM du run requises). Relancez la modelisation apres mise a jour du serveur.'}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                    {[
-                      { label: 'Volume voxel', value: `${Number(modelingResult.volume_voxel_mm3 || 0).toFixed(0)} mm\u00B3`, sub: `${Number(modelingResult.volume_voxel_ml || 0).toFixed(3)} mL`, color: 'blue' },
-                      { label: 'Volume mesh', value: modelingResult.volume_mesh_mm3 != null ? `${Number(modelingResult.volume_mesh_mm3).toFixed(0)} mm\u00B3` : 'N/A', sub: modelingResult.volume_mesh_ml ? `${Number(modelingResult.volume_mesh_ml).toFixed(3)} mL` : 'Non watertight', color: 'emerald' },
-                      { label: 'Vertices / Faces', value: `${Number(modelingResult.mesh_vertices || 0).toLocaleString('fr-FR')}`, sub: `${Number(modelingResult.mesh_faces || 0).toLocaleString('fr-FR')} faces`, color: 'violet' },
-                      { label: 'Coupes utilisees', value: `${modelingResult.slices_used || 0}`, sub: 'slices traitees', color: 'amber' },
-                    ].map((item) => (
-                      <div key={item.label} className="rounded-2xl border border-slate-200/60 bg-white p-4 shadow-card hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-300">
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{item.label}</p>
-                        <p className="text-lg font-black text-slate-900 mt-1">{item.value}</p>
-                        <p className="text-[10px] font-semibold text-slate-400 mt-0.5">{item.sub}</p>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="rounded-2xl border border-slate-200/60 bg-white p-6 shadow-card">
-                    <div className="rounded-2xl bg-gradient-to-r from-blue-600 to-blue-800 px-6 py-5 text-white">
-                      <h4 className="text-lg font-bold tracking-tight">Synthese clinique — Hippocampe</h4>
-                      <p className="mt-1 text-sm text-blue-100 font-medium">
-                        Reference normative: moyenne {Number(modelingResult?.reference_values_mm3?.normative_total_mean || 0).toFixed(0)} mm3,
-                        ecart-type {Number(modelingResult?.reference_values_mm3?.normative_total_std || 0).toFixed(0)} mm3
-                      </p>
-                    </div>
-
-                    <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200/60">
-                      <table className="w-full text-left">
-                        <thead className="bg-slate-50/80">
-                          <tr>
-                            <th className="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-400">Structure</th>
-                            <th className="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-400">Volume</th>
-                            <th className="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-400">Norme</th>
-                          </tr>
-                        </thead>
-                        <tbody className="text-sm">
-                          <tr className="border-t border-slate-100">
-                            <td className="px-5 py-3 text-slate-700 font-medium">Hippocampe gauche</td>
-                            <td className="px-5 py-3 font-bold text-blue-600">{Number(modelingResult?.volumes_mm3?.left || 0).toFixed(0)} mm3</td>
-                            <td className="px-5 py-3 text-slate-500">2300 - 2700</td>
-                          </tr>
-                          <tr className="border-t border-slate-100">
-                            <td className="px-5 py-3 text-slate-700 font-medium">Hippocampe droit</td>
-                            <td className="px-5 py-3 font-bold text-blue-600">{Number(modelingResult?.volumes_mm3?.right || 0).toFixed(0)} mm3</td>
-                            <td className="px-5 py-3 text-slate-500">2200 - 2600</td>
-                          </tr>
-                          <tr className="border-t border-slate-100 bg-blue-50/30">
-                            <td className="px-5 py-3 font-bold text-slate-900">Volume total</td>
-                            <td className="px-5 py-3 font-bold text-blue-600">{Number(modelingResult?.volumes_mm3?.total || 0).toFixed(0)} mm3</td>
-                            <td className="px-5 py-3 text-slate-500 font-medium">4500 - 5300</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                      <div className="border-t border-slate-100 px-5 py-3 bg-slate-50/50">
-                        <p className="text-xs text-slate-500 font-medium">
-                          Formule IA = |D - G| / ((D + G) / 2) = <span className="font-bold text-blue-600">{Math.abs(aiValue).toFixed(2)}%</span>
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                       <AIGauge value={aiValue} interpretation={mtleMeaning || aiMeaning} />
                       <NIGauge value={niValue} interpretation={niMeaning} />
                     </div>
@@ -1350,7 +1386,7 @@ export default function Modelisation3D() {
                     <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
                         <div className="flex-1">
-                          <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-2">Conclusion synthetique</p>
+                          <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-2">Remarques et constatations</p>
                           <h3 className="text-lg font-extrabold text-slate-900 inline-flex items-center">{conciseConclusion}</h3>
                           
                           <div className="mt-4 flex flex-wrap gap-2">
@@ -1433,10 +1469,7 @@ export default function Modelisation3D() {
                     </p>
                   </div>
                 </div>
-              ) : null}
-            </>
-          )}
-        </div>
+        ) : null}
       </div>
 
       <ReportPreviewModal

@@ -4104,50 +4104,50 @@ def patients_list_create(request):
                 MAX_FILE_SIZE_MB = 500
                 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
-for index, uploaded_file in enumerate(files):
-    fname_lower = uploaded_file.name.lower()
-    ext = os.path.splitext(fname_lower)[1]
-    if fname_lower.endswith('.nii.gz'):
-        ext = '.gz'
-    if ext not in ALLOWED_EXTENSIONS:
-        transaction.set_rollback(True)
-        return JsonResponse({
-            'ok': False,
-            'error': f'Extension « {ext} » non autorisée pour le fichier « {uploaded_file.name} ». Formats acceptés : NIfTI, DICOM, JPEG, PNG, TIFF, BMP.'
-        }, status=400)
-    file_size = getattr(uploaded_file, 'size', 0) or 0
-    if file_size > MAX_FILE_SIZE_BYTES:
-        transaction.set_rollback(True)
-        return JsonResponse({
-            'ok': False,
-            'error': f'Le fichier « {uploaded_file.name} » dépasse la limite de {MAX_FILE_SIZE_MB} Mo ({file_size // (1024*1024)} Mo).'
-        }, status=400)
+                for index, uploaded_file in enumerate(files):
+                    fname_lower = uploaded_file.name.lower()
+                    ext = os.path.splitext(fname_lower)[1]
+                    if fname_lower.endswith('.nii.gz'):
+                        ext = '.gz'
+                    if ext not in ALLOWED_EXTENSIONS:
+                        transaction.set_rollback(True)
+                        return JsonResponse({
+                            'ok': False,
+                            'error': f'Extension « {ext} » non autorisée pour le fichier « {uploaded_file.name} ». Formats acceptés : NIfTI, DICOM, JPEG, PNG, TIFF, BMP.'
+                        }, status=400)
+                    file_size = getattr(uploaded_file, 'size', 0) or 0
+                    if file_size > MAX_FILE_SIZE_BYTES:
+                        transaction.set_rollback(True)
+                        return JsonResponse({
+                            'ok': False,
+                            'error': f'Le fichier « {uploaded_file.name} » dépasse la limite de {MAX_FILE_SIZE_MB} Mo ({file_size // (1024*1024)} Mo).'
+                        }, status=400)
 
-    rel_from_client = relative_paths[index] if index < len(relative_paths) else ''
-    safe_rel = _safe_relative_path(rel_from_client, uploaded_file.name)
-    storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
-    saved_path = default_storage.save(storage_path, uploaded_file)
+                    rel_from_client = relative_paths[index] if index < len(relative_paths) else ''
+                    safe_rel = _safe_relative_path(rel_from_client, uploaded_file.name)
+                    storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
+                    saved_path = default_storage.save(storage_path, uploaded_file)
 
-    mri_rec = MRIFile.objects.create(
-        patient=patient,
-        file=saved_path,
-        original_filename=uploaded_file.name,
-        relative_path=safe_rel,
-        file_size=int(getattr(uploaded_file, 'size', 0) or 0),
-    )
-    _ensure_mri_file_dimensions(mri_rec)  # ✅ ajout de nadine
+                    mri_rec = MRIFile.objects.create(
+                        patient=patient,
+                        file=saved_path,
+                        original_filename=uploaded_file.name,
+                        relative_path=safe_rel,
+                        file_size=int(getattr(uploaded_file, 'size', 0) or 0),
+                    )
+                    _ensure_mri_file_dimensions(mri_rec)  # ✅ ajout de nadine
 
-except IntegrityError:
-    return JsonResponse({'ok': False, 'error': f'Le numéro de dossier « {dossier_number} » existe déjà. Veuillez choisir un numéro unique.'}, status=409)
-        out_serializer = PatientSerializer(patient, context={'request': request})
-        return JsonResponse(
-            {
-                'ok': True,
-                'message': 'Patient créé avec succès',
-                'patient': out_serializer.data,
-            },
-            status=201,
-        )
+                out_serializer = PatientSerializer(patient, context={'request': request})
+                return JsonResponse(
+                    {
+                        'ok': True,
+                        'message': 'Patient créé avec succès',
+                        'patient': out_serializer.data,
+                    },
+                    status=201,
+                )
+        except IntegrityError:
+            return JsonResponse({'ok': False, 'error': f'Le numéro de dossier « {dossier_number} » existe déjà. Veuillez choisir un numéro unique.'}, status=409)
     except json.JSONDecodeError:
         return JsonResponse({'ok': False, 'error': 'Invalid JSON payload'}, status=400)
     except Exception as e:
@@ -4298,16 +4298,82 @@ def _ensure_mri_file_dimensions(mri):
         mri.image_height = h
 
 
+def _compute_slice_quality(file_path: str) -> dict:
+    """
+    Analyse rapide de contenu cérébral d'une coupe IRM 2D.
+    Redimensionne à 64×64 pour la performance (~0.5 ms/coupe).
+
+    Catégories retournées:
+      - is_empty      : max pixel < 5  → coupe entièrement noire (hors FOV)
+      - is_low_content: brain_ratio < 0.05 → coupe de bordure (sommet/base du crâne)
+      - recommended   : brain_ratio >= 0.05 → coupe avec tissu cérébral exploitable
+    """
+    result = {
+        'brain_ratio': 0.0,
+        'is_empty': True,
+        'is_low_content': True,
+        'recommended': False,
+        'max_val': 0.0,
+    }
+    try:
+        img = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            return result
+        small = cv2.resize(img, (64, 64), interpolation=cv2.INTER_AREA)
+        max_val = float(np.max(small))
+        result['max_val'] = round(max_val, 1)
+        if max_val < 5.0:
+            # Completely black — no signal at all
+            return result
+        result['is_empty'] = False
+        # Adaptive threshold: pixels above 15 % of peak intensity → brain tissue
+        thr = max(10, int(max_val * 0.15))
+        ratio = float(np.sum(small > thr)) / float(small.size)
+        result['brain_ratio'] = round(ratio, 4)
+        result['is_low_content'] = ratio < 0.05
+        result['recommended'] = ratio >= 0.05
+    except Exception:
+        # On error, don't block the slice — let segmentation decide
+        result.update({'is_empty': False, 'is_low_content': False, 'recommended': True})
+    return result
+
+
 @api_view(['GET'])
 @login_required
 def list_mri_files(request, patient_id: int):
     print(f"Nadine Yassmine - list_mri_files endpoint works - patient_id: {patient_id}, user: {request.user.username}")
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
     mri_files = list(MRIFile.objects.filter(patient=patient).order_by('-uploaded_at'))
+
+    quality_map = {}
     for m in mri_files:
         _ensure_mri_file_dimensions(m)
+        try:
+            q = _compute_slice_quality(m.file.path)
+        except Exception:
+            q = {'brain_ratio': -1.0, 'is_empty': False, 'is_low_content': False,
+                 'recommended': True, 'max_val': -1.0}
+        quality_map[str(m.id)] = q
+
     serializer = MRIFileSerializer(mri_files, many=True, context={'request': request})
-    return JsonResponse({'ok': True, 'mri_files': serializer.data})
+
+    total      = len(mri_files)
+    empty_cnt  = sum(1 for q in quality_map.values() if q['is_empty'])
+    low_cnt    = sum(1 for q in quality_map.values() if not q['is_empty'] and q['is_low_content'])
+    rec_cnt    = sum(1 for q in quality_map.values() if q['recommended'])
+
+    return JsonResponse({
+        'ok': True,
+        'mri_files': serializer.data,
+        'quality': quality_map,
+        'quality_summary': {
+            'total': total,
+            'recommended': rec_cnt,
+            'low_content': low_cnt,
+            'empty': empty_cnt,
+            'auto_excluded': total - rec_cnt,
+        },
+    })
 
 
 @csrf_exempt

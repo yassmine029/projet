@@ -1,20 +1,32 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
+  Brain,
+  Building2,
+  CalendarDays,
   Check,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  CircleDot,
+  CloudUpload,
+  FileImage,
+  Hash,
   Info,
+  Loader2,
   Move,
   Search,
+  ShieldCheck,
+  UserPlus,
   UserRound,
+  Users,
   X,
+  Zap,
   ZoomIn,
   ZoomOut,
   RotateCcw,
 } from 'lucide-react';
-import api from '../api';
+import api, { createPatient } from '../api';
 
 const CHECKLIST_STEPS = [
   'Préparation des données',
@@ -1286,6 +1298,20 @@ export default function NouvelleSegmentation() {
   const [sliceRangeTo, setSliceRangeTo] = useState('');
   const [sliceRangeFeedback, setSliceRangeFeedback] = useState(null);
 
+  // ── Qualité des coupes (preprocessing anti-coupes noires) ────────────────
+  const [sliceQuality, setSliceQuality] = useState({});     // { fileId: {brain_ratio, is_empty, is_low_content, recommended} }
+  const [qualitySummary, setQualitySummary] = useState(null); // { total, recommended, low_content, empty, auto_excluded }
+
+  // ── Mode sélection patient (existant | nouveau) ───────────────────────────
+  const [patientSelectMode, setPatientSelectMode] = useState('existing');
+  const [npForm, setNpForm] = useState({ prenom: '', nom: '', date_naissance: '', sexe: '', pathologie: '', dossier_number: '' });
+  const [npErrors, setNpErrors] = useState({});
+  const [npSubmitting, setNpSubmitting] = useState(false);
+  const [npApiError, setNpApiError] = useState('');
+  const [npDragging, setNpDragging] = useState(false);
+  const [npFile, setNpFile] = useState(null);
+  const npFileRef = useRef(null);
+
   const [doctorName, setDoctorName] = useState(getDoctorName());
   const runIdFromQuery = searchParams.get('run');
 
@@ -1403,6 +1429,8 @@ export default function NouvelleSegmentation() {
 
     setSlicesLoading(true);
     setSlicesError(false);
+    setSliceQuality({});
+    setQualitySummary(null);
 
     try {
       const token = localStorage.getItem('access');
@@ -1421,8 +1449,26 @@ export default function NouvelleSegmentation() {
             ? payload.files
             : [];
 
+      // ── Qualité des coupes ─────────────────────────────────────────────
+      const quality = payload?.quality || {};
+      const summary = payload?.quality_summary || null;
+      setSliceQuality(quality);
+      setQualitySummary(summary);
+
       setSlices(files);
-      setSelectedSlices([]);
+
+      // Auto-sélection : on ne pré-sélectionne que les coupes recommandées.
+      // Si aucune info qualité disponible (ancien backend), on sélectionne tout.
+      const hasQuality = Object.keys(quality).length > 0;
+      if (hasQuality) {
+        const recommended = files
+          .filter((f) => quality[String(f.id)]?.recommended !== false)
+          .map((f) => f.id);
+        setSelectedSlices(recommended);
+      } else {
+        setSelectedSlices([]);
+      }
+
       setImageErrors({});
       setWorkflowSliceRank(1);
     } catch {
@@ -2102,6 +2148,57 @@ export default function NouvelleSegmentation() {
     setResultsListPage(0);
   };
 
+  // Auto-fetch next dossier number when switching to new-patient tab
+  useEffect(() => {
+    if (patientSelectMode !== 'new' || npForm.dossier_number) return;
+    const token = localStorage.getItem('access');
+    api.get('/patients/next-dossier/', token ? { headers: { Authorization: `Bearer ${token}` } } : {})
+      .then((r) => { if (r.data?.ok) setNpForm((f) => ({ ...f, dossier_number: r.data.dossier_number })); })
+      .catch(() => {});
+  }, [patientSelectMode]);
+
+  const npSet = (key, val) => {
+    setNpForm((f) => ({ ...f, [key]: val }));
+    setNpErrors((e) => ({ ...e, [key]: '' }));
+  };
+
+  const npHandleFileDrop = useCallback((e) => {
+    e.preventDefault();
+    setNpDragging(false);
+    const file = e.dataTransfer?.files?.[0] || e.target?.files?.[0];
+    if (file) setNpFile(file);
+  }, []);
+
+  const npHandleSubmit = async () => {
+    const errs = {};
+    if (!npForm.prenom.trim()) errs.prenom = 'Requis';
+    if (!npForm.nom.trim())    errs.nom = 'Requis';
+    if (!npForm.date_naissance) errs.date_naissance = 'Requis';
+    if (!npForm.sexe)           errs.sexe = 'Requis';
+    if (!npForm.pathologie)     errs.pathologie = 'Requis';
+    if (Object.keys(errs).length) { setNpErrors(errs); return; }
+    setNpSubmitting(true);
+    setNpApiError('');
+    try {
+      const payload = new FormData();
+      Object.entries(npForm).forEach(([k, v]) => { if (v) payload.append(k, v); });
+      if (npFile) payload.append('files', npFile);
+      const res = await createPatient(payload);
+      const created = res.data;
+      // Add to patients list and select
+      setPatients((prev) => [created, ...prev]);
+      setSelectedPatient(created);
+      setPatientSelectMode('existing');
+    } catch (err) {
+      const msg = err?.response?.data
+        ? Object.values(err.response.data).flat().join(' · ')
+        : 'Erreur lors de la création du patient.';
+      setNpApiError(msg);
+    } finally {
+      setNpSubmitting(false);
+    }
+  };
+
   const resetFlow = () => {
     if (runIdFromQuery) {
       navigate('/segmentation/nouvelle', { replace: true });
@@ -2228,48 +2325,81 @@ export default function NouvelleSegmentation() {
         <div className="bg-white rounded-xl shadow-card border border-surface-border overflow-hidden">
           <div className="p-6 lg:p-8">
             {step === 1 && (
-              <div className="space-y-4">
-                <div className="search-box flex items-center gap-2 px-3 py-2 border border-surface-border rounded-lg bg-slate-50 text-sm">
-                  <Search className="w-4 h-4 text-slate-500 opacity-35" />
+              <div className="space-y-5">
+
+                {/* ── Mode tabs ──────────────────────────────────────────────── */}
+                <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1 w-fit">
+                  <button
+                    type="button"
+                    onClick={() => setPatientSelectMode('existing')}
+                    className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-all ${
+                      patientSelectMode === 'existing'
+                        ? 'bg-white text-blue-700 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    <Users className="h-4 w-4" />
+                    Patient existant
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPatientSelectMode('new')}
+                    className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-all ${
+                      patientSelectMode === 'new'
+                        ? 'bg-white text-blue-700 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    <UserPlus className="h-4 w-4" />
+                    Nouveau patient
+                  </button>
+                </div>
+
+                {/* ── TAB: Patient existant ───────────────────────────────────── */}
+                {patientSelectMode === 'existing' && (<>
+                <div className="relative">
+                  <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                   <input
                     type="text"
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
                     placeholder="Rechercher par nom, prénom ou IPP…"
-                    className="w-full bg-transparent outline-none"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-28 text-sm text-slate-800 placeholder-slate-400 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/20"
                   />
-                  <span className="rounded-full bg-white border border-surface-border px-2.5 py-1 text-xs text-gray-600 whitespace-nowrap">
-                    {filteredPatients.length} patients
+                  <span className="absolute right-3.5 top-1/2 -translate-y-1/2 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-500 whitespace-nowrap">
+                    {filteredPatients.length} patient{filteredPatients.length !== 1 ? 's' : ''}
                   </span>
                 </div>
 
+                {/* Loading */}
                 {loading && (
-                  <div className="h-56 flex items-center justify-center">
-                    <span className="inline-block h-9 w-9 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+                  <div className="flex h-52 items-center justify-center gap-3 text-slate-500">
+                    <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
+                    <span className="text-sm font-medium">Chargement des patients…</span>
                   </div>
                 )}
 
+                {/* Error */}
                 {!loading && error && (
-                  <div className="h-56 flex flex-col items-center justify-center gap-3">
+                  <div className="flex h-52 flex-col items-center justify-center gap-3">
                     <p className="text-sm font-semibold text-red-600">Erreur de chargement</p>
-                    <button
-                      type="button"
-                      onClick={fetchPatients}
-                      className="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-semibold text-red-600 hover:bg-red-100 transition-colors"
-                    >
+                    <button type="button" onClick={fetchPatients}
+                      className="rounded-xl border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-50">
                       Réessayer
                     </button>
                   </div>
                 )}
 
+                {/* List */}
                 {!loading && !error && (
                   <>
-                    <div className="flex flex-wrap items-end justify-between gap-2">
-                      <p className="text-[11px] uppercase tracking-[0.06em] text-gray-400">Mes patients</p>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                        Mes patients
+                      </p>
                       {filteredPatients.length > 0 && (
                         <GmailStylePagination
-                          page={patientListPage}
-                          pageSize={LIST_PAGE_SIZE}
+                          page={patientListPage} pageSize={LIST_PAGE_SIZE}
                           total={filteredPatients.length}
                           onPrev={() => setPatientListPage((p) => Math.max(0, p - 1))}
                           onNext={() => setPatientListPage((p) => Math.min(patientLastPage, p + 1))}
@@ -2279,10 +2409,11 @@ export default function NouvelleSegmentation() {
                       )}
                     </div>
 
-                    <div className="max-h-[430px] space-y-2 overflow-y-auto pr-1">
+                    <div className="max-h-[400px] space-y-2 overflow-y-auto pr-1">
                       {filteredPatients.length === 0 && (
-                        <div className="px-5 py-10 text-center text-sm text-gray-600 bg-white border border-surface-border rounded-lg">
-                          Aucun patient correspondant.
+                        <div className="flex flex-col items-center gap-2 py-14 text-slate-400">
+                          <UserRound className="h-10 w-10 opacity-25" />
+                          <p className="text-sm font-medium">Aucun patient correspondant</p>
                         </div>
                       )}
 
@@ -2298,146 +2429,442 @@ export default function NouvelleSegmentation() {
                         const age = getAge(dob);
 
                         return (
-                          <div
+                          <button
                             key={key}
+                            type="button"
                             onClick={() => setSelectedPatient(patient)}
-                            className={`patient-row flex items-center gap-3 px-4 py-4 bg-white border border-surface-border rounded-lg cursor-pointer hover:border-primary transition-colors ${
-                              isSelected ? 'border-[1.5px] border-blue-600 bg-blue-50' : ''
+                            className={`group w-full rounded-xl border p-4 text-left transition-all duration-150 ${
+                              isSelected
+                                ? 'border-blue-500 bg-blue-50 shadow-md shadow-blue-100/60'
+                                : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-slate-50 hover:shadow-sm'
                             }`}
                           >
-                            <span
-                              className={`h-5 w-5 shrink-0 rounded-full border flex items-center justify-center ${
-                                isSelected ? 'border-[#2563eb] bg-[#2563eb]' : 'border-gray-300 bg-white'
-                              }`}
-                            >
-                              {isSelected && <Check className="h-3.5 w-3.5 text-white" />}
-                            </span>
+                            <div className="flex items-center gap-3">
+                              {/* Radio dot */}
+                              <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition ${
+                                isSelected ? 'border-blue-600 bg-blue-600' : 'border-slate-300 bg-white group-hover:border-blue-400'
+                              }`}>
+                                {isSelected && <Check className="h-3 w-3 text-white" strokeWidth={3} />}
+                              </span>
 
-                            <div
-                              className="w-[38px] h-[38px] shrink-0 rounded-full text-white flex items-center justify-center font-semibold text-xs"
-                              style={{ backgroundColor: avatarColor }}
-                            >
-                              {getInitials(patient)}
+                              {/* Avatar */}
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl font-bold text-sm text-white shadow-sm"
+                                style={{ backgroundColor: avatarColor }}>
+                                {getInitials(patient)}
+                              </div>
+
+                              {/* Info */}
+                              <div className="min-w-0 flex-1">
+                                <p className={`truncate text-sm font-bold ${isSelected ? 'text-blue-900' : 'text-slate-800'}`}>
+                                  {getPatientName(patient)}
+                                </p>
+                                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-500">
+                                  <span className="flex items-center gap-1">
+                                    <CalendarDays className="h-3 w-3" />
+                                    {getBirthPrefix(patient)} {formatDate(dob)} · {age !== null ? `${age} ans` : 'Âge inconnu'}
+                                  </span>
+                                  <span className="inline-flex items-center gap-0.5 rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">
+                                    <Hash className="h-2.5 w-2.5" />{ippLabel}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Pathologie badge */}
+                              <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ${pathology.classes}`}>
+                                {pathology.label}
+                              </span>
+
+                              {/* Coupes */}
+                              <div className="w-12 shrink-0 text-center">
+                                <p className="text-sm font-bold text-slate-700">{slicesCount ?? '—'}</p>
+                                <p className="text-[9px] font-medium uppercase tracking-wide text-slate-400">coupes</p>
+                              </div>
+
+                              {/* Last exam */}
+                              <div className="w-16 shrink-0 text-center">
+                                <p className="text-xs font-semibold text-slate-700">{formatDate(getLastExam(patient), false)}</p>
+                                <p className="text-[9px] font-medium uppercase tracking-wide text-slate-400">dernier</p>
+                              </div>
+
+                              {/* Arrow */}
+                              <ChevronRight className={`h-4 w-4 shrink-0 transition-transform ${isSelected ? 'rotate-90 text-blue-500' : 'text-slate-300'}`} />
                             </div>
-
-                            <div className="min-w-0 flex-1">
-                              <p className="text-[13px] font-medium text-primary truncate">{getPatientName(patient)}</p>
-                              <p className="text-[12px] text-gray-500 mt-0.5 truncate">
-                                {getBirthPrefix(patient)} le {formatDate(dob)} · {age !== null ? `${age} ans` : 'Âge inconnu'} ·{' '}
-                                <span className="inline-flex items-center rounded-[3px] bg-[#f1f5f9] px-[6px] py-[1px] font-mono text-[11px] text-[#64748b] align-middle">
-                                  {ippLabel}
-                                </span>
-                              </p>
-                            </div>
-
-                            <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium ${pathology.classes}`}>
-                              {pathology.label}
-                            </span>
-
-                            <div className="w-14 shrink-0 text-center">
-                              <p className="text-xs font-semibold text-primary">{slicesCount ?? '—'}</p>
-                              <p className="text-[10px] text-gray-400">coupes</p>
-                            </div>
-
-                            <div className="w-24 shrink-0 text-center">
-                              <p className="text-xs font-semibold text-primary">{formatDate(getLastExam(patient), false)}</p>
-                              <p className="text-[10px] text-gray-400">dernier examen</p>
-                            </div>
-
-                            <span className={`shrink-0 ${isSelected ? 'text-blue-600' : 'text-gray-400'}`}>
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                                <path d="M9 6L15 12L9 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                            </span>
-                          </div>
+                          </button>
                         );
                       })}
                     </div>
 
+                    {/* Selected patient banner */}
                     {selectedPatient && (
-                      <div className="mt-4 rounded-md border px-[14px] py-[10px] flex items-center gap-2 bg-blue-50 border-blue-200">
-                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#2563eb] text-white">
-                          <Check className="h-3.5 w-3.5" />
-                        </span>
-                        <p className="text-sm text-[#2563eb]">
-                          Patient sélectionné : {getPatientName(selectedPatient)} · {getSlicesCount(selectedPatient) ?? '—'} coupes IRM disponibles
-                        </p>
+                      <div className="flex items-center gap-3 rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 px-4 py-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl font-bold text-sm text-white shadow-sm"
+                          style={{ backgroundColor: AVATAR_COLORS[0] }}>
+                          {getInitials(selectedPatient)}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-bold text-blue-900 truncate">{getPatientName(selectedPatient)}</p>
+                          <p className="text-xs text-blue-600">{getSlicesCount(selectedPatient) ?? '—'} coupes IRM disponibles</p>
+                        </div>
+                        <CheckCircle2 className="h-5 w-5 shrink-0 text-blue-500" />
                       </div>
                     )}
-
-                    <div className="mt-6 -mx-6 -mb-6 px-6 py-4 bg-white border-t border-surface-border flex items-center justify-between">
-                      <p className="text-sm text-gray-500">Étape 1 sur 3</p>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => navigate(-1)}
-                          className="outline-button border border-surface-border text-gray-500 text-sm px-4 py-2 rounded-lg hover:bg-blue-50/50"
-                        >
-                          Annuler
-                        </button>
-                        <button
-                          type="button"
-                          disabled={!selectedPatient}
-                          onClick={() => setStep(2)}
-                          className="bg-[#2563eb] hover:bg-[#1d4ed8] border border-[#2563eb] text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-[#2563eb] disabled:hover:bg-[#2563eb]"
-                        >
-                          Confirmer le patient →
-                        </button>
-                      </div>
-                    </div>
                   </>
                 )}
+                </>)}
+
+                {/* ── TAB: Nouveau patient ──────────────────────────────────── */}
+                {patientSelectMode === 'new' && (
+                  <div className="space-y-5">
+                    {/* Form */}
+                    <div className="grid grid-cols-2 gap-4">
+                      {/* Prénom */}
+                      <div>
+                        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                          Prénom <span className="text-red-400">*</span>
+                        </label>
+                        <input type="text" value={npForm.prenom} onChange={(e) => npSet('prenom', e.target.value)}
+                          placeholder="ex. Sarah"
+                          className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition focus:ring-2 ${npErrors.prenom ? 'border-red-300 bg-red-50 focus:ring-red-200' : 'border-slate-200 bg-slate-50 focus:border-blue-500 focus:bg-white focus:ring-blue-500/20'}`}
+                        />
+                        {npErrors.prenom && <p className="mt-1 text-[11px] font-semibold text-red-500">{npErrors.prenom}</p>}
+                      </div>
+
+                      {/* Nom */}
+                      <div>
+                        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                          Nom <span className="text-red-400">*</span>
+                        </label>
+                        <input type="text" value={npForm.nom} onChange={(e) => npSet('nom', e.target.value)}
+                          placeholder="ex. Al-Fayed"
+                          className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition focus:ring-2 ${npErrors.nom ? 'border-red-300 bg-red-50 focus:ring-red-200' : 'border-slate-200 bg-slate-50 focus:border-blue-500 focus:bg-white focus:ring-blue-500/20'}`}
+                        />
+                        {npErrors.nom && <p className="mt-1 text-[11px] font-semibold text-red-500">{npErrors.nom}</p>}
+                      </div>
+
+                      {/* Date naissance */}
+                      <div>
+                        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                          Date de naissance <span className="text-red-400">*</span>
+                        </label>
+                        <input type="date" value={npForm.date_naissance} onChange={(e) => npSet('date_naissance', e.target.value)}
+                          className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition focus:ring-2 ${npErrors.date_naissance ? 'border-red-300 bg-red-50 focus:ring-red-200' : 'border-slate-200 bg-slate-50 focus:border-blue-500 focus:bg-white focus:ring-blue-500/20'}`}
+                        />
+                        {npErrors.date_naissance && <p className="mt-1 text-[11px] font-semibold text-red-500">{npErrors.date_naissance}</p>}
+                      </div>
+
+                      {/* Sexe */}
+                      <div>
+                        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                          Sexe <span className="text-red-400">*</span>
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          {[{ v: 'M', l: 'Masculin' }, { v: 'F', l: 'Féminin' }].map(({ v, l }) => (
+                            <button key={v} type="button" onClick={() => npSet('sexe', v)}
+                              className={`rounded-xl border py-2.5 text-sm font-semibold transition ${npForm.sexe === v ? 'border-blue-500 bg-blue-600 text-white shadow-sm' : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-blue-300 hover:bg-blue-50'}`}>
+                              {l}
+                            </button>
+                          ))}
+                        </div>
+                        {npErrors.sexe && <p className="mt-1 text-[11px] font-semibold text-red-500">{npErrors.sexe}</p>}
+                      </div>
+
+                      {/* Pathologie */}
+                      <div className="col-span-2">
+                        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                          Pathologie <span className="text-red-400">*</span>
+                        </label>
+                        <div className="flex flex-wrap gap-2">
+                          {['Alzheimer', 'Épilepsie', 'Autre', 'Non défini'].map((p) => (
+                            <button key={p} type="button" onClick={() => npSet('pathologie', p)}
+                              className={`rounded-xl border px-3.5 py-2 text-xs font-bold transition ${npForm.pathologie === p ? 'border-blue-500 bg-blue-600 text-white shadow-sm' : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-blue-300 hover:bg-blue-50'}`}>
+                              {p}
+                            </button>
+                          ))}
+                        </div>
+                        {npErrors.pathologie && <p className="mt-1 text-[11px] font-semibold text-red-500">{npErrors.pathologie}</p>}
+                      </div>
+
+                      {/* Dossier auto */}
+                      <div className="col-span-2">
+                        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                          N° dossier (auto-généré)
+                        </label>
+                        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-mono text-slate-500">
+                          <Hash className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                          {npForm.dossier_number || <span className="italic text-slate-400">Génération en cours…</span>}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* MRI upload zone */}
+                    <div>
+                      <label className="mb-2 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                        Scan IRM / NIfTI <span className="font-normal normal-case text-slate-400">(optionnel)</span>
+                      </label>
+                      <div
+                        onDragOver={(e) => { e.preventDefault(); setNpDragging(true); }}
+                        onDragLeave={() => setNpDragging(false)}
+                        onDrop={npHandleFileDrop}
+                        onClick={() => npFileRef.current?.click()}
+                        className={`cursor-pointer rounded-2xl border-2 border-dashed p-6 text-center transition-all ${
+                          npDragging ? 'border-blue-400 bg-blue-50' :
+                          npFile ? 'border-emerald-400 bg-emerald-50' :
+                          'border-slate-200 bg-slate-50 hover:border-blue-300 hover:bg-blue-50/40'}`}>
+                        <input ref={npFileRef} type="file" accept=".nii,.nii.gz,.dcm" className="hidden" onChange={npHandleFileDrop} />
+                        {npFile ? (
+                          <div className="flex items-center justify-center gap-3">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100">
+                              <FileImage className="h-5 w-5 text-emerald-600" />
+                            </div>
+                            <div className="text-left">
+                              <p className="text-sm font-bold text-emerald-800">{npFile.name}</p>
+                              <p className="text-xs text-emerald-600">{(npFile.size / 1024 / 1024).toFixed(1)} MB · Prêt</p>
+                            </div>
+                            <button type="button" onClick={(e) => { e.stopPropagation(); setNpFile(null); }}
+                              className="ml-auto rounded-full p-1 text-emerald-500 hover:bg-emerald-100">
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-2">
+                            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-100">
+                              <CloudUpload className="h-6 w-6 text-blue-500" />
+                            </div>
+                            <p className="text-sm font-semibold text-slate-700">Glisser-déposer DICOM ou NIfTI</p>
+                            <p className="text-xs text-slate-400">ou cliquer pour parcourir · .nii .nii.gz .dcm</p>
+                          </div>
+                        )}
+                      </div>
+                      <button type="button"
+                        className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700">
+                        <Building2 className="h-4 w-4" />
+                        Importer depuis le PACS
+                      </button>
+                    </div>
+
+                    {/* Badges sécurité */}
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        { icon: ShieldCheck, label: 'HIPAA Compliant', cls: 'text-emerald-600 bg-emerald-50 border-emerald-200' },
+                        { icon: Zap,         label: 'GPU Accéléré',    cls: 'text-amber-600 bg-amber-50 border-amber-200' },
+                        { icon: ShieldCheck, label: 'Transfert chiffré', cls: 'text-sky-600 bg-sky-50 border-sky-200' },
+                      ].map(({ icon: Icon, label, cls }) => (
+                        <div key={label} className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold ${cls}`}>
+                          <Icon className="h-3.5 w-3.5" />{label}
+                        </div>
+                      ))}
+                    </div>
+
+                    {npApiError && (
+                      <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{npApiError}</div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── Footer ─────────────────────────────────────────────── */}
+                <div className="mt-4 -mx-6 -mb-6 px-6 py-4 bg-white border-t border-slate-100 flex items-center justify-between">
+                  <p className="text-sm text-slate-500">Étape <strong>1</strong> sur 3</p>
+                  <div className="flex items-center gap-2">
+                    <button type="button" onClick={() => navigate(-1)}
+                      className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
+                      Annuler
+                    </button>
+                    {patientSelectMode === 'existing' ? (
+                      <button type="button" disabled={!selectedPatient} onClick={() => setStep(2)}
+                        className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2 text-sm font-bold text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
+                        Confirmer le patient
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    ) : (
+                      <button type="button" onClick={npHandleSubmit} disabled={npSubmitting}
+                        className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2 text-sm font-bold text-white shadow-sm transition hover:from-blue-700 hover:to-indigo-700 disabled:opacity-60">
+                        {npSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+                        {npSubmitting ? 'Création…' : 'Créer et continuer'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
               </div>
             )}
 
             {step === 2 && (
               <div className="space-y-5">
-                <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div
-                      className="h-9 w-9 shrink-0 rounded-full text-white flex items-center justify-center font-semibold text-xs"
-                      style={{ backgroundColor: '#2563eb' }}
-                    >
-                      {getInitials(selectedPatient || {})}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-sm text-slate-900 truncate">
-                        Patient sélectionné : <span className="font-semibold">{getPatientName(selectedPatient || {})}</span>
-                      </p>
-                      <p className="text-xs text-blue-700">{slices.length} coupes IRM disponibles</p>
+
+                {/* ══════════════════════════════════════════════════════════
+                    EN-TÊTE ÉTAPE 2 — Redesign unifié
+                ══════════════════════════════════════════════════════════ */}
+                <div className="overflow-hidden rounded-2xl border border-slate-200 shadow-sm">
+
+                  {/* Bande patient — gradient identique à l'étape 1 */}
+                  <div className="relative bg-gradient-to-r from-[#0f1f4b] via-[#0e2d82] to-[#1a3a8f] px-5 py-4">
+                    <span className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/5 pointer-events-none" />
+                    <span className="absolute right-20 -bottom-4 h-20 w-20 rounded-full bg-white/5 pointer-events-none" />
+                    <div className="relative flex flex-wrap items-center justify-between gap-4">
+                      {/* Identité patient */}
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div
+                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white font-black text-sm shadow-md"
+                          style={{ backgroundColor: AVATAR_COLORS[0] }}
+                        >
+                          {getInitials(selectedPatient || {})}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-blue-200">Patient sélectionné</p>
+                          <p className="mt-0.5 truncate text-base font-black text-white">
+                            {getPatientName(selectedPatient || {})}
+                          </p>
+                          {selectedPatient?.dossier_number && (
+                            <p className="mt-0.5 text-[11px] font-mono text-blue-300">
+                              {selectedPatient.dossier_number}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      {/* Stats rapides */}
+                      <div className="flex items-center gap-3">
+                        <div className="rounded-xl bg-white/10 px-4 py-2 text-center">
+                          <p className="text-xl font-black text-white">{slices.length}</p>
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-blue-200">coupes</p>
+                        </div>
+                        {qualitySummary && (
+                          <div className="rounded-xl bg-emerald-500/20 px-4 py-2 text-center">
+                            <p className="text-xl font-black text-emerald-300">{qualitySummary.recommended}</p>
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-200">recommandées</p>
+                          </div>
+                        )}
+                        {qualitySummary && qualitySummary.auto_excluded > 0 && (
+                          <div className="rounded-xl bg-amber-400/20 px-4 py-2 text-center">
+                            <p className="text-xl font-black text-amber-300">{qualitySummary.auto_excluded}</p>
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-amber-200">exclues</p>
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => { setStep(1); setSelectedSlices([]); }}
+                          className="flex items-center gap-1.5 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs font-semibold text-white/80 transition hover:bg-white/20 hover:text-white"
+                        >
+                          <ChevronLeft className="h-3.5 w-3.5" />
+                          Changer
+                        </button>
+                      </div>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setStep(1);
-                      setSelectedSlices([]);
-                    }}
-                    className="text-sm text-blue-700 hover:text-blue-800"
-                  >
-                    ← Changer de patient
-                  </button>
-                </div>
 
-                <div className="mb-1 flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedSlices(slices.map((slice) => slice.id).filter((id) => id != null))}
-                    disabled={slicesLoading || slices.length === 0}
-                    className="rounded-lg border border-primary px-4 py-2 text-sm font-medium text-primary transition hover:bg-primary-light disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Tout sélectionner
-                  </button>
-                  <p className="text-sm text-slate-600 px-1">{selectedSlices.length} coupes sélectionnées</p>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedSlices([])}
-                    disabled={slicesLoading || selectedSlices.length === 0}
-                    className="rounded-lg border border-surface-border px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-blue-50/50 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Tout désélectionner
-                  </button>
+                  {/* Panneau preprocessing qualité */}
+                  {qualitySummary && qualitySummary.auto_excluded > 0 && (
+                    <div className="border-t border-slate-100 bg-amber-50/60 px-5 py-4">
+                      <div className="flex flex-wrap items-center justify-between gap-4">
+                        {/* Détail catégories */}
+                        <div className="flex flex-wrap items-center gap-5">
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-amber-100">
+                              <svg className="h-3.5 w-3.5 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                              </svg>
+                            </span>
+                            <div>
+                              <p className="text-xs font-black text-amber-800">Preprocessing automatique</p>
+                              <p className="text-[11px] text-amber-600">
+                                {qualitySummary.empty > 0 && <span className="mr-2"><strong>{qualitySummary.empty}</strong> noires</span>}
+                                {qualitySummary.low_content > 0 && <span><strong>{qualitySummary.low_content}</strong> à faible contenu</span>}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-100">
+                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                            </span>
+                            <div>
+                              <p className="text-xs font-black text-emerald-800">{qualitySummary.recommended} pré-sélectionnées</p>
+                              <p className="text-[11px] text-emerald-600">Coupes avec tissu cérébral exploitable</p>
+                            </div>
+                          </div>
+                        </div>
+                        {/* Actions rapides dans la bannière */}
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const rec = slices.filter((s) => sliceQuality[String(s.id)]?.recommended !== false).map((s) => s.id).filter(Boolean);
+                              setSelectedSlices(rec);
+                            }}
+                            className="rounded-xl border border-amber-300 bg-white px-3.5 py-2 text-xs font-bold text-amber-700 shadow-sm transition hover:bg-amber-50"
+                          >
+                            Recommandées ({qualitySummary.recommended})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedSlices(slices.map((s) => s.id).filter(Boolean))}
+                            className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-500 transition hover:bg-slate-50"
+                          >
+                            Tout inclure ({qualitySummary.total})
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Barre de sélection active */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-white px-5 py-3">
+                    <div className="flex items-center gap-2">
+                      {/* Compteur principal */}
+                      <div className="flex items-center gap-2 rounded-xl bg-blue-50 border border-blue-100 px-3.5 py-2">
+                        <CheckCircle2 className="h-4 w-4 text-blue-600" />
+                        <span className="text-sm font-black text-blue-800">{selectedSlices.length}</span>
+                        <span className="text-xs font-medium text-blue-500">/ {slices.length} sélectionnées</span>
+                      </div>
+                      {/* Barre de progression visuelle */}
+                      <div className="hidden sm:block w-32 h-2 rounded-full bg-slate-100 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-300"
+                          style={{ width: `${slices.length > 0 ? Math.round((selectedSlices.length / slices.length) * 100) : 0}%` }}
+                        />
+                      </div>
+                      <span className="hidden sm:block text-xs font-medium text-slate-400">
+                        {slices.length > 0 ? Math.round((selectedSlices.length / slices.length) * 100) : 0}%
+                      </span>
+                    </div>
+                    {/* Boutons sélection */}
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const hasQuality = Object.keys(sliceQuality).length > 0;
+                          if (hasQuality) {
+                            const rec = slices.filter((s) => sliceQuality[String(s.id)]?.recommended !== false).map((s) => s.id).filter(Boolean);
+                            setSelectedSlices(rec);
+                          } else {
+                            setSelectedSlices(slices.map((s) => s.id).filter(Boolean));
+                          }
+                        }}
+                        disabled={slicesLoading || slices.length === 0}
+                        className="rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-2 text-xs font-bold text-blue-700 transition hover:bg-blue-100 disabled:opacity-50"
+                      >
+                        {Object.keys(sliceQuality).length > 0 ? '✓ Recommandées' : 'Tout sélectionner'}
+                      </button>
+                      {Object.keys(sliceQuality).length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedSlices(slices.map((s) => s.id).filter(Boolean))}
+                          disabled={slicesLoading}
+                          className="rounded-xl border border-slate-200 px-3.5 py-2 text-xs font-bold text-slate-500 transition hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          Tout inclure
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedSlices([])}
+                        disabled={slicesLoading || selectedSlices.length === 0}
+                        className="rounded-xl border border-slate-200 px-3.5 py-2 text-xs font-bold text-slate-400 transition hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        Désélectionner
+                      </button>
+                    </div>
+                  </div>
                 </div>
+                {/* ══ Fin en-tête ═══════════════════════════════════════════ */}
 
                 {!slicesLoading && !slicesError && slices.length > 0 && (
                   <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3">
@@ -2584,6 +3011,12 @@ export default function NouvelleSegmentation() {
                       const coupeXY = formatCoupeXY(rankInSeries, slices.length);
                       const filename = getSliceName(slice, globalSliceIndex, slices.length);
 
+                      // Quality data for this slice
+                      const q = sliceQuality[String(sliceId)] || null;
+                      const isEmpty     = q?.is_empty === true;
+                      const isLowContent = !isEmpty && q?.is_low_content === true;
+                      const isExcluded  = isEmpty || isLowContent;
+
                       return (
                         <button
                           key={sliceId || `slice-${index}`}
@@ -2592,11 +3025,29 @@ export default function NouvelleSegmentation() {
                             toggleSlice(sliceId);
                             setWorkflowSliceRank(globalSliceIndex + 1);
                           }}
-                          className={`relative flex flex-col overflow-hidden rounded-lg border border-surface-border bg-white text-left cursor-pointer transition-colors ${
-                            isSelected ? 'border-[1.5px] border-[#2563eb]' : 'hover:border-blue-200'
+                          className={`relative flex flex-col overflow-hidden rounded-lg border text-left cursor-pointer transition-colors ${
+                            isSelected
+                              ? 'border-[1.5px] border-[#2563eb] bg-white'
+                              : isExcluded
+                                ? 'border-slate-200 bg-slate-50/60 opacity-60 hover:opacity-90 hover:border-slate-300'
+                                : 'border-surface-border bg-white hover:border-blue-200'
                           }`}
                         >
                           {isSelected && <div className="absolute inset-x-0 top-0 z-[1] h-8 bg-[#2563eb]/10" />}
+
+                          {/* Quality badge overlay */}
+                          {isEmpty && (
+                            <div className="absolute left-2 top-2 z-20 flex items-center gap-1 rounded-full bg-slate-800/80 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-200 backdrop-blur-sm">
+                              <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+                              Vide
+                            </div>
+                          )}
+                          {isLowContent && (
+                            <div className="absolute left-2 top-2 z-20 flex items-center gap-1 rounded-full bg-amber-800/70 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-100 backdrop-blur-sm">
+                              <span className="h-1.5 w-1.5 rounded-full bg-amber-300" />
+                              Faible
+                            </div>
+                          )}
                           <span
                             className={`absolute right-2 top-2 z-20 h-5 w-5 rounded-full border flex items-center justify-center shadow-sm ${
                               isSelected ? 'border-[#2563eb] bg-[#2563eb]' : 'border-gray-300 bg-white'

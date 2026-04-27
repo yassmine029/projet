@@ -728,6 +728,19 @@ def _resample_volume_to_shape(vol: np.ndarray, target_shape) -> np.ndarray:
     return np.asarray(out, dtype=np.float32)
 
 
+def _is_likely_pet_volume(vol: np.ndarray) -> bool:
+    """Heuristic: PET images have very sparse foreground (metabolic hot spots).
+    MRI fills >40% of voxels above 10% of max; PET typically fills <20%."""
+    arr = np.asarray(vol, dtype=np.float32)
+    if arr.size == 0:
+        return False
+    vmax = arr.max()
+    if vmax <= 0:
+        return False
+    sparsity = float(np.count_nonzero(arr > vmax * 0.10)) / arr.size
+    return sparsity < 0.20
+
+
 def _resample_patient_to_atlas_grid(vol: np.ndarray, suggested_z: int):
     """Map patient volume to the atlas grid and remap suggested axial index."""
     _ensure_atlas()
@@ -1637,14 +1650,28 @@ def _load_nifti_from_path(nifti_path: str, prepared_output_path: str = None) -> 
         data = resampled_img.get_fdata(dtype=np.float32)
         resample_mode = 'affine-mni'
         if _is_suspicious_spatial_position(data):
-            # Some NIfTI files carry inconsistent affine/origin; keep a robust centered fallback.
-            data = _resample_volume_to_shape(np.asarray(src_data, dtype=np.float32), atlas_shape)
+            # Affine resampling placed brain outside atlas FOV.
+            # For PET: do NOT center by intensity (hot spots ≠ anatomical center).
+            # Use shape-only resample to preserve relative spatial ordering.
+            shape_resampled = _resample_volume_to_shape(np.asarray(src_data, dtype=np.float32), atlas_shape)
+            if _is_likely_pet_volume(shape_resampled):
+                print("[LOAD_NIFTI] PET detected in suspicious fallback — skipping foreground centering")
+                data = shape_resampled
+                resample_mode = 'shape-only-pet'
+            else:
+                data = shape_resampled
+                data = _center_volume_by_foreground(data)
+                resample_mode = 'shape-center-fallback'
+    except Exception:
+        shape_resampled = _resample_volume_to_shape(np.asarray(src_data, dtype=np.float32), atlas_shape)
+        if _is_likely_pet_volume(shape_resampled):
+            print("[LOAD_NIFTI] PET detected in exception fallback — skipping foreground centering")
+            data = shape_resampled
+            resample_mode = 'shape-only-pet'
+        else:
+            data = shape_resampled
             data = _center_volume_by_foreground(data)
             resample_mode = 'shape-center-fallback'
-    except Exception:
-        data = _resample_volume_to_shape(np.asarray(src_data, dtype=np.float32), atlas_shape)
-        data = _center_volume_by_foreground(data)
-        resample_mode = 'shape-center-fallback'
 
     p1, p99 = np.percentile(data, [1, 99])
     if p99 > p1:
@@ -2653,8 +2680,22 @@ def auto_align_volume(request):
                     patient_vol_for_mine = np.asarray(prepared_data, dtype=np.float32)
                     patient_shape = tuple(int(v) for v in patient_vol_for_mine.shape)
                     patient_prepared_mode = 'prepared-nifti'
+
             except Exception as e:
                 print(f"[AUTO_ALIGN] Cannot read prepared nifti, fallback to cache: {e}")
+
+        # Boost n_iters for PET: MI landscape is flatter for multimodal pairs and
+        # the starting offset after preprocessing may be larger than for MRI.
+        if _is_likely_pet_volume(patient_vol_for_mine) and not use_hybrid:
+            n_iters_boosted = int(np.clip(max(n_iters, 150), 150, 300))
+            if n_iters_boosted != n_iters:
+                print(f"[AUTO_ALIGN] PET detected — boosting MINE iters {n_iters} → {n_iters_boosted}")
+                n_iters = n_iters_boosted
+        elif _is_likely_pet_volume(patient_vol_for_mine) and use_hybrid:
+            n_iters_boosted = int(np.clip(max(n_iters, 150), 150, 250))
+            if n_iters_boosted != n_iters:
+                print(f"[AUTO_ALIGN] PET detected — boosting Hybrid iters {n_iters} → {n_iters_boosted}")
+                n_iters = n_iters_boosted
 
         if patient_shape != atlas_shape:
             print(f"[AUTO_ALIGN] Patient shape {patient_shape} != atlas {atlas_shape}")
@@ -2685,20 +2726,55 @@ def auto_align_volume(request):
                 print(f"[AUTO_ALIGN] Affine resampling unavailable/failed ({e}), fallback to shape+center")
                 source_vol = np.asarray(entry.get('data_original', patient_vol), dtype=np.float32)
                 patient_vol_for_mine = _resample_volume_to_shape(source_vol, atlas_shape)
-                patient_vol_for_mine = _center_volume_by_foreground(patient_vol_for_mine)
-            
+                # PET volumes must NOT be centered by foreground intensity: their hot spots
+                # don't represent the anatomical brain boundary and centering would shift them.
+                if not _is_likely_pet_volume(patient_vol_for_mine):
+                    patient_vol_for_mine = _center_volume_by_foreground(patient_vol_for_mine)
+                else:
+                    print("[AUTO_ALIGN] PET volume detected — skipping foreground centering in fallback")
+
             # Robustly normalize to match atlas intensity range
             patient_vol_for_mine = _robust_normalize_01(patient_vol_for_mine)
 
         print(f"[AUTO_ALIGN] moving source mode: {patient_prepared_mode}")
-        
+
+        # For PET: apply coarse z-axis pre-alignment so MINE starts near the solution.
+        # Without this, a z-offset of 50+ slices cannot be corrected in ~150 iterations.
+        if _is_likely_pet_volume(patient_vol_for_mine) and patient_vol_for_mine.ndim == 3:
+            # Normalize only if not already done above (shape-mismatch branch already normalizes).
+            if patient_shape == atlas_shape:
+                patient_vol_for_mine = _robust_normalize_01(patient_vol_for_mine)
+            atlas_norm = _robust_normalize_01(np.asarray(atlas_vol, dtype=np.float32))
+            # Find z-centroid of foreground for patient and atlas.
+            thr = 0.10
+            p_mask = patient_vol_for_mine > thr
+            a_mask = atlas_norm > thr
+            if np.any(p_mask) and np.any(a_mask):
+                p_zs = np.where(np.any(p_mask, axis=(0, 1)))[0]
+                a_zs = np.where(np.any(a_mask, axis=(0, 1)))[0]
+                if p_zs.size > 0 and a_zs.size > 0:
+                    p_zcenter = float(p_zs.mean())
+                    a_zcenter = float(a_zs.mean())
+                    dz = int(round(a_zcenter - p_zcenter))
+                    max_allowed_dz = patient_vol_for_mine.shape[2] // 3
+                    dz = int(np.clip(dz, -max_allowed_dz, max_allowed_dz))
+                    if abs(dz) >= 3:
+                        print(f"[AUTO_ALIGN] PET z-pre-alignment: shift dz={dz} slices "
+                              f"(patient z-center={p_zcenter:.1f}, atlas z-center={a_zcenter:.1f})")
+                        patient_vol_for_mine = np.roll(patient_vol_for_mine, dz, axis=2)
+                        # Zero-fill the exposed edge to avoid wrap artifacts.
+                        if dz > 0:
+                            patient_vol_for_mine[:, :, :dz] = 0.0
+                        else:
+                            patient_vol_for_mine[:, :, dz:] = 0.0
+
         # Save with guaranteed atlas affine coherence
         _ensure_atlas()
         _emit_registration_progress(job_id, 10, 'preparation', 'Preparation des volumes NIfTI...')
         print(f"[AUTO_ALIGN] Saving atlas NIfTI: {atlas_nifti_path}")
-        _save_volume_nifti(atlas_vol, atlas_nifti_path, 
+        _save_volume_nifti(atlas_vol, atlas_nifti_path,
                           affine=VOLUMES_CACHE['atlas'].get('affine'))
-        
+
         print(f"[AUTO_ALIGN] Saving patient NIfTI: {moving_prepared_nifti_path}")
         _save_volume_nifti(patient_vol_for_mine, moving_prepared_nifti_path,
                           affine=VOLUMES_CACHE['atlas'].get('affine'))
@@ -2755,8 +2831,14 @@ def auto_align_volume(request):
     else:
         print(f"[OK] Warped volume shape matches atlas")
 
+    # Detect PET modality: intensity-based post-processing (centering, scale correction)
+    # is meaningless for PET because hot spots ≠ anatomical brain boundary.
+    warped_is_pet = _is_likely_pet_volume(np.asarray(warped_vol, dtype=np.float32))
+    if warped_is_pet:
+        print("[AUTO_ALIGN] PET volume detected — skipping intensity-based post-registration corrections")
+
     strict_scale = 1.0
-    if strict_atlas_grid:
+    if strict_atlas_grid and not warped_is_pet:
         warped_vol, strict_scale = _force_extent_alignment_to_reference(
             np.asarray(warped_vol, dtype=np.float32),
             np.asarray(atlas_vol, dtype=np.float32),
@@ -2765,16 +2847,21 @@ def auto_align_volume(request):
         )
 
     # Final bounded similarity stabilization to remove residual scale/position offsets.
-    warped_vol, stabilization = _stabilize_similarity_to_reference(
-        np.asarray(warped_vol, dtype=np.float32),
-        np.asarray(atlas_vol, dtype=np.float32),
-        threshold=0.10,
-        max_shift_ratio=0.15 if strict_atlas_grid else 0.08,
-        max_scale_delta=0.30 if strict_atlas_grid else 0.14,
-        min_scale_trigger=0.03 if strict_atlas_grid else 0.08,
-    )
+    # For PET: skip entirely — comparing PET intensities to MRI atlas is semantically wrong
+    # and introduces a systematic spatial bias (PET hot spots ≠ MRI foreground).
+    if warped_is_pet:
+        stabilization = {'scale': 1.0, 'shift': (0, 0, 0)}
+    else:
+        warped_vol, stabilization = _stabilize_similarity_to_reference(
+            np.asarray(warped_vol, dtype=np.float32),
+            np.asarray(atlas_vol, dtype=np.float32),
+            threshold=0.10,
+            max_shift_ratio=0.15 if strict_atlas_grid else 0.08,
+            max_scale_delta=0.30 if strict_atlas_grid else 0.14,
+            min_scale_trigger=0.03 if strict_atlas_grid else 0.08,
+        )
     print(
-        f"[AUTO_ALIGN] strict_atlas_grid={strict_atlas_grid} | "
+        f"[AUTO_ALIGN] strict_atlas_grid={strict_atlas_grid} | pet={warped_is_pet} | "
         f"strict_scale={strict_scale:.4f} | "
         f"similarity_scale={stabilization.get('scale', 1.0):.4f}, "
         f"shift={stabilization.get('shift', (0, 0, 0))}"

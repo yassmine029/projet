@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ArrowLeftRight } from 'lucide-react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 async function fetchModelBuffer(url) {
   if (!url) return null;
@@ -33,6 +35,49 @@ function hexToColor(hex) {
 }
 
 /**
+ * Fusionne les sous-maillages d'un OBJ (ex. hippocampe G/D) en un seul mesh pour la scène.
+ */
+function objGroupToSingleMesh(group, colorHex) {
+  const geometries = [];
+  group.updateMatrixWorld(true);
+  group.traverse((child) => {
+    if (child.isMesh && child.geometry) {
+      const g = child.geometry.clone();
+      g.applyMatrix4(child.matrixWorld);
+      geometries.push(g);
+    }
+  });
+  if (geometries.length === 0) return null;
+
+  let geom;
+  if (geometries.length === 1) {
+    geom = geometries[0];
+  } else {
+    try {
+      geom = mergeGeometries(geometries, false);
+    } catch {
+      geom = null;
+    }
+    geometries.forEach((g) => {
+      if (g !== geom) g.dispose();
+    });
+  }
+  if (!geom) return null;
+
+  const mat = new THREE.MeshPhysicalMaterial({
+    color: hexToColor(colorHex),
+    metalness: 0.1,
+    roughness: 0.42,
+    clearcoat: 0.22,
+    clearcoatRoughness: 0.4,
+    side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(geom, mat);
+  mesh.userData.isHippocampusMesh = true;
+  return mesh;
+}
+
+/**
  * Viewer 3D style viewport (Blender / outil pro) : fond sombre, grille, axes, PBR.
  * @param {string|null} brainObjUrl — si défini, 2e maillage translucide (contexte cerveau).
  */
@@ -49,12 +94,15 @@ export default function ModelViewerBlender({
   const stateRef = useRef(null);
   const [error, setError] = useState('');
   const [wireframe, setWireframe] = useState(false);
-  const [autoRotate, setAutoRotate] = useState(variant === 'mini');
+  /** Pas de 90° sur place (axe X) : incline le volume sans le déplacer — bas → droite → haut → gauche selon le maillage. */
+  const [modelQuarterTurns, setModelQuarterTurns] = useState(0);
   const [color, setColor] = useState(meshColor);
   const [opacity, setOpacity] = useState(brainOpacity);
   const [showGrid, setShowGrid] = useState(true);
   const [showAxes, setShowAxes] = useState(true);
-  const [rotateSpeed, setRotateSpeed] = useState(variant === 'mini' ? 1.8 : 1.2);
+  /** Enveloppe cerveau (contexte IRM) : affichage, teinte et opacité. */
+  const [showBrain, setShowBrain] = useState(true);
+  const [brainColor, setBrainColor] = useState('#8a96a8');
 
   useEffect(() => {
     setColor(meshColor);
@@ -99,6 +147,7 @@ export default function ModelViewerBlender({
     controls.minDistance = 0.35;
     controls.maxDistance = 24;
     controls.target.set(0, 0, 0);
+    controls.autoRotate = false;
 
     const hemi = new THREE.HemisphereLight(0xf1f5f9, 0x94a3b8, 0.62);
     scene.add(hemi);
@@ -141,8 +190,9 @@ export default function ModelViewerBlender({
     let raf = 0;
     const tick = () => {
       if (!stateRef.current) return;
-      stateRef.current.controls.update();
-      stateRef.current.renderer.render(stateRef.current.scene, stateRef.current.camera);
+      const st = stateRef.current;
+      st.controls.update();
+      st.renderer.render(st.scene, st.camera);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -165,6 +215,7 @@ export default function ModelViewerBlender({
 
     (async () => {
       try {
+        s.brainObject = null;
         const hasContext = Boolean(brainObjUrl);
         let objBuf = null;
         let stlBuf = null;
@@ -178,7 +229,30 @@ export default function ModelViewerBlender({
         let mainObject;
         if (objBuf) {
           const text = new TextDecoder('utf-8').decode(objBuf);
-          mainObject = new OBJLoader().parse(text);
+          const loaded = new OBJLoader().parse(text);
+          const merged = objGroupToSingleMesh(loaded, color);
+          if (merged) {
+            disposeSubtree(loaded);
+            mainObject = merged;
+          } else {
+            mainObject = loaded;
+            mainObject.traverse((child) => {
+              if (child.isMesh) {
+                child.userData.isHippocampusMesh = true;
+                const prev = child.material;
+                child.material = new THREE.MeshPhysicalMaterial({
+                  color: child.material?.color || hexToColor(color),
+                  metalness: 0.1,
+                  roughness: 0.42,
+                  clearcoat: 0.22,
+                  clearcoatRoughness: 0.4,
+                  side: THREE.DoubleSide,
+                });
+                if (prev && prev.map) child.material.map = prev.map;
+                if (prev && prev.dispose) prev.dispose();
+              }
+            });
+          }
         } else {
           const geom = new STLLoader().parse(stlBuf);
           if (geom && !geom.attributes.normal) geom.computeVertexNormals();
@@ -191,24 +265,7 @@ export default function ModelViewerBlender({
             side: THREE.DoubleSide,
           });
           mainObject = new THREE.Mesh(geom, mat);
-        }
-
-        if (mainObject && mainObject.traverse) {
-          mainObject.traverse((child) => {
-            if (child.isMesh) {
-              const prev = child.material;
-              child.material = new THREE.MeshPhysicalMaterial({
-                color: child.material?.color || hexToColor(color),
-                metalness: 0.1,
-                roughness: 0.42,
-                clearcoat: 0.22,
-                clearcoatRoughness: 0.4,
-                side: THREE.DoubleSide,
-              });
-              if (prev && prev.map) child.material.map = prev.map;
-              if (prev && prev.dispose) prev.dispose();
-            }
-          });
+          mainObject.userData.isHippocampusMesh = true;
         }
 
         if (hasContext) {
@@ -221,9 +278,10 @@ export default function ModelViewerBlender({
           const brainObj = new OBJLoader().parse(btext);
           brainObj.traverse((child) => {
             if (child.isMesh) {
+              child.userData.isBrainMesh = true;
               const prev = child.material;
               child.material = new THREE.MeshPhysicalMaterial({
-                color: 0x8a96a8,
+                color: hexToColor(brainColor),
                 metalness: 0.06,
                 roughness: 0.32,
                 transparent: true,
@@ -238,6 +296,8 @@ export default function ModelViewerBlender({
             }
           });
           brainObj.renderOrder = 0;
+          brainObj.visible = showBrain;
+          s.brainObject = brainObj;
           s.root.add(brainObj);
         }
 
@@ -317,24 +377,51 @@ export default function ModelViewerBlender({
     if (!st?.root) return;
     st.root.traverse((child) => {
       if (!child.isMesh || !child.material) return;
+      if (child.userData.isBrainMesh) return;
       const m = child.material;
-      if (m.transmission !== undefined && m.transmission > 0.1) {
-        m.opacity = opacity;
-        m.needsUpdate = true;
-        return;
-      }
       if (m.color) m.color.copy(hexToColor(color));
       m.wireframe = wireframe;
       m.needsUpdate = true;
     });
-  }, [color, wireframe, opacity]);
+  }, [color, wireframe, objUrl, stlUrl, brainObjUrl, buildScene]);
 
   useEffect(() => {
     const st = stateRef.current;
-    if (!st?.controls) return;
-    st.controls.autoRotate = autoRotate;
-    st.controls.autoRotateSpeed = rotateSpeed;
-  }, [autoRotate, rotateSpeed]);
+    if (!st?.brainObject) return;
+    st.brainObject.traverse((child) => {
+      if (!child.isMesh || !child.material) return;
+      const m = child.material;
+      if (m.transmission !== undefined && m.transmission > 0.1) {
+        m.opacity = opacity;
+        m.needsUpdate = true;
+      }
+    });
+  }, [opacity, objUrl, stlUrl, brainObjUrl, buildScene]);
+
+  useEffect(() => {
+    const st = stateRef.current;
+    if (!st?.brainObject) return;
+    st.brainObject.traverse((child) => {
+      if (!child.isMesh || !child.material) return;
+      const m = child.material;
+      if (m.color) m.color.copy(hexToColor(brainColor));
+      m.needsUpdate = true;
+    });
+  }, [brainColor, objUrl, stlUrl, brainObjUrl, buildScene]);
+
+  useEffect(() => {
+    const st = stateRef.current;
+    if (st?.brainObject) st.brainObject.visible = showBrain;
+  }, [showBrain, objUrl, stlUrl, brainObjUrl, buildScene]);
+
+  useEffect(() => {
+    const st = stateRef.current;
+    if (!st?.root) return;
+    const x = THREE.MathUtils.degToRad(modelQuarterTurns * 90);
+    st.root.rotation.set(x, 0, 0);
+  }, [modelQuarterTurns, objUrl, stlUrl, brainObjUrl, buildScene]);
+
+  const stepModelRotation90 = () => setModelQuarterTurns((q) => (q + 1) % 4);
 
   const resetCamera = () => {
     const st = stateRef.current;
@@ -396,7 +483,15 @@ export default function ModelViewerBlender({
         <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-slate-300">Outils</p>
       ) : null}
       {navBtn(wireframe, wireframe ? 'Fil de fer' : 'Surface', () => setWireframe((p) => !p), variant === 'mini')}
-      {navBtn(autoRotate, autoRotate ? 'Rotation auto' : 'Vue fixe', () => setAutoRotate((p) => !p), variant === 'mini')}
+      <button
+        type="button"
+        onClick={stepModelRotation90}
+        title="Pivoter le modèle de 90° sur place (même position, orientation seule)"
+        className={`flex w-full items-center justify-center gap-1.5 rounded-md py-2 text-[10px] font-bold uppercase tracking-wide transition-colors ${variant === 'mini' ? 'px-1.5' : 'px-2.5'} bg-slate-800/90 text-slate-200 hover:bg-slate-600`}
+      >
+        <ArrowLeftRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        {variant === 'mini' ? '90°' : 'Rotation'}
+      </button>
       {variant === 'full' ? (
         <>
           <div className="h-px bg-slate-500/40" />
@@ -404,20 +499,7 @@ export default function ModelViewerBlender({
             {navBtn(showGrid, showGrid ? 'Grille on' : 'Grille off', () => setShowGrid((p) => !p), true)}
             {navBtn(showAxes, showAxes ? 'Axes on' : 'Axes off', () => setShowAxes((p) => !p), true)}
           </div>
-          <div className="space-y-1">
-            <span className="text-[10px] font-semibold text-slate-300">Vitesse rotation</span>
-            <input
-              type="range"
-              min={0.3}
-              max={3.5}
-              step={0.1}
-              value={rotateSpeed}
-              onChange={(e) => setRotateSpeed(Number(e.target.value))}
-              className="w-full accent-slate-400"
-              disabled={!autoRotate}
-            />
-            <span className="text-[9px] text-slate-400">{rotateSpeed.toFixed(1)}×</span>
-          </div>
+          <div className="h-px bg-slate-500/40" />
           <div className="space-y-1">
             <span className="text-[10px] font-semibold text-slate-300">Vues rapides</span>
             <div className="grid grid-cols-3 gap-1">
@@ -442,8 +524,9 @@ export default function ModelViewerBlender({
             </div>
           </div>
           <div className="h-px bg-slate-500/40" />
+          <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Hippocampe</p>
           <div className="space-y-1">
-            <span className="text-[10px] font-semibold text-slate-300">Couleur hippocampe</span>
+            <span className="text-[10px] font-semibold text-slate-300">Couleur du maillage</span>
             <input
               type="color"
               value={color}
@@ -453,19 +536,46 @@ export default function ModelViewerBlender({
             />
           </div>
           {brainObjUrl ? (
-            <div className="space-y-1">
-              <span className="text-[10px] font-semibold text-slate-300">Opacité cerveau</span>
-              <input
-                type="range"
-                min={0.05}
-                max={0.55}
-                step={0.02}
-                value={opacity}
-                onChange={(e) => setOpacity(Number(e.target.value))}
-                className="w-full accent-slate-400"
-              />
-              <span className="text-[9px] text-slate-400">{Math.round(opacity * 100)} %</span>
-            </div>
+            <>
+              <div className="h-px bg-slate-500/40" />
+              <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Cerveau (contexte)</p>
+              <label className="flex cursor-pointer items-start gap-2 rounded-md border border-slate-600/80 bg-slate-800/90 px-2.5 py-2 text-[10px] font-semibold leading-snug text-slate-100 hover:bg-slate-600/80">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded border-slate-500"
+                  checked={showBrain}
+                  onChange={(e) => setShowBrain(e.target.checked)}
+                />
+                Afficher l&apos;enveloppe cerveau (IRM)
+              </label>
+              {showBrain ? (
+                <div className="space-y-2">
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-semibold text-slate-300">Couleur du cerveau</span>
+                    <input
+                      type="color"
+                      value={brainColor}
+                      onChange={(e) => setBrainColor(e.target.value)}
+                      className="h-9 w-full cursor-pointer rounded border border-slate-500 bg-slate-800"
+                      title="Teinte du volume contexte"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-semibold text-slate-300">Opacité du cerveau</span>
+                    <input
+                      type="range"
+                      min={0.02}
+                      max={0.75}
+                      step={0.02}
+                      value={opacity}
+                      onChange={(e) => setOpacity(Number(e.target.value))}
+                      className="w-full accent-slate-400"
+                    />
+                    <span className="text-[9px] text-slate-400">{Math.round(opacity * 100)} %</span>
+                  </div>
+                </div>
+              ) : null}
+            </>
           ) : null}
           <div className="mt-auto h-px bg-slate-500/40" />
           {navBtn(false, 'Reset caméra', resetCamera)}

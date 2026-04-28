@@ -469,99 +469,114 @@ export default function ModelViewerBlender({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-md py-2 text-[10px] font-bold uppercase tracking-wide transition-colors ${narrow ? 'px-1.5' : 'px-2.5'} w-full text-left ${active ? 'bg-white text-slate-900' : 'bg-slate-800/90 text-slate-200 hover:bg-slate-600'}`}
+      className={`rounded-lg py-2 text-[10px] font-bold uppercase tracking-wide transition-all ${narrow ? 'px-1.5' : 'px-3'} w-full text-center ${
+        active
+          ? 'bg-blue-500 text-white shadow-md shadow-blue-900/40'
+          : 'bg-slate-800 text-slate-300 hover:bg-slate-600 hover:text-white'
+      }`}
     >
       {label}
     </button>
   );
 
+  const SectionLabel = ({ children }) => (
+    <p className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-400">{children}</p>
+  );
+
+  const Divider = () => <div className="h-px bg-slate-600/50" />;
+
   const toolbarAside = (
     <aside
-      className={`flex min-h-0 shrink-0 flex-col border-slate-500/50 bg-slate-700/95 ${variant === 'mini' ? 'w-[5.25rem] border-l px-2 py-2 gap-2' : 'w-52 border-l px-3 py-3 gap-3'}`}
+      className={`flex min-h-0 shrink-0 flex-col border-slate-600/50 bg-gradient-to-b from-slate-800 to-slate-900 ${
+        variant === 'mini' ? 'w-[5.25rem] border-l px-2 py-2 gap-2' : 'w-52 border-l px-3 py-4 gap-3'
+      }`}
     >
       {variant === 'full' ? (
-        <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-slate-300">Outils</p>
-      ) : null}
-      {navBtn(wireframe, wireframe ? 'Fil de fer' : 'Surface', () => setWireframe((p) => !p), variant === 'mini')}
-      <button
-        type="button"
-        onClick={stepModelRotation90}
-        title="Pivoter le modèle de 90° sur place (même position, orientation seule)"
-        className={`flex w-full items-center justify-center gap-1.5 rounded-md py-2 text-[10px] font-bold uppercase tracking-wide transition-colors ${variant === 'mini' ? 'px-1.5' : 'px-2.5'} bg-slate-800/90 text-slate-200 hover:bg-slate-600`}
-      >
-        <ArrowLeftRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
-        {variant === 'mini' ? '90°' : 'Rotation'}
-      </button>
-      {variant === 'full' ? (
         <>
-          <div className="h-px bg-slate-500/40" />
-          <div className="grid grid-cols-2 gap-1">
-            {navBtn(showGrid, showGrid ? 'Grille on' : 'Grille off', () => setShowGrid((p) => !p), true)}
-            {navBtn(showAxes, showAxes ? 'Axes on' : 'Axes off', () => setShowAxes((p) => !p), true)}
+          <SectionLabel>Outils</SectionLabel>
+          {navBtn(wireframe, wireframe ? 'Fil de fer' : 'Surface', () => setWireframe((p) => !p))}
+          <button
+            type="button"
+            onClick={stepModelRotation90}
+            title="Pivoter le modèle de 90°"
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-300 transition-all hover:bg-slate-600 hover:text-white"
+          >
+            <ArrowLeftRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            Rotation 90°
+          </button>
+
+          <Divider />
+          <SectionLabel>Affichage</SectionLabel>
+          <div className="grid grid-cols-2 gap-1.5">
+            {navBtn(showGrid, showGrid ? 'Grille ●' : 'Grille ○', () => setShowGrid((p) => !p), true)}
+            {navBtn(showAxes, showAxes ? 'Axes ●' : 'Axes ○', () => setShowAxes((p) => !p), true)}
           </div>
-          <div className="h-px bg-slate-500/40" />
-          <div className="space-y-1">
-            <span className="text-[10px] font-semibold text-slate-300">Vues rapides</span>
-            <div className="grid grid-cols-3 gap-1">
-              <button type="button" onClick={() => setCameraPreset('front')} className="rounded bg-slate-800/90 py-1.5 text-[9px] font-bold uppercase text-slate-200 hover:bg-slate-600">
-                Face
+
+          <Divider />
+          <SectionLabel>Vues rapides</SectionLabel>
+          <div className="grid grid-cols-3 gap-1">
+            {[
+              { label: 'Face',    preset: 'front' },
+              { label: 'Arrière', preset: 'back' },
+              { label: 'Haut',    preset: 'top' },
+              { label: 'Bas',     preset: 'bottom' },
+              { label: 'Gauche',  preset: 'left' },
+              { label: 'Droite',  preset: 'right' },
+            ].map(({ label, preset }) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => setCameraPreset(preset)}
+                className="rounded-lg bg-slate-800 py-1.5 text-[9px] font-bold uppercase tracking-wide text-slate-300 transition-all hover:bg-blue-600 hover:text-white"
+              >
+                {label}
               </button>
-              <button type="button" onClick={() => setCameraPreset('back')} className="rounded bg-slate-800/90 py-1.5 text-[9px] font-bold uppercase text-slate-200 hover:bg-slate-600">
-                Arrière
-              </button>
-              <button type="button" onClick={() => setCameraPreset('top')} className="rounded bg-slate-800/90 py-1.5 text-[9px] font-bold uppercase text-slate-200 hover:bg-slate-600">
-                Haut
-              </button>
-              <button type="button" onClick={() => setCameraPreset('bottom')} className="rounded bg-slate-800/90 py-1.5 text-[9px] font-bold uppercase text-slate-200 hover:bg-slate-600">
-                Bas
-              </button>
-              <button type="button" onClick={() => setCameraPreset('left')} className="rounded bg-slate-800/90 py-1.5 text-[9px] font-bold uppercase text-slate-200 hover:bg-slate-600">
-                Gauche
-              </button>
-              <button type="button" onClick={() => setCameraPreset('right')} className="rounded bg-slate-800/90 py-1.5 text-[9px] font-bold uppercase text-slate-200 hover:bg-slate-600">
-                Droite
-              </button>
-            </div>
+            ))}
           </div>
-          <div className="h-px bg-slate-500/40" />
-          <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Hippocampe</p>
-          <div className="space-y-1">
-            <span className="text-[10px] font-semibold text-slate-300">Couleur du maillage</span>
+
+          <Divider />
+          <SectionLabel>Hippocampe</SectionLabel>
+          <div>
+            <span className="mb-1.5 block text-[10px] font-semibold text-slate-400">Couleur du maillage</span>
             <input
               type="color"
               value={color}
               onChange={(e) => setColor(e.target.value)}
-              className="h-9 w-full cursor-pointer rounded border border-slate-500 bg-slate-800"
-              title="Couleur du maillage"
+              className="h-10 w-full cursor-pointer rounded-lg border border-slate-600 bg-slate-800 p-1"
+              title="Couleur du maillage hippocampe"
             />
           </div>
+
           {brainObjUrl ? (
             <>
-              <div className="h-px bg-slate-500/40" />
-              <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Cerveau (contexte)</p>
-              <label className="flex cursor-pointer items-start gap-2 rounded-md border border-slate-600/80 bg-slate-800/90 px-2.5 py-2 text-[10px] font-semibold leading-snug text-slate-100 hover:bg-slate-600/80">
+              <Divider />
+              <SectionLabel>Cerveau (contexte)</SectionLabel>
+              <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-slate-600/60 bg-slate-800 px-3 py-2 text-[10px] font-semibold text-slate-200 transition-all hover:bg-slate-700">
                 <input
                   type="checkbox"
-                  className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded border-slate-500"
+                  className="h-3.5 w-3.5 shrink-0 rounded accent-blue-500"
                   checked={showBrain}
                   onChange={(e) => setShowBrain(e.target.checked)}
                 />
-                Afficher l&apos;enveloppe cerveau (IRM)
+                Enveloppe cerveau (IRM)
               </label>
               {showBrain ? (
-                <div className="space-y-2">
-                  <div className="space-y-1">
-                    <span className="text-[10px] font-semibold text-slate-300">Couleur du cerveau</span>
+                <div className="space-y-3">
+                  <div>
+                    <span className="mb-1.5 block text-[10px] font-semibold text-slate-400">Couleur du cerveau</span>
                     <input
                       type="color"
                       value={brainColor}
                       onChange={(e) => setBrainColor(e.target.value)}
-                      className="h-9 w-full cursor-pointer rounded border border-slate-500 bg-slate-800"
+                      className="h-10 w-full cursor-pointer rounded-lg border border-slate-600 bg-slate-800 p-1"
                       title="Teinte du volume contexte"
                     />
                   </div>
-                  <div className="space-y-1">
-                    <span className="text-[10px] font-semibold text-slate-300">Opacité du cerveau</span>
+                  <div>
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="text-[10px] font-semibold text-slate-400">Opacité</span>
+                      <span className="rounded-full bg-slate-700 px-2 py-0.5 text-[9px] font-bold text-slate-300">{Math.round(opacity * 100)} %</span>
+                    </div>
                     <input
                       type="range"
                       min={0.02}
@@ -569,16 +584,24 @@ export default function ModelViewerBlender({
                       step={0.02}
                       value={opacity}
                       onChange={(e) => setOpacity(Number(e.target.value))}
-                      className="w-full accent-slate-400"
+                      className="w-full accent-blue-500"
                     />
-                    <span className="text-[9px] text-slate-400">{Math.round(opacity * 100)} %</span>
                   </div>
                 </div>
               ) : null}
             </>
           ) : null}
-          <div className="mt-auto h-px bg-slate-500/40" />
-          {navBtn(false, 'Reset caméra', resetCamera)}
+
+          <div className="mt-auto">
+            <Divider />
+            <button
+              type="button"
+              onClick={resetCamera}
+              className="mt-3 w-full rounded-lg border border-slate-600/50 bg-slate-800 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-300 transition-all hover:bg-slate-600 hover:text-white"
+            >
+              Réinitialiser caméra
+            </button>
+          </div>
         </>
       ) : null}
       {variant === 'mini' ? (

@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Brain,
-  Building2,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -11,6 +10,7 @@ import {
   CircleDot,
   CloudUpload,
   FileImage,
+  FolderOpen,
   Hash,
   Info,
   Loader2,
@@ -1289,6 +1289,7 @@ export default function NouvelleSegmentation() {
   const [sliceMetaModal, setSliceMetaModal] = useState(null);
   /** Avant l’étape 3 : le médecin confirme patient + coupes sélectionnées. */
   const [launchConfirmOpen, setLaunchConfirmOpen] = useState(false);
+  const [validateConfirmOpen, setValidateConfirmOpen] = useState(false);
   /** Confirmation « adopter M2/M3 comme référence » (une coupe). */
   const [adoptConfirm, setAdoptConfirm] = useState(null);
   /** Par id de masque : modèle choisi pour adoption (radio « conserver »). */
@@ -1304,13 +1305,14 @@ export default function NouvelleSegmentation() {
 
   // ── Mode sélection patient (existant | nouveau) ───────────────────────────
   const [patientSelectMode, setPatientSelectMode] = useState('existing');
-  const [npForm, setNpForm] = useState({ prenom: '', nom: '', date_naissance: '', sexe: '', pathologie: '', dossier_number: '' });
+  const [npForm, setNpForm] = useState({ date_naissance: '', sexe: '', pathologie: '', dossier_number: '' });
   const [npErrors, setNpErrors] = useState({});
   const [npSubmitting, setNpSubmitting] = useState(false);
   const [npApiError, setNpApiError] = useState('');
   const [npDragging, setNpDragging] = useState(false);
-  const [npFile, setNpFile] = useState(null);
+  const [npFiles, setNpFiles] = useState([]);
   const npFileRef = useRef(null);
+  const npFolderRef = useRef(null);
 
   const [doctorName, setDoctorName] = useState(getDoctorName());
   const runIdFromQuery = searchParams.get('run');
@@ -1487,16 +1489,18 @@ export default function NouvelleSegmentation() {
 
   useEffect(() => {
     if (step !== 3 || !isLaunching) return undefined;
-
+    // Durée estimée : ~0.5s par coupe, on cible 90% en ce temps-là
+    const nSlices = Math.max(10, selectedSlices.length);
+    const targetMs = nSlices * 500; // ex: 91 coupes → ~45s pour atteindre 90%
+    const tickMs  = Math.max(100, Math.round(targetMs / 45)); // 45 ticks de 2% = 90%
     const interval = setInterval(() => {
       setProgress((current) => {
         if (current >= 90) return current;
         return current + 2;
       });
-    }, 120);
-
+    }, tickMs);
     return () => clearInterval(interval);
-  }, [step, isLaunching]);
+  }, [step, isLaunching, selectedSlices.length]);
 
   const launchSegmentation = async () => {
     if (!selectedPatient?.id) {
@@ -2162,27 +2166,43 @@ export default function NouvelleSegmentation() {
     setNpErrors((e) => ({ ...e, [key]: '' }));
   };
 
+  const ACCEPTED_EXTS = ['.nii', '.nii.gz', '.dcm', '.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp'];
   const npHandleFileDrop = useCallback((e) => {
     e.preventDefault();
     setNpDragging(false);
-    const file = e.dataTransfer?.files?.[0] || e.target?.files?.[0];
-    if (file) setNpFile(file);
+    const raw = e.dataTransfer?.files || e.target?.files;
+    if (!raw) return;
+    const filtered = Array.from(raw).filter((f) =>
+      ACCEPTED_EXTS.some((ext) => f.name.toLowerCase().endsWith(ext))
+    );
+    if (filtered.length > 0) setNpFiles((prev) => {
+      const names = new Set(prev.map((f) => f.name));
+      return [...prev, ...filtered.filter((f) => !names.has(f.name))];
+    });
+    e.target.value = '';
   }, []);
+
+  const today = new Date().toISOString().split('T')[0];
+  const minDob = new Date(new Date().setFullYear(new Date().getFullYear() - 130)).toISOString().split('T')[0];
 
   const npHandleSubmit = async () => {
     const errs = {};
-    if (!npForm.prenom.trim()) errs.prenom = 'Requis';
-    if (!npForm.nom.trim())    errs.nom = 'Requis';
-    if (!npForm.date_naissance) errs.date_naissance = 'Requis';
-    if (!npForm.sexe)           errs.sexe = 'Requis';
-    if (!npForm.pathologie)     errs.pathologie = 'Requis';
+    if (!npForm.date_naissance) {
+      errs.date_naissance = 'Requis';
+    } else if (npForm.date_naissance > today) {
+      errs.date_naissance = 'La date de naissance ne peut pas être dans le futur';
+    } else if (npForm.date_naissance < minDob) {
+      errs.date_naissance = 'Date invalide (âge maximum : 130 ans)';
+    }
+    if (!npForm.sexe)       errs.sexe = 'Requis';
+    if (!npForm.pathologie) errs.pathologie = 'Requis';
     if (Object.keys(errs).length) { setNpErrors(errs); return; }
     setNpSubmitting(true);
     setNpApiError('');
     try {
       const payload = new FormData();
       Object.entries(npForm).forEach(([k, v]) => { if (v) payload.append(k, v); });
-      if (npFile) payload.append('files', npFile);
+      npFiles.forEach((f) => payload.append('files', f));
       const res = await createPatient(payload);
       const created = res.data;
       // Add to patients list and select
@@ -2321,9 +2341,9 @@ export default function NouvelleSegmentation() {
         </div>
       )}
 
-      <main className="flex-1 overflow-y-auto px-6 py-6">
-        <div className="bg-white rounded-xl shadow-card border border-surface-border overflow-hidden">
-          <div className="p-6 lg:p-8">
+      <main className="flex-1 overflow-hidden px-6 py-6 flex flex-col">
+        <div className="bg-white rounded-xl shadow-card border border-surface-border overflow-hidden flex flex-col flex-1 min-h-0">
+          <div className="flex-1 overflow-y-auto min-h-0 p-6 lg:p-8">
             {step === 1 && (
               <div className="space-y-5">
 
@@ -2515,44 +2535,63 @@ export default function NouvelleSegmentation() {
                 {/* ── TAB: Nouveau patient ──────────────────────────────────── */}
                 {patientSelectMode === 'new' && (
                   <div className="space-y-5">
-                    {/* Form */}
+
+                    {/* Bannière anonymat */}
+                    <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 px-4 py-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-100">
+                        <ShieldCheck className="h-4 w-4 text-amber-600" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-amber-800">Patient anonymisé</p>
+                        <p className="text-xs text-amber-600 mt-0.5">Aucune donnée nominative n'est enregistrée. L'identification se fait uniquement par numéro de dossier.</p>
+                      </div>
+                    </div>
+
+                    {/* N° dossier éditable */}
+                    <div>
+                      <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                        N° dossier <span className="text-red-400">*</span>
+                      </label>
+                      <div className="relative">
+                        <Hash className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                        <input
+                          type="text"
+                          value={npForm.dossier_number}
+                          onChange={(e) => npSet('dossier_number', e.target.value)}
+                          placeholder="DOS-2026-XXXX"
+                          className={`w-full rounded-xl border py-2.5 pl-10 pr-28 font-mono text-sm outline-none transition focus:ring-2 ${npErrors.dossier_number ? 'border-red-300 bg-red-50 focus:ring-red-200' : 'border-slate-200 bg-slate-50 text-slate-800 focus:border-blue-500 focus:bg-white focus:ring-blue-500/20'}`}
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                          Auto-généré
+                        </span>
+                      </div>
+                      {npErrors.dossier_number && <p className="mt-1 text-[11px] font-semibold text-red-500">{npErrors.dossier_number}</p>}
+                    </div>
+
+                    {/* Date de naissance + Sexe */}
                     <div className="grid grid-cols-2 gap-4">
-                      {/* Prénom */}
-                      <div>
-                        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
-                          Prénom <span className="text-red-400">*</span>
-                        </label>
-                        <input type="text" value={npForm.prenom} onChange={(e) => npSet('prenom', e.target.value)}
-                          placeholder="ex. Sarah"
-                          className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition focus:ring-2 ${npErrors.prenom ? 'border-red-300 bg-red-50 focus:ring-red-200' : 'border-slate-200 bg-slate-50 focus:border-blue-500 focus:bg-white focus:ring-blue-500/20'}`}
-                        />
-                        {npErrors.prenom && <p className="mt-1 text-[11px] font-semibold text-red-500">{npErrors.prenom}</p>}
-                      </div>
-
-                      {/* Nom */}
-                      <div>
-                        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
-                          Nom <span className="text-red-400">*</span>
-                        </label>
-                        <input type="text" value={npForm.nom} onChange={(e) => npSet('nom', e.target.value)}
-                          placeholder="ex. Al-Fayed"
-                          className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition focus:ring-2 ${npErrors.nom ? 'border-red-300 bg-red-50 focus:ring-red-200' : 'border-slate-200 bg-slate-50 focus:border-blue-500 focus:bg-white focus:ring-blue-500/20'}`}
-                        />
-                        {npErrors.nom && <p className="mt-1 text-[11px] font-semibold text-red-500">{npErrors.nom}</p>}
-                      </div>
-
-                      {/* Date naissance */}
                       <div>
                         <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
                           Date de naissance <span className="text-red-400">*</span>
                         </label>
-                        <input type="date" value={npForm.date_naissance} onChange={(e) => npSet('date_naissance', e.target.value)}
+                        <input type="date" value={npForm.date_naissance}
+                          min={minDob} max={today}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            npSet('date_naissance', v);
+                            if (v > today) {
+                              setNpErrors((err) => ({ ...err, date_naissance: 'La date de naissance ne peut pas être dans le futur' }));
+                            } else if (v && v < minDob) {
+                              setNpErrors((err) => ({ ...err, date_naissance: 'Date invalide (âge maximum : 130 ans)' }));
+                            } else {
+                              setNpErrors((err) => ({ ...err, date_naissance: '' }));
+                            }
+                          }}
                           className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition focus:ring-2 ${npErrors.date_naissance ? 'border-red-300 bg-red-50 focus:ring-red-200' : 'border-slate-200 bg-slate-50 focus:border-blue-500 focus:bg-white focus:ring-blue-500/20'}`}
                         />
                         {npErrors.date_naissance && <p className="mt-1 text-[11px] font-semibold text-red-500">{npErrors.date_naissance}</p>}
                       </div>
 
-                      {/* Sexe */}
                       <div>
                         <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
                           Sexe <span className="text-red-400">*</span>
@@ -2567,87 +2606,108 @@ export default function NouvelleSegmentation() {
                         </div>
                         {npErrors.sexe && <p className="mt-1 text-[11px] font-semibold text-red-500">{npErrors.sexe}</p>}
                       </div>
-
-                      {/* Pathologie */}
-                      <div className="col-span-2">
-                        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
-                          Pathologie <span className="text-red-400">*</span>
-                        </label>
-                        <div className="flex flex-wrap gap-2">
-                          {['Alzheimer', 'Épilepsie', 'Autre', 'Non défini'].map((p) => (
-                            <button key={p} type="button" onClick={() => npSet('pathologie', p)}
-                              className={`rounded-xl border px-3.5 py-2 text-xs font-bold transition ${npForm.pathologie === p ? 'border-blue-500 bg-blue-600 text-white shadow-sm' : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-blue-300 hover:bg-blue-50'}`}>
-                              {p}
-                            </button>
-                          ))}
-                        </div>
-                        {npErrors.pathologie && <p className="mt-1 text-[11px] font-semibold text-red-500">{npErrors.pathologie}</p>}
-                      </div>
-
-                      {/* Dossier auto */}
-                      <div className="col-span-2">
-                        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
-                          N° dossier (auto-généré)
-                        </label>
-                        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-mono text-slate-500">
-                          <Hash className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                          {npForm.dossier_number || <span className="italic text-slate-400">Génération en cours…</span>}
-                        </div>
-                      </div>
                     </div>
 
-                    {/* MRI upload zone */}
+                    {/* Pathologie */}
+                    <div>
+                      <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                        Pathologie <span className="text-red-400">*</span>
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        {['Alzheimer', 'Épilepsie', 'Autre', 'Non défini'].map((p) => (
+                          <button key={p} type="button" onClick={() => npSet('pathologie', p)}
+                            className={`rounded-xl border px-4 py-2 text-xs font-bold transition ${npForm.pathologie === p ? 'border-blue-500 bg-blue-600 text-white shadow-sm' : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-blue-300 hover:bg-blue-50'}`}>
+                            {p}
+                          </button>
+                        ))}
+                      </div>
+                      {npErrors.pathologie && <p className="mt-1 text-[11px] font-semibold text-red-500">{npErrors.pathologie}</p>}
+                    </div>
+
+                    {/* Zone upload images 2D */}
                     <div>
                       <label className="mb-2 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
-                        Scan IRM / NIfTI <span className="font-normal normal-case text-slate-400">(optionnel)</span>
+                        Images IRM <span className="font-normal normal-case text-slate-400">(optionnel)</span>
                       </label>
                       <div
                         onDragOver={(e) => { e.preventDefault(); setNpDragging(true); }}
                         onDragLeave={() => setNpDragging(false)}
                         onDrop={npHandleFileDrop}
-                        onClick={() => npFileRef.current?.click()}
-                        className={`cursor-pointer rounded-2xl border-2 border-dashed p-6 text-center transition-all ${
-                          npDragging ? 'border-blue-400 bg-blue-50' :
-                          npFile ? 'border-emerald-400 bg-emerald-50' :
-                          'border-slate-200 bg-slate-50 hover:border-blue-300 hover:bg-blue-50/40'}`}>
-                        <input ref={npFileRef} type="file" accept=".nii,.nii.gz,.dcm" className="hidden" onChange={npHandleFileDrop} />
-                        {npFile ? (
-                          <div className="flex items-center justify-center gap-3">
-                            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100">
-                              <FileImage className="h-5 w-5 text-emerald-600" />
+                        className={`rounded-2xl border-2 border-dashed p-6 text-center transition-all ${
+                          npDragging ? 'border-blue-400 bg-blue-50 scale-[1.01]' :
+                          npFiles.length > 0 ? 'border-emerald-400 bg-emerald-50' :
+                          'border-slate-200 bg-slate-50'}`}>
+                        <input ref={npFileRef} type="file" multiple
+                          accept=".nii,.nii.gz,.dcm,.jpg,.jpeg,.png,.tif,.tiff,.bmp"
+                          className="hidden" onChange={npHandleFileDrop} />
+                        <input ref={npFolderRef} type="file"
+                          accept=".nii,.nii.gz,.dcm,.jpg,.jpeg,.png,.tif,.tiff,.bmp"
+                          className="hidden" onChange={npHandleFileDrop}
+                          {...{ webkitdirectory: '', directory: '' }} />
+
+                        {npFiles.length > 0 ? (
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-center gap-2 text-emerald-700">
+                              <CheckCircle2 className="h-5 w-5" />
+                              <span className="text-sm font-bold">
+                                {npFiles.length} fichier{npFiles.length > 1 ? 's' : ''} sélectionné{npFiles.length > 1 ? 's' : ''}
+                              </span>
                             </div>
-                            <div className="text-left">
-                              <p className="text-sm font-bold text-emerald-800">{npFile.name}</p>
-                              <p className="text-xs text-emerald-600">{(npFile.size / 1024 / 1024).toFixed(1)} MB · Prêt</p>
+                            <div className="max-h-28 overflow-y-auto rounded-xl border border-emerald-200 bg-white/70 px-3 py-2 text-left">
+                              {npFiles.slice(0, 12).map((f, i) => (
+                                <div key={i} className="flex items-center justify-between gap-2 py-0.5">
+                                  <p className="truncate text-xs font-medium text-emerald-800">{f.name}</p>
+                                  <span className="shrink-0 text-[10px] text-emerald-500">{(f.size / 1024).toFixed(0)} Ko</span>
+                                </div>
+                              ))}
+                              {npFiles.length > 12 && (
+                                <p className="mt-1 text-center text-xs italic text-emerald-500">+{npFiles.length - 12} autres fichiers…</p>
+                              )}
                             </div>
-                            <button type="button" onClick={(e) => { e.stopPropagation(); setNpFile(null); }}
-                              className="ml-auto rounded-full p-1 text-emerald-500 hover:bg-emerald-100">
-                              <X className="h-4 w-4" />
+                            <button type="button" onClick={() => setNpFiles([])}
+                              className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-white px-3 py-1 text-xs font-semibold text-emerald-600 transition hover:bg-emerald-50">
+                              <X className="h-3 w-3" /> Tout effacer
                             </button>
                           </div>
                         ) : (
-                          <div className="flex flex-col items-center gap-2">
-                            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-100">
-                              <CloudUpload className="h-6 w-6 text-blue-500" />
+                          <div className="flex flex-col items-center gap-3">
+                            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-100">
+                              <CloudUpload className="h-7 w-7 text-blue-500" />
                             </div>
-                            <p className="text-sm font-semibold text-slate-700">Glisser-déposer DICOM ou NIfTI</p>
-                            <p className="text-xs text-slate-400">ou cliquer pour parcourir · .nii .nii.gz .dcm</p>
+                            <div>
+                              <p className="text-sm font-semibold text-slate-700">Sélectionnez vos fichiers ou un dossier complet</p>
+                              <p className="mt-0.5 text-xs text-slate-400">Formats supportés : NIfTI, DICOM, JPEG, PNG, TIFF, BMP</p>
+                            </div>
+                            <div className="flex gap-2">
+                              <button type="button"
+                                onClick={(e) => { e.stopPropagation(); npFolderRef.current?.click(); }}
+                                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-600 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 shadow-sm">
+                                <FolderOpen className="h-4 w-4" />
+                                DOSSIER
+                              </button>
+                              <button type="button"
+                                onClick={(e) => { e.stopPropagation(); npFileRef.current?.click(); }}
+                                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700">
+                                <FileImage className="h-4 w-4" />
+                                FICHIERS
+                              </button>
+                            </div>
+                            <div className="flex flex-wrap justify-center gap-1.5">
+                              {['.nii', '.nii.gz', '.dcm', '.jpg', '.png', '.tif', '.bmp'].map((ext) => (
+                                <span key={ext} className="rounded-full border border-slate-200 bg-white px-2.5 py-0.5 font-mono text-[11px] text-slate-500">{ext}</span>
+                              ))}
+                            </div>
                           </div>
                         )}
                       </div>
-                      <button type="button"
-                        className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700">
-                        <Building2 className="h-4 w-4" />
-                        Importer depuis le PACS
-                      </button>
                     </div>
 
                     {/* Badges sécurité */}
                     <div className="flex flex-wrap gap-2">
                       {[
-                        { icon: ShieldCheck, label: 'HIPAA Compliant', cls: 'text-emerald-600 bg-emerald-50 border-emerald-200' },
-                        { icon: Zap,         label: 'GPU Accéléré',    cls: 'text-amber-600 bg-amber-50 border-amber-200' },
-                        { icon: ShieldCheck, label: 'Transfert chiffré', cls: 'text-sky-600 bg-sky-50 border-sky-200' },
+                        { icon: ShieldCheck, label: 'HIPAA Compliant',    cls: 'text-emerald-600 bg-emerald-50 border-emerald-200' },
+                        { icon: Zap,         label: 'GPU Accéléré',       cls: 'text-amber-600  bg-amber-50  border-amber-200'  },
+                        { icon: ShieldCheck, label: 'Transfert chiffré',  cls: 'text-sky-600    bg-sky-50    border-sky-200'    },
                       ].map(({ icon: Icon, label, cls }) => (
                         <div key={label} className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold ${cls}`}>
                           <Icon className="h-3.5 w-3.5" />{label}
@@ -2660,30 +2720,6 @@ export default function NouvelleSegmentation() {
                     )}
                   </div>
                 )}
-
-                {/* ── Footer ─────────────────────────────────────────────── */}
-                <div className="mt-4 -mx-6 -mb-6 px-6 py-4 bg-white border-t border-slate-100 flex items-center justify-between">
-                  <p className="text-sm text-slate-500">Étape <strong>1</strong> sur 3</p>
-                  <div className="flex items-center gap-2">
-                    <button type="button" onClick={() => navigate(-1)}
-                      className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
-                      Annuler
-                    </button>
-                    {patientSelectMode === 'existing' ? (
-                      <button type="button" disabled={!selectedPatient} onClick={() => setStep(2)}
-                        className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2 text-sm font-bold text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
-                        Confirmer le patient
-                        <ChevronRight className="h-4 w-4" />
-                      </button>
-                    ) : (
-                      <button type="button" onClick={npHandleSubmit} disabled={npSubmitting}
-                        className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2 text-sm font-bold text-white shadow-sm transition hover:from-blue-700 hover:to-indigo-700 disabled:opacity-60">
-                        {npSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
-                        {npSubmitting ? 'Création…' : 'Créer et continuer'}
-                      </button>
-                    )}
-                  </div>
-                </div>
 
               </div>
             )}
@@ -2807,23 +2843,39 @@ export default function NouvelleSegmentation() {
 
                   {/* Barre de sélection active */}
                   <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-white px-5 py-3">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-3">
                       {/* Compteur principal */}
-                      <div className="flex items-center gap-2 rounded-xl bg-blue-50 border border-blue-100 px-3.5 py-2">
-                        <CheckCircle2 className="h-4 w-4 text-blue-600" />
-                        <span className="text-sm font-black text-blue-800">{selectedSlices.length}</span>
-                        <span className="text-xs font-medium text-blue-500">/ {slices.length} sélectionnées</span>
+                      <div className={`flex items-center gap-2 rounded-xl border px-3.5 py-2 ${selectedSlices.length === 0 ? 'border-slate-200 bg-slate-50' : 'border-blue-100 bg-blue-50'}`}>
+                        <CheckCircle2 className={`h-4 w-4 ${selectedSlices.length === 0 ? 'text-slate-400' : 'text-blue-600'}`} />
+                        <span className={`text-sm font-black ${selectedSlices.length === 0 ? 'text-slate-500' : 'text-blue-800'}`}>{selectedSlices.length}</span>
+                        <span className="text-xs font-medium text-slate-400">/ {slices.length} coupes cochées</span>
                       </div>
                       {/* Barre de progression visuelle */}
-                      <div className="hidden sm:block w-32 h-2 rounded-full bg-slate-100 overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-300"
-                          style={{ width: `${slices.length > 0 ? Math.round((selectedSlices.length / slices.length) * 100) : 0}%` }}
-                        />
+                      <div className="hidden sm:flex items-center gap-2">
+                        <div className="w-28 h-2 rounded-full bg-slate-100 overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-300"
+                            style={{ width: `${slices.length > 0 ? Math.round((selectedSlices.length / slices.length) * 100) : 0}%` }}
+                          />
+                        </div>
+                        <span className="text-xs font-bold tabular-nums text-slate-500">
+                          {slices.length > 0 ? Math.round((selectedSlices.length / slices.length) * 100) : 0}%
+                        </span>
                       </div>
-                      <span className="hidden sm:block text-xs font-medium text-slate-400">
-                        {slices.length > 0 ? Math.round((selectedSlices.length / slices.length) * 100) : 0}%
-                      </span>
+                      {selectedSlices.length === 0 && (
+                        <span className="hidden sm:block text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1">
+                          Cochez au moins une coupe pour continuer
+                        </span>
+                      )}
+                      {selectedSlices.length > 0 && qualitySummary && selectedSlices.length > qualitySummary.recommended && (
+                        <span className="hidden sm:flex items-center gap-1.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1">
+                          <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                          </svg>
+                          {selectedSlices.length - qualitySummary.recommended} coupe{selectedSlices.length - qualitySummary.recommended > 1 ? 's' : ''} hors recommandation incluse{selectedSlices.length - qualitySummary.recommended > 1 ? 's' : ''}
+                        </span>
+                      )}
                     </div>
                     {/* Boutons sélection */}
                     <div className="flex flex-wrap gap-2">
@@ -2867,73 +2919,101 @@ export default function NouvelleSegmentation() {
                 {/* ══ Fin en-tête ═══════════════════════════════════════════ */}
 
                 {!slicesLoading && !slicesError && slices.length > 0 && (
-                  <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                      Sélection par plage
-                    </p>
-                    <div className="mt-3 flex flex-wrap items-end gap-3">
-                      <label className="flex flex-col gap-1">
-                        <span className="text-[11px] font-medium text-slate-600">De la coupe</span>
-                        <input
-                          type="number"
-                          min={1}
-                          max={slices.length}
-                          inputMode="numeric"
-                          value={sliceRangeFrom}
-                          onChange={(e) => {
-                            setSliceRangeFrom(e.target.value);
-                            setSliceRangeFeedback(null);
-                          }}
-                          className="w-[5.5rem] rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm tabular-nums outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-                        />
-                      </label>
-                      <span className="pb-2 text-slate-400" aria-hidden>
-                        —
-                      </span>
-                      <label className="flex flex-col gap-1">
-                        <span className="text-[11px] font-medium text-slate-600">À la coupe</span>
-                        <input
-                          type="number"
-                          min={1}
-                          max={slices.length}
-                          inputMode="numeric"
-                          value={sliceRangeTo}
-                          onChange={(e) => {
-                            setSliceRangeTo(e.target.value);
-                            setSliceRangeFeedback(null);
-                          }}
-                          className="w-[5.5rem] rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm tabular-nums outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-                        />
-                      </label>
-                      <div className="flex flex-wrap gap-2">
-                        <ButtonWithHelpTooltip helpText={sliceRangeTooltipText(slices.length)}>
-                          <button
-                            type="button"
-                            onClick={() => applySliceRange('replace')}
-                            className="rounded-lg bg-[#2563eb] px-3 py-2 text-sm font-medium text-white hover:bg-[#1d4ed8]"
-                          >
-                            Remplacer par cette plage
-                          </button>
-                        </ButtonWithHelpTooltip>
-                        <ButtonWithHelpTooltip helpText={sliceRangeTooltipText(slices.length)}>
-                          <button
-                            type="button"
-                            onClick={() => applySliceRange('add')}
-                            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50"
-                          >
-                            Ajouter la plage
-                          </button>
-                        </ButtonWithHelpTooltip>
+                  <div className="rounded-xl border border-blue-100 bg-gradient-to-br from-blue-50/70 to-indigo-50/30 px-5 py-4 shadow-sm">
+
+                    {/* En-tête */}
+                    <div className="mb-4 flex items-start gap-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-100">
+                        <Hash className="h-4 w-4 text-blue-600" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-slate-800">Sélection par plage de coupes</p>
+                        <p className="mt-0.5 text-[11px] text-slate-500">
+                          Sélectionnez rapidement un groupe de coupes consécutives sans avoir à cliquer sur chaque image.
+                          Les numéros correspondent aux numéros affichés sur les vignettes ci-dessous.
+                        </p>
                       </div>
                     </div>
-                    {sliceRangeFeedback ? (
-                      <p
-                        className={`mt-2 text-xs ${sliceRangeFeedback.ok ? 'text-emerald-800' : 'font-medium text-amber-900'}`}
-                        role="status"
+
+                    {/* Saisie des bornes + compteur live */}
+                    <div className="mb-4 flex flex-wrap items-center gap-3">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Coupe de départ</span>
+                        <input
+                          type="number" min={1} max={slices.length} inputMode="numeric"
+                          value={sliceRangeFrom} placeholder="1"
+                          onChange={(e) => { setSliceRangeFrom(e.target.value); setSliceRangeFeedback(null); }}
+                          className="w-20 rounded-xl border border-slate-200 bg-white px-3 py-2 text-center text-sm font-bold tabular-nums text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                        />
+                      </div>
+                      <div className="flex items-end pb-0.5 text-slate-400 font-bold text-lg">→</div>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Coupe de fin</span>
+                        <input
+                          type="number" min={1} max={slices.length} inputMode="numeric"
+                          value={sliceRangeTo} placeholder={String(slices.length)}
+                          onChange={(e) => { setSliceRangeTo(e.target.value); setSliceRangeFeedback(null); }}
+                          className="w-20 rounded-xl border border-slate-200 bg-white px-3 py-2 text-center text-sm font-bold tabular-nums text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                        />
+                      </div>
+                      {(() => {
+                        const f = parseInt(String(sliceRangeFrom).trim(), 10);
+                        const t = parseInt(String(sliceRangeTo).trim(), 10);
+                        const count = (!isNaN(f) && !isNaN(t) && t >= f && f >= 1 && t <= slices.length) ? t - f + 1 : null;
+                        return count !== null ? (
+                          <div className="flex items-center gap-1.5 rounded-xl border border-blue-200 bg-white px-3 py-2 shadow-sm">
+                            <span className="text-base font-black text-blue-700">{count}</span>
+                            <span className="text-xs font-medium text-blue-500">coupe{count > 1 ? 's' : ''} sélectionnée{count > 1 ? 's' : ''}</span>
+                          </div>
+                        ) : null;
+                      })()}
+                    </div>
+
+                    {/* Boutons d'action */}
+                    <div className="mb-4 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => applySliceRange('replace')}
+                        className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700"
                       >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        Remplacer la sélection
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => applySliceRange('add')}
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-600 shadow-sm transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+                      >
+                        <span className="text-base leading-none">+</span>
+                        Ajouter à la sélection
+                      </button>
+                    </div>
+
+                    {/* Explication des deux modes */}
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <div className="rounded-xl border border-blue-100 bg-white/80 px-3 py-2.5">
+                        <p className="text-[11px] font-bold text-blue-700">Remplacer la sélection</p>
+                        <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">
+                          Efface toutes les coupes actuellement cochées et sélectionne uniquement les coupes de cette plage. À utiliser quand vous voulez repartir de zéro.
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-slate-100 bg-white/80 px-3 py-2.5">
+                        <p className="text-[11px] font-bold text-slate-700">Ajouter à la sélection</p>
+                        <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">
+                          Conserve les coupes déjà cochées et y ajoute les coupes de cette nouvelle plage. Pratique pour combiner plusieurs intervalles.
+                        </p>
+                      </div>
+                    </div>
+
+                    {sliceRangeFeedback && (
+                      <p
+                        role="status"
+                        className={`mt-3 flex items-center gap-1.5 text-xs font-semibold ${sliceRangeFeedback.ok ? 'text-emerald-700' : 'text-amber-700'}`}
+                      >
+                        <span>{sliceRangeFeedback.ok ? '✓' : '⚠'}</span>
                         {sliceRangeFeedback.text}
                       </p>
-                    ) : null}
+                    )}
                   </div>
                 )}
 
@@ -2996,11 +3076,11 @@ export default function NouvelleSegmentation() {
                       onJumpToPage={(p) => setSlicesListPage(Math.max(0, Math.min(slicesLastPage, p)))}
                     />
                     {slicesLastPage > 0 ? (
-                      <p className="text-[11px] text-slate-500">
-                        Option : utilisez « Aller à la page » pour afficher directement une autre page du catalogue de coupes.
+                      <p className="text-[11px] text-slate-400">
+                        Utilisez « Aller à la page » pour naviguer directement vers un groupe de coupes.
                       </p>
                     ) : null}
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                     {paginatedSlices.map((slice, index) => {
                       const globalSliceIndex = slicesListPage * LIST_PAGE_SIZE + index;
                       const sliceId = slice?.id;
@@ -3035,15 +3115,24 @@ export default function NouvelleSegmentation() {
                         >
                           {isSelected && <div className="absolute inset-x-0 top-0 z-[1] h-8 bg-[#2563eb]/10" />}
 
-                          {/* Quality badge overlay */}
+                          {/* Numéro de coupe — badge proéminent en haut au centre */}
+                          <div className={`absolute top-2 left-1/2 z-20 -translate-x-1/2 rounded-full px-2.5 py-0.5 text-[11px] font-black tabular-nums shadow backdrop-blur-sm whitespace-nowrap ${
+                            isSelected
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-slate-900/75 text-white'
+                          }`}>
+                            {rankInSeries} / {slices.length}
+                          </div>
+
+                          {/* Quality badge — en bas à gauche pour ne pas masquer le numéro */}
                           {isEmpty && (
-                            <div className="absolute left-2 top-2 z-20 flex items-center gap-1 rounded-full bg-slate-800/80 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-200 backdrop-blur-sm">
+                            <div className="absolute left-2 bottom-10 z-20 flex items-center gap-1 rounded-full bg-slate-800/80 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-200 backdrop-blur-sm">
                               <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
                               Vide
                             </div>
                           )}
                           {isLowContent && (
-                            <div className="absolute left-2 top-2 z-20 flex items-center gap-1 rounded-full bg-amber-800/70 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-100 backdrop-blur-sm">
+                            <div className="absolute left-2 bottom-10 z-20 flex items-center gap-1 rounded-full bg-amber-800/70 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-100 backdrop-blur-sm">
                               <span className="h-1.5 w-1.5 rounded-full bg-amber-300" />
                               Faible
                             </div>
@@ -3091,14 +3180,17 @@ export default function NouvelleSegmentation() {
                             </button>
                           </div>
 
-                          <div className="flex items-start justify-between gap-2 border-t border-slate-100 px-3 py-2">
-                            <p
-                              className="min-w-0 flex-1 break-all text-left text-[11px] leading-snug text-slate-500"
-                              title={filename}
-                            >
+                          <div className="flex items-center justify-between gap-2 border-t border-slate-100 px-2 py-1.5">
+                            <p className="min-w-0 flex-1 truncate text-[10px] text-slate-400" title={filename}>
                               {filename || '—'}
                             </p>
-                            <p className="shrink-0 text-[11px] font-medium tabular-nums text-[#2563eb]">{coupeXY}</p>
+                            {q?.score != null && (
+                              <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
+                                isExcluded ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
+                              }`}>
+                                {Math.round(q.score * 100)}%
+                              </span>
+                            )}
                           </div>
                         </button>
                       );
@@ -3109,25 +3201,30 @@ export default function NouvelleSegmentation() {
 
                 <div className="flex flex-col gap-3 border-t border-surface-border pt-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <p className="text-sm font-medium text-slate-700">{selectedSlices.length} / {slices.length} coupes sélectionnées</p>
-                    <p className="mt-0.5 text-xs text-gray-500">Étape 2 sur 3</p>
+                    <p className="text-sm font-semibold text-slate-700">
+                      <span className="text-blue-700 font-black">{selectedSlices.length}</span>
+                      <span className="text-slate-400"> / {slices.length}</span> coupes sélectionnées pour l'analyse
+                    </p>
+                    <p className="mt-0.5 text-xs text-gray-500">Étape 2 sur 3 · Confirmez votre sélection pour lancer le modèle IA</p>
                   </div>
 
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
                       onClick={() => setStep(1)}
-                      className="rounded-lg border border-surface-border px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-blue-50/50"
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-surface-border px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-blue-50/50"
                     >
-                      ← Retour
+                      <ChevronLeft className="h-4 w-4" />
+                      Retour
                     </button>
                     <button
                       type="button"
                       onClick={() => setLaunchConfirmOpen(true)}
                       disabled={selectedSlices.length === 0}
-                      className="rounded-lg bg-[#2563eb] border border-[#2563eb] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#1d4ed8] disabled:cursor-not-allowed disabled:opacity-50 disabled:bg-[#2563eb] disabled:hover:bg-[#2563eb]"
+                      className="inline-flex items-center gap-2 rounded-xl bg-blue-600 border border-blue-600 px-5 py-2 text-sm font-bold text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      Lancer la segmentation (Modèle 1) →
+                      Lancer la segmentation (Modèle 1)
+                      <ChevronRight className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
@@ -3146,43 +3243,161 @@ export default function NouvelleSegmentation() {
             {step === 3 && (
               <div className="space-y-3">
                 {showResults && (
-                  <div className="space-y-2">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <h2 className="text-xl font-semibold text-primary">Résultats de segmentation</h2>
+                  <div className="space-y-3">
+                    {/* ── Header gradient résultats ── */}
+                    <div className="overflow-hidden rounded-2xl border border-slate-200 shadow-sm">
+                      <div className="relative bg-gradient-to-r from-[#0f1f4b] via-[#0e2d82] to-[#1a3a8f] px-6 py-5">
+                        <span className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/5 pointer-events-none" />
+                        <div className="relative flex flex-wrap items-start justify-between gap-4">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 shadow-inner">
+                              <CheckCircle2 className="h-6 w-6 text-emerald-300" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-[10px] font-bold uppercase tracking-widest text-blue-200">Étape 3 / 3 · Terminée</p>
+                              <p className="mt-0.5 text-base font-black text-white">Résultats de segmentation</p>
+                              <p className="mt-0.5 text-[11px] text-blue-300">
+                                {getPatientName(selectedPatient || {})}
+                                {selectedPatient?.dossier_number ? ` · ${selectedPatient.dossier_number}` : ''}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="rounded-xl bg-white/10 px-3 py-2 text-center">
+                              <p className="text-lg font-black text-white">{persistedResults.length}</p>
+                              <p className="text-[10px] font-bold uppercase tracking-wide text-blue-200">coupes</p>
+                            </div>
+                            <div className="rounded-xl bg-white/10 px-3 py-2 text-center">
+                              <p className="text-sm font-black text-white">{runSummary?.model_version || modelKeyToDisplayName(runSummary?.model_key) || 'Modèle 1'}</p>
+                              <p className="text-[10px] font-bold uppercase tracking-wide text-blue-200">modèle</p>
+                            </div>
+                            {Number.isFinite(currentRunId) && currentRunId > 0 && (
+                              <div className="rounded-xl bg-white/10 px-3 py-2 text-center">
+                                <p className="text-sm font-black font-mono text-white">#{currentRunId}</p>
+                                <p className="text-[10px] font-bold uppercase tracking-wide text-blue-200">run</p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex shrink-0 flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const rid = effectiveRunId;
-                            if (!Number.isFinite(rid) || rid <= 0) return;
-                            navigate(`/segmentation/modelisation?run=${rid}`);
-                          }}
-                          disabled={
-                            !Number.isFinite(effectiveRunId) ||
-                            effectiveRunId <= 0 ||
-                            (reviewStats.total > 0 && reviewStats.rejected === reviewStats.total)
-                          }
-                          className="rounded-lg bg-[#2563eb] border border-[#2563eb] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#1d4ed8] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          Valider segmentation
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowResults(false);
-                            setStep(2);
-                            setProgress(0);
-                            setLaunchError('');
-                            launchTriggeredRef.current = false;
-                          }}
-                          className="rounded-lg bg-[#2563eb] border border-[#2563eb] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#1d4ed8]"
-                        >
-                          Modifier les coupes
-                        </button>
+                      {/* Barre d'actions principale */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 bg-white px-5 py-3">
+                        <p className="text-xs text-slate-500">
+                          Examinez chaque coupe, puis validez la segmentation pour continuer vers la modélisation 3D.
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowResults(false);
+                              setStep(2);
+                              setProgress(0);
+                              setLaunchError('');
+                              launchTriggeredRef.current = false;
+                            }}
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                            Modifier les coupes
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setValidateConfirmOpen(true)}
+                            disabled={
+                              !Number.isFinite(effectiveRunId) ||
+                              effectiveRunId <= 0 ||
+                              (reviewStats.total > 0 && reviewStats.rejected === reviewStats.total)
+                            }
+                            className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2 text-sm font-bold text-white shadow-sm shadow-emerald-200 transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <CheckCircle2 className="h-4 w-4" />
+                            Valider la segmentation
+                          </button>
+                        </div>
                       </div>
                     </div>
+
+                    {/* ── Section : Relancer toutes les coupes avec un autre modèle ── */}
+                    {!resultsLoading && persistedResults.length > 0 && (
+                      <div className="rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50/60 to-indigo-50/40 px-5 py-4">
+                        <div className="flex items-start gap-3 mb-4">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-100">
+                            <RotateCcw className="h-4 w-4 text-violet-600" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-slate-800">Pas satisfait du résultat global ?</p>
+                            <p className="mt-0.5 text-[11px] text-slate-500">
+                              Relancez la segmentation sur toutes les coupes sélectionnées avec un modèle différent. Chaque modèle utilise une architecture distincte — les résultats peuvent varier sur des cas difficiles.
+                            </p>
+                          </div>
+                        </div>
+                        {/* Guide des modèles */}
+                        <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                          {[
+                            {
+                              key: 'unetpp', label: 'Modèle 1', sublabel: 'U-Net++',
+                              color: 'border-slate-200 bg-white',
+                              badge: 'bg-slate-100 text-slate-600',
+                              desc: 'Modèle par défaut. Rapide et fiable, recommandé pour la majorité des cas courants.',
+                              tag: 'Par défaut',
+                            },
+                            {
+                              key: 'nnunet', label: 'Modèle 2', sublabel: 'nnU-Net',
+                              color: 'border-indigo-100 bg-indigo-50/50',
+                              badge: 'bg-indigo-100 text-indigo-700',
+                              desc: 'Référence en segmentation médicale automatique. Plus robuste sur les anatomies atypiques.',
+                              tag: 'Robuste',
+                            },
+                            {
+                              key: 'swinunetr', label: 'Modèle 3', sublabel: 'Swin-UNETR',
+                              color: 'border-violet-100 bg-violet-50/50',
+                              badge: 'bg-violet-100 text-violet-700',
+                              desc: 'Architecture Transformer. Optimisé pour les structures complexes et les petits volumes.',
+                              tag: 'Avancé',
+                            },
+                          ].map((m) => (
+                            <div key={m.key} className={`rounded-xl border px-3 py-2.5 ${m.color}`}>
+                              <div className="flex items-center justify-between gap-2 mb-1">
+                                <div>
+                                  <span className="text-sm font-black text-slate-800">{m.label}</span>
+                                  <span className="ml-1.5 text-[11px] text-slate-500">· {m.sublabel}</span>
+                                </div>
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${m.badge}`}>{m.tag}</span>
+                              </div>
+                              <p className="text-[11px] leading-relaxed text-slate-500">{m.desc}</p>
+                              <button
+                                type="button"
+                                disabled={String(runSummary?.model_key || 'unetpp').toLowerCase() === m.key}
+                                onClick={() => {
+                                  setSelectedModel(m.key);
+                                  launchTriggeredRef.current = false;
+                                  setIsLaunching(false);
+                                  setLaunchError('');
+                                  setLaunchResult(null);
+                                  setShowResults(false);
+                                  setResultsError('');
+                                  setPersistedResults([]);
+                                  setRunSummary(null);
+                                  setProgress(5);
+                                }}
+                                className={`mt-2.5 w-full rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                                  String(runSummary?.model_key || 'unetpp').toLowerCase() === m.key
+                                    ? 'cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400'
+                                    : 'border border-violet-200 bg-violet-600 text-white hover:bg-violet-700'
+                                }`}
+                              >
+                                {String(runSummary?.model_key || 'unetpp').toLowerCase() === m.key
+                                  ? 'Modèle actuel'
+                                  : `Relancer avec ${m.label}`}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-[10px] text-slate-400">
+                          La relance conserve la même sélection de coupes ({selectedSlices.length} coupe{selectedSlices.length > 1 ? 's' : ''}). Les résultats précédents ne sont pas supprimés — vous pouvez comparer les modèles coupe par coupe.
+                        </p>
+                      </div>
+                    )}
 
                     {resultsLoading && (
                       <div className="h-40 flex items-center justify-center">
@@ -3391,19 +3606,22 @@ export default function NouvelleSegmentation() {
                           );
                           return (
                             <div key={row?.id || `${fileId || 'slice'}-${globalIdx}`} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-                              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 py-3 sm:px-4">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <p className="text-sm font-semibold text-slate-900">{coupeLabel}</p>
+                              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/60 px-4 py-3">
+                                <div className="flex flex-wrap items-center gap-2.5">
+                                  <span className="rounded-lg bg-blue-600 px-2.5 py-1 text-xs font-black text-white tabular-nums">
+                                    {coupeLabel}
+                                  </span>
                                   <span
-                                    className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${badge.className}`}
+                                    className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${badge.className}`}
                                   >
                                     {badge.label}
                                   </span>
+                                  <span className="rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">
+                                    {modelLabel}
+                                  </span>
                                 </div>
-                                <div className="text-right text-xs text-gray-500">
-                                  <p className="font-mono text-[11px] text-slate-600">{row?.source_filename || 'fichier IRM'}</p>
-                                  {fileId != null && <p className="text-[10px] text-gray-400">MRI file id · {fileId}</p>}
-                                  <p className="mt-0.5 text-[10px] text-slate-500">Masque : {modelLabel}</p>
+                                <div className="flex items-center gap-1.5 text-right text-xs text-gray-500">
+                                  <p className="font-mono text-[10px] text-slate-500 truncate max-w-[12rem]" title={row?.source_filename}>{row?.source_filename || 'fichier IRM'}</p>
                                 </div>
                               </div>
                               <div className="border-t border-slate-800 bg-slate-900 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-300">
@@ -3786,12 +4004,13 @@ export default function NouvelleSegmentation() {
                                       </button>
                                     </div>
                                   </div>
-                                  <p className="text-right text-[10px] leading-snug text-slate-500">
-                                    Après une relance (M2/M3), la grille «&nbsp;Masques et overlays&nbsp;» permet de cocher le modèle à
-                                    conserver puis <strong className="font-semibold text-slate-600">Valider le choix du modèle</strong>{' '}
-                                    (confirmation). <strong className="font-semibold text-slate-600">Lancer Modèle 1</strong> est disponible
-                                    dès que le masque courant n’est plus M1 ou après adoption d’M2/M3 comme référence.
-                                  </p>
+                                  <div className="rounded-xl border border-slate-100 bg-white px-3 py-2.5 text-[11px] leading-relaxed text-slate-500">
+                                    <p className="font-bold text-slate-700 mb-1">Tester un autre modèle sur cette coupe uniquement</p>
+                                    <p>
+                                      Cliquez sur <span className="font-semibold text-indigo-700">Lancer M2</span> ou <span className="font-semibold text-violet-700">Lancer M3</span> pour obtenir une segmentation alternative sur cette coupe.
+                                      Les deux masques apparaîtront dans la grille «&nbsp;Masques et overlays&nbsp;» — cochez celui à conserver, puis cliquez sur <span className="font-semibold text-teal-700">Valider le choix du modèle</span>.
+                                    </p>
+                                  </div>
                                 </div>
                               </div>
                               ) : null}
@@ -3805,167 +4024,348 @@ export default function NouvelleSegmentation() {
 
                 {!showResults && (
                   <>
-                <div>
-                  <h2 className="text-xl font-semibold text-primary">Étape 3/3 : Segmentation en cours</h2>
-                  <p className="mt-2 text-sm text-slate-600">
-                    <span className="font-medium text-slate-800">{getPatientName(selectedPatient || {})}</span> · {selectedSlices.length} coupe{selectedSlices.length > 1 ? 's' : ''} sélectionnée{selectedSlices.length > 1 ? 's' : ''} · segmentation par défaut : Modèle 1
-                  </p>
-                </div>
-
-                <div>
-                  <div className="mb-2 flex items-center justify-between text-sm">
-                    <span className="font-semibold text-slate-700">Progression</span>
-                    <span className="font-bold text-blue-600">{progress}%</span>
-                  </div>
-                  <div className="h-3 w-full overflow-hidden rounded-full bg-slate-200">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-300 ease-out shadow-[0_0_8px_rgba(37,99,235,0.4)]"
-                      style={{ width: `${progress}%` }}
-                    />
-                  </div>
-                </div>
-
-                {launchError && (
-                  <div className="rounded-lg border border-red-200 bg-red-50 p-4">
-                    <p className="text-sm font-medium text-red-700">{launchError}</p>
-                    <div className="mt-3 flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={launchSegmentation}
-                        className="rounded-lg border border-red-300 px-3 py-1.5 text-sm text-red-700 hover:bg-red-100"
-                      >
-                        Réessayer
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setStep(2)}
-                        className="rounded-lg border border-surface-border px-3 py-1.5 text-sm text-gray-700 hover:bg-blue-50/50"
-                      >
-                        Retour aux coupes
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                <div className="space-y-2">
-                  {CHECKLIST_STEPS.map((item, index) => {
-                    const done = index < completedSteps;
-                    return (
-                      <div
-                        key={item}
-                        className={`flex items-center gap-3 rounded-lg border px-3 py-2 transition-colors ${
-                          done
-                            ? 'border-blue-200 bg-blue-50 text-blue-900'
-                            : 'border-slate-200 bg-slate-50 text-slate-500'
-                        }`}
-                      >
-                        <span
-                          className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold ${
-                            done ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-500'
-                          }`}
-                        >
-                          {done ? '✓' : '•'}
-                        </span>
-                        <span className="text-sm">{item}</span>
+                  {/* ── En-tête gradient ── */}
+                  <div className="overflow-hidden rounded-2xl border border-slate-200 shadow-sm">
+                    <div className="relative bg-gradient-to-r from-[#0f1f4b] via-[#0e2d82] to-[#1a3a8f] px-6 py-5">
+                      <span className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/5 pointer-events-none" />
+                      <span className="absolute right-20 -bottom-4 h-20 w-20 rounded-full bg-white/5 pointer-events-none" />
+                      <div className="relative flex flex-wrap items-center justify-between gap-4">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/15 shadow-inner">
+                            {(launchResult || progress >= 100) && !launchError
+                              ? <CheckCircle2 className="h-6 w-6 text-emerald-300" />
+                              : <Brain className="h-6 w-6 text-white" />
+                            }
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-blue-200">Étape 3 / 3</p>
+                            <p className="mt-0.5 text-base font-black text-white">
+                              {(launchResult || progress >= 100) && !launchError ? 'Segmentation terminée' : 'Segmentation IA en cours…'}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <div className="rounded-xl bg-white/10 px-4 py-2 text-center">
+                            <p className="text-lg font-black text-white">{selectedSlices.length}</p>
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-blue-200">coupes</p>
+                          </div>
+                          <div className="rounded-xl bg-white/10 px-4 py-2 text-center">
+                            <p className="text-sm font-black text-white">{modelKeyToDisplayName(selectedModel)}</p>
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-blue-200">modèle</p>
+                          </div>
+                        </div>
                       </div>
-                    );
-                  })}
-                </div>
-
-                {(launchResult || progress >= 100) && !launchError && (
-                  <div className="rounded-xl border border-blue-200 bg-blue-50 p-5">
-                    <h3 className="text-lg font-semibold text-slate-900">Segmentation terminée ✓</h3>
-                    <p className="mt-1 text-sm text-slate-700">Les résultats seront disponibles dans Analyses MRI</p>
-                    {launchResult?.count != null && (
-                      <p className="mt-1 text-xs text-slate-600">{launchResult.count} coupe{launchResult.count > 1 ? 's' : ''} traitée{launchResult.count > 1 ? 's' : ''}</p>
-                    )}
-                    <div className="mt-4 flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={openSegmentationResults}
-                        className="inline-flex items-center rounded-lg border border-[#2563eb] bg-[#2563eb] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#1d4ed8]"
-                      >
-                        Voir les résultats
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setStep(2)}
-                        className="inline-flex items-center rounded-lg border border-surface-border bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-blue-50/50"
-                      >
-                        Modifier les coupes
-                      </button>
                     </div>
+
+                    {/* ── Barre de progression ── */}
+                    {!launchError && (
+                      <div className="border-t border-slate-100 bg-white px-6 py-4">
+                        <div className="mb-2 flex items-center justify-between text-sm">
+                          <span className="font-bold text-slate-700">Progression</span>
+                          <div className="flex items-center gap-3">
+                            {progress < 100 && isLaunching && (
+                              <span className="text-xs font-medium text-slate-400">
+                                ~{Math.max(1, Math.ceil((90 - progress) / 2 * Math.max(100, Math.round(selectedSlices.length * 500 / 45)) / 1000))}s restantes
+                              </span>
+                            )}
+                            <span className={`text-base font-black tabular-nums ${progress >= 100 ? 'text-emerald-600' : 'text-blue-600'}`}>
+                              {progress}%
+                            </span>
+                          </div>
+                        </div>
+                        <div className="h-4 w-full overflow-hidden rounded-full bg-slate-100 shadow-inner">
+                          <div
+                            className={`h-full rounded-full transition-all duration-500 ease-out ${
+                              progress >= 100
+                                ? 'bg-gradient-to-r from-emerald-400 to-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.5)]'
+                                : 'bg-gradient-to-r from-blue-500 via-blue-600 to-indigo-600 shadow-[0_0_10px_rgba(37,99,235,0.45)]'
+                            }`}
+                            style={{ width: `${progress}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
+
+                  {/* ── Erreur ── */}
+                  {launchError && (
+                    <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4">
+                      <svg className="mt-0.5 h-5 w-5 shrink-0 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                      </svg>
+                      <div className="flex-1">
+                        <p className="text-sm font-bold text-red-700">Erreur lors du lancement</p>
+                        <p className="mt-0.5 text-sm text-red-600">{launchError}</p>
+                        <div className="mt-3 flex items-center gap-2">
+                          <button type="button" onClick={launchSegmentation}
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-red-300 bg-white px-3.5 py-1.5 text-sm font-semibold text-red-700 transition hover:bg-red-50">
+                            <RotateCcw className="h-3.5 w-3.5" /> Réessayer
+                          </button>
+                          <button type="button" onClick={() => setStep(2)}
+                            className="rounded-xl border border-slate-200 px-3.5 py-1.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
+                            Retour aux coupes
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── Checklist des étapes ── */}
+                  {!launchError && (
+                    <div className="space-y-2">
+                      {CHECKLIST_STEPS.map((item, index) => {
+                        const done    = index < completedSteps;
+                        const active  = index === completedSteps && progress < 100;
+                        return (
+                          <div key={item}
+                            className={`flex items-center gap-3 rounded-xl border px-4 py-3 transition-all duration-300 ${
+                              done   ? 'border-emerald-200 bg-emerald-50'
+                              : active ? 'border-blue-200 bg-blue-50 shadow-sm'
+                              : 'border-slate-100 bg-slate-50'
+                            }`}
+                          >
+                            <span className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-black transition-all ${
+                              done   ? 'bg-emerald-500 text-white'
+                              : active ? 'bg-blue-600 text-white'
+                              : 'bg-slate-200 text-slate-400'
+                            }`}>
+                              {done ? '✓' : index + 1}
+                            </span>
+                            <span className={`flex-1 text-sm font-semibold ${
+                              done ? 'text-emerald-800' : active ? 'text-blue-800' : 'text-slate-400'
+                            }`}>
+                              {item}
+                            </span>
+                            {done && <span className="text-[11px] font-bold text-emerald-600">Terminé</span>}
+                            {active && (
+                              <span className="flex items-center gap-1.5 text-[11px] font-bold text-blue-600">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                En cours…
+                              </span>
+                            )}
+                            {!done && !active && <span className="text-[11px] text-slate-400">En attente</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* ── Carte de succès ── */}
+                  {(launchResult || progress >= 100) && !launchError && (
+                    <div className="overflow-hidden rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-teal-50 shadow-sm">
+                      <div className="px-6 py-5">
+                        <div className="flex items-start gap-4">
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-100">
+                            <CheckCircle2 className="h-6 w-6 text-emerald-600" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h3 className="text-lg font-black text-emerald-900">Segmentation terminée avec succès</h3>
+                            <p className="mt-0.5 text-sm text-emerald-700">L'analyse IA a été effectuée. Les masques de segmentation sont prêts à être examinés.</p>
+                          </div>
+                        </div>
+
+                        {/* Stats rapides */}
+                        <div className="mt-4 grid grid-cols-3 gap-3">
+                          <div className="rounded-xl border border-emerald-200 bg-white/70 px-3 py-2.5 text-center">
+                            <p className="text-xl font-black text-emerald-700">{launchResult?.count ?? selectedSlices.length}</p>
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-500">coupes traitées</p>
+                          </div>
+                          <div className="rounded-xl border border-emerald-200 bg-white/70 px-3 py-2.5 text-center">
+                            <p className="text-sm font-black text-emerald-700">{modelKeyToDisplayName(selectedModel)}</p>
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-500">modèle utilisé</p>
+                          </div>
+                          <div className="rounded-xl border border-emerald-200 bg-white/70 px-3 py-2.5 text-center">
+                            <p className="text-sm font-black text-emerald-700">{DEFAULT_SEGMENTATION_THRESHOLD}</p>
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-500">seuil confiance</p>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex flex-wrap items-center gap-2">
+                          <button type="button" onClick={openSegmentationResults}
+                            className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm shadow-emerald-200 transition hover:bg-emerald-700">
+                            <CheckCircle2 className="h-4 w-4" />
+                            Voir les résultats
+                          </button>
+                          <button type="button" onClick={() => setStep(2)}
+                            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
+                            <ChevronLeft className="h-4 w-4" />
+                            Modifier les coupes
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   </>
                 )}
               </div>
             )}
           </div>
+          {step === 1 && (
+            <div className="shrink-0 px-6 py-4 bg-white border-t border-slate-100 flex items-center justify-between">
+              <p className="text-sm text-slate-500">Étape <strong>1</strong> sur 3</p>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => navigate(-1)}
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
+                  Annuler
+                </button>
+                {patientSelectMode === 'existing' ? (
+                  <button type="button" disabled={!selectedPatient} onClick={() => setStep(2)}
+                    className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2 text-sm font-bold text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    Confirmer le patient
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                ) : (
+                  <button type="button" onClick={npHandleSubmit} disabled={npSubmitting}
+                    className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2 text-sm font-bold text-white shadow-sm transition hover:from-blue-700 hover:to-indigo-700 disabled:opacity-60">
+                    {npSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+                    {npSubmitting ? 'Création…' : 'Créer et continuer'}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </main>
 
       {launchConfirmOpen && step === 2 ? (
         <div
-          className="fixed inset-0 z-[250] flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-[250] flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-[3px]"
           role="dialog"
           aria-modal="true"
           aria-labelledby="launch-confirm-title"
           onClick={() => setLaunchConfirmOpen(false)}
         >
           <div
-            className="max-h-[90vh] w-full max-w-lg overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl"
+            className="max-h-[92vh] w-full max-w-lg overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="border-b border-slate-100 px-5 py-4">
-              <h2 id="launch-confirm-title" className="text-lg font-semibold text-slate-900">
-                Confirmer le lancement de la segmentation
-              </h2>
-              <p className="mt-1 text-sm text-slate-600">
-                Vérifiez le patient et la liste des coupes avant d&apos;exécuter le modèle.
-              </p>
+            {/* ── En-tête gradient ── */}
+            <div className="relative overflow-hidden bg-gradient-to-r from-[#0f1f4b] via-[#0e2d82] to-[#1a3a8f] px-6 py-5">
+              <span className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/5 pointer-events-none" />
+              <span className="absolute right-16 -bottom-4 h-20 w-20 rounded-full bg-white/5 pointer-events-none" />
+              <div className="relative flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15 shadow-inner">
+                  <Brain className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <h2 id="launch-confirm-title" className="text-base font-black text-white">
+                    Confirmer le lancement de la segmentation
+                  </h2>
+                  <p className="mt-0.5 text-[12px] text-blue-200">
+                    Vérifiez attentivement les paramètres avant de démarrer l'analyse IA
+                  </p>
+                </div>
+              </div>
             </div>
-            <div className="max-h-[min(52vh,22rem)] space-y-3 overflow-y-auto px-5 py-4 text-sm">
-              <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <div>
-                  <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Patient</dt>
-                  <dd className="font-medium text-slate-900">{getPatientName(selectedPatient || {})}</dd>
+
+            {/* ── Corps scrollable ── */}
+            <div className="max-h-[min(58vh,28rem)] overflow-y-auto px-6 py-5 space-y-4">
+
+              {/* Question centrale */}
+              <div className="rounded-xl border-2 border-blue-200 bg-blue-50 px-4 py-3.5">
+                <p className="text-sm font-bold text-blue-900 leading-relaxed">
+                  Êtes-vous sûr de vouloir lancer la segmentation avec le{' '}
+                  <span className="text-blue-700">{modelKeyToDisplayName(selectedModel)} (modèle par défaut)</span>{' '}
+                  sur les{' '}
+                  <span className="text-xl font-black text-blue-700">{selectedSlices.length}</span>{' '}
+                  coupe{selectedSlices.length > 1 ? 's' : ''} sélectionnée{selectedSlices.length > 1 ? 's' : ''} ?
+                </p>
+              </div>
+
+              {/* Résumé en 4 cards */}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Patient</p>
+                  <p className="mt-0.5 truncate text-sm font-bold text-slate-800">
+                    {getPatientName(selectedPatient || {})}
+                  </p>
+                  {selectedPatient?.dossier_number && (
+                    <p className="font-mono text-[11px] text-slate-500">{selectedPatient.dossier_number}</p>
+                  )}
                 </div>
-                <div>
-                  <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Modèle</dt>
-                  <dd className="font-medium text-slate-900">{modelKeyToDisplayName(selectedModel)}</dd>
+                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Modèle IA</p>
+                  <p className="mt-0.5 text-sm font-bold text-slate-800">{modelKeyToDisplayName(selectedModel)}</p>
+                  <p className="text-[11px] text-slate-500">Segmentation hippocampe</p>
                 </div>
-                <div>
-                  <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Seuil</dt>
-                  <dd className="font-mono text-slate-900">{DEFAULT_SEGMENTATION_THRESHOLD}</dd>
+                <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2.5">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-blue-400">Coupes à analyser</p>
+                  <p className="mt-0.5 text-2xl font-black tabular-nums text-blue-700">{selectedSlices.length}</p>
+                  <p className="text-[11px] text-blue-500">sur {slices.length} coupes disponibles</p>
                 </div>
-                <div>
-                  <dt className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Coupes sélectionnées</dt>
-                  <dd className="font-semibold tabular-nums text-slate-900">{selectedSlices.length}</dd>
+                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Seuil de confiance</p>
+                  <p className="mt-0.5 text-sm font-bold text-slate-800">{DEFAULT_SEGMENTATION_THRESHOLD}</p>
+                  <p className="text-[11px] text-slate-500">Paramètre par défaut</p>
                 </div>
-              </dl>
-              <div>
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Détail des coupes</p>
-                <ul className="space-y-1.5 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-[13px]">
+              </div>
+
+              {/* Avertissement coupes de faible qualité incluses */}
+              {(() => {
+                const lowQty = selectedSlices.filter((id) => {
+                  const q = sliceQuality[String(id)];
+                  return q?.is_empty === true || q?.is_low_content === true;
+                }).length;
+                return lowQty > 0 ? (
+                  <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                    <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                      <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                    <div>
+                      <p className="text-xs font-bold text-amber-800">
+                        {lowQty} coupe{lowQty > 1 ? 's' : ''} à faible qualité incluse{lowQty > 1 ? 's' : ''}
+                      </p>
+                      <p className="mt-0.5 text-[11px] leading-relaxed text-amber-700">
+                        Ces coupes ont été détectées comme vides ou à faible contenu cérébral lors du preprocessing. Leur inclusion peut réduire la précision de la segmentation.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2.5 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-2.5">
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                    <p className="text-[11px] font-medium text-emerald-800">
+                      Toutes les coupes sélectionnées ont une qualité suffisante pour l'analyse.
+                    </p>
+                  </div>
+                );
+              })()}
+
+              {/* Durée estimée + info arrière-plan */}
+              <div className="flex items-start gap-2.5 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                <Zap className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                <p className="text-[11px] leading-relaxed text-slate-600">
+                  <span className="font-bold text-slate-700">Durée estimée : </span>
+                  environ {Math.max(1, Math.ceil(selectedSlices.length / 10))} min selon la charge serveur.
+                  L'analyse s'exécute en arrière-plan — vous pouvez suivre la progression en temps réel à l'étape suivante.
+                </p>
+              </div>
+
+              {/* Détail des coupes — accordéon */}
+              <details className="group rounded-xl border border-slate-100 bg-slate-50">
+                <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-[11px] font-bold text-slate-600 hover:text-blue-700">
+                  <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+                  Voir le détail des {selectedSlices.length} coupes sélectionnées
+                </summary>
+                <ul className="max-h-36 overflow-y-auto border-t border-slate-100 px-4 py-2 space-y-1">
                   {launchConfirmationLines.map((line) => (
-                    <li key={line.id} className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 border-b border-slate-100/80 py-1.5 last:border-0">
-                      <span className="font-medium text-primary">{line.coupe}</span>
-                      <span className="min-w-0 flex-1 break-all text-right text-slate-600" title={line.filename}>
-                        {line.filename}
-                      </span>
-                      <span className="shrink-0 font-mono text-[11px] text-slate-400">id {line.id}</span>
+                    <li key={line.id} className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 border-b border-slate-100/60 py-1 last:border-0">
+                      <span className="text-[12px] font-bold text-blue-700">{line.coupe}</span>
+                      <span className="min-w-0 flex-1 break-all text-right text-[11px] text-slate-500">{line.filename}</span>
                     </li>
                   ))}
                 </ul>
-              </div>
+              </details>
             </div>
-            <div className="flex flex-col-reverse gap-2 border-t border-slate-100 bg-slate-50/90 px-5 py-4 sm:flex-row sm:justify-end">
+
+            {/* ── Footer ── */}
+            <div className="flex flex-col-reverse gap-2 border-t border-slate-100 bg-white px-6 py-4 sm:flex-row sm:justify-end">
               <button
                 type="button"
                 onClick={() => setLaunchConfirmOpen(false)}
-                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
               >
-                Annuler — modifier la sélection
+                Non, modifier la sélection
               </button>
               <button
                 type="button"
@@ -3973,9 +4373,10 @@ export default function NouvelleSegmentation() {
                   setLaunchConfirmOpen(false);
                   setStep(3);
                 }}
-                className="rounded-lg bg-[#2563eb] px-4 py-2 text-sm font-medium text-white hover:bg-[#1d4ed8]"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-md shadow-blue-200 transition hover:bg-blue-700"
               >
-                Confirmer et lancer
+                <Brain className="h-4 w-4" />
+                Oui, lancer l'analyse sur {selectedSlices.length} coupe{selectedSlices.length > 1 ? 's' : ''}
               </button>
             </div>
           </div>
@@ -4035,6 +4436,149 @@ export default function NouvelleSegmentation() {
           </div>
         </div>
       ) : null}
+
+      {/* ══════════════════════════════════════════════════════════════
+          MODAL — Confirmation validation finale & reconstruction 3D
+      ══════════════════════════════════════════════════════════════ */}
+      {validateConfirmOpen && (
+        <div
+          className="fixed inset-0 z-[270] flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-[3px]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="validate-confirm-title"
+          onClick={() => setValidateConfirmOpen(false)}
+        >
+          <div
+            className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* ── En-tête gradient émeraude ── */}
+            <div className="relative overflow-hidden bg-gradient-to-r from-emerald-700 via-emerald-600 to-teal-600 px-6 py-5">
+              <span className="absolute -right-6 -top-6 h-28 w-28 rounded-full bg-white/10 pointer-events-none" />
+              <span className="absolute right-14 -bottom-4 h-16 w-16 rounded-full bg-white/10 pointer-events-none" />
+              <div className="relative flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/20 shadow-inner">
+                  <CheckCircle2 className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <h2 id="validate-confirm-title" className="text-base font-black text-white">
+                    Valider la segmentation ?
+                  </h2>
+                  <p className="mt-0.5 text-[12px] text-emerald-100">
+                    Cette action finalise l'analyse et lance la reconstruction 3D
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* ── Corps ── */}
+            <div className="px-6 py-5 space-y-4">
+
+              {/* Question centrale */}
+              <div className="rounded-xl border-2 border-emerald-200 bg-emerald-50 px-4 py-3.5">
+                <p className="text-sm font-bold text-emerald-900 leading-relaxed">
+                  Êtes-vous sûr de vouloir valider cette segmentation et passer à la reconstruction 3D ?
+                </p>
+                <p className="mt-1 text-xs text-emerald-700">
+                  Une fois validée, la segmentation sera transmise au module de modélisation volumétrique.
+                </p>
+              </div>
+
+              {/* Récapitulatif */}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Patient</p>
+                  <p className="mt-0.5 truncate text-sm font-bold text-slate-800">{getPatientName(selectedPatient || {})}</p>
+                  {selectedPatient?.dossier_number && (
+                    <p className="font-mono text-[11px] text-slate-500">{selectedPatient.dossier_number}</p>
+                  )}
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Modèle utilisé</p>
+                  <p className="mt-0.5 text-sm font-bold text-slate-800">
+                    {runSummary?.model_version || modelKeyToDisplayName(runSummary?.model_key) || 'Modèle 1'}
+                  </p>
+                  <p className="text-[11px] text-slate-500">Segmentation hippocampe</p>
+                </div>
+                <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">Coupes validées</p>
+                  <p className="mt-0.5 text-2xl font-black tabular-nums text-emerald-700">{reviewStats.validated}</p>
+                  <p className="text-[11px] text-emerald-500">sur {reviewStats.total} coupes traitées</p>
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Statut</p>
+                  {reviewStats.rejected > 0 && (
+                    <p className="mt-0.5 text-[11px] font-semibold text-red-600">
+                      {reviewStats.rejected} coupe{reviewStats.rejected > 1 ? 's' : ''} rejetée{reviewStats.rejected > 1 ? 's' : ''}
+                    </p>
+                  )}
+                  {reviewStats.pending > 0 && (
+                    <p className="text-[11px] font-semibold text-amber-600">
+                      {reviewStats.pending} coupe{reviewStats.pending > 1 ? 's' : ''} en attente
+                    </p>
+                  )}
+                  {reviewStats.pending === 0 && reviewStats.rejected === 0 && (
+                    <p className="mt-0.5 text-[11px] font-bold text-emerald-600">Toutes validées</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Avertissement si coupes non examinées */}
+              {reviewStats.pending > 0 && (
+                <div className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                  <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+                  <div>
+                    <p className="text-xs font-bold text-amber-800">
+                      {reviewStats.pending} coupe{reviewStats.pending > 1 ? 's' : ''} non examinée{reviewStats.pending > 1 ? 's' : ''}
+                    </p>
+                    <p className="mt-0.5 text-[11px] leading-relaxed text-amber-700">
+                      Vous n'avez pas encore statué sur toutes les coupes. La validation inclura ces coupes telles quelles.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Ce qui se passe ensuite */}
+              <div className="flex items-start gap-2.5 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
+                <Brain className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
+                <div>
+                  <p className="text-xs font-bold text-blue-800">Prochaine étape : Reconstruction 3D</p>
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-blue-700">
+                    Les masques de segmentation validés seront assemblés en un volume 3D de l'hippocampe, visualisable et exportable.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* ── Footer ── */}
+            <div className="flex flex-col-reverse gap-2 border-t border-slate-100 bg-white px-6 py-4 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setValidateConfirmOpen(false)}
+                className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                Non, continuer l'examen
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setValidateConfirmOpen(false);
+                  const rid = effectiveRunId;
+                  if (!Number.isFinite(rid) || rid <= 0) return;
+                  navigate(`/segmentation/modelisation?run=${rid}`);
+                }}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white shadow-md shadow-emerald-200 transition hover:bg-emerald-700"
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                Oui, valider et passer à la reconstruction 3D
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

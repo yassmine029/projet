@@ -1,134 +1,73 @@
 import React, { useState, useEffect } from 'react'
-import { Activity, Lock, ArrowLeft, Shield, CheckCircle, Eye, EyeOff, Clock, ArrowRight } from 'lucide-react'
+import { Lock, ArrowLeft, Shield, Eye, EyeOff, Clock, ArrowRight, Brain, CheckCircle2 } from 'lucide-react'
+import { validateResetToken, resetPassword, validateActivationToken, activateAccount } from '../api'
 
-// Full-page minimal state — matches dub.co expired link style
+// Full-page minimal state — modern clinical style
 const MinimalStatePage = ({ type, errorMessage, onNavigate }) => {
   const isExpired = type === 'expired'
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 100,
-      display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center',
-      padding: '24px',
-      background: '#f8fafc',
-      backgroundImage: 'linear-gradient(rgba(10,17,114,0.045) 1px, transparent 1px), linear-gradient(90deg, rgba(10,17,114,0.045) 1px, transparent 1px)',
-      backgroundSize: '40px 40px',
-    }}>
+    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 relative overflow-hidden font-sans">
+      {/* Background Gradients */}
+      <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-blue-100/30 rounded-full blur-[120px] -z-10 translate-x-1/2 -translate-y-1/2"></div>
+      <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-slate-100/40 rounded-full blur-[120px] -z-10 -translate-x-1/2 translate-y-1/2"></div>
 
-      {/* Radial gradient glow */}
-      <div style={{
-        position: 'absolute', inset: 0, pointerEvents: 'none',
-        background: 'radial-gradient(ellipse 700px 500px at 50% 50%, rgba(220,230,255,0.55), transparent)',
-      }} />
-
-      {/* Top-left branding */}
-      <div style={{ position: 'absolute', top: '28px', left: '32px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-        <div style={{ width: '36px', height: '36px', background: '#0A1172', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Activity size={20} color="white" />
+      {/* Topbranding */}
+      <div className="absolute top-8 left-8 flex items-center gap-3">
+        <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-600/20">
+          <Brain className="w-6 h-6 text-white" />
         </div>
-        <span style={{ fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>VisionMed</span>
+        <span className="text-xl font-extrabold text-slate-900 tracking-tight">NeuroScan</span>
       </div>
 
       {/* Main content */}
-      <div style={{ position: 'relative', textAlign: 'center', maxWidth: '500px', width: '100%' }}>
-
-        {/* Icon circle — Clock for both error and expired (time-based security) */}
-        <div style={{
-          width: '80px', height: '80px',
-          borderRadius: '50%',
-          background: 'white',
-          border: '1px solid #e2e8f0',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          margin: '0 auto 32px auto',
-          boxShadow: '0 1px 8px rgba(0,0,0,0.07)',
-        }}>
-          <Clock size={32} color="#94a3b8" strokeWidth={1.5} />
+      <div className="max-w-md w-full text-center space-y-8 relative z-10">
+        <div className="w-20 h-20 bg-white border border-slate-200 rounded-3xl shadow-xl flex items-center justify-center mx-auto">
+          <Clock size={32} className="text-slate-400" strokeWidth={1.5} />
         </div>
 
-        {/* Title */}
-        <h1 style={{
-          fontSize: '44px', fontWeight: '800',
-          color: '#0f172a', margin: '0 0 14px 0',
-          letterSpacing: '-1.5px', lineHeight: '1.1',
-        }}>
-          {isExpired ? 'Lien expiré' : 'Lien invalide'}
-        </h1>
+        <div className="space-y-4">
+          <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight leading-tight uppercase">
+            {isExpired ? 'Lien expiré' : 'Lien invalide'}
+          </h1>
+          <p className="text-slate-500 leading-relaxed font-medium">
+            {isExpired
+              ? 'Ce lien de réinitialisation a expiré. Pour votre sécurité, les liens sont valides pendant 15 minutes.'
+              : (errorMessage || 'Ce lien de réinitialisation est invalide ou a déjà été utilisé.')
+            }
+          </p>
+        </div>
 
-        {/* Description */}
-        <p style={{
-          fontSize: '16px', color: '#64748b',
-          fontWeight: '400', lineHeight: '1.65',
-          margin: '0 0 40px 0',
-        }}>
-          {isExpired
-            ? 'Ce lien de réinitialisation a expiré. Les liens sont valides pendant 15 minutes seulement.'
-            : (errorMessage || 'Ce lien de réinitialisation est invalide ou a déjà été utilisé.')
-          }
-        </p>
+        <div className="flex flex-col gap-3 pt-4">
+          <button
+            onClick={() => onNavigate('forgot-password')}
+            className="w-full flex justify-center items-center gap-2 py-4 px-8 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-700 hover:shadow-xl hover:shadow-blue-600/20 transition-all active:scale-[0.98]"
+          >
+            <span className="text-sm">Demander un nouveau lien</span> <ArrowRight size={18} />
+          </button>
 
-        {/* Primary pill button — navy blue */}
-        <button
-          onClick={() => onNavigate('forgot-password')}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: '8px',
-            padding: '13px 36px',
-            borderRadius: '999px',
-            border: 'none',
-            background: '#0A1172',
-            color: 'white',
-            fontSize: '15px', fontWeight: '600',
-            cursor: 'pointer',
-            boxShadow: '0 4px 20px rgba(10,17,114,0.28)',
-            marginBottom: '14px',
-          }}
-        >
-          Demander un nouveau lien <ArrowRight size={16} />
-        </button>
+          <button
+            onClick={() => onNavigate('login')}
+            className="w-full flex justify-center items-center gap-2 py-3.5 px-8 bg-white border border-slate-200 text-slate-600 font-bold rounded-2xl hover:bg-slate-50 transition-all active:scale-[0.98]"
+          >
+            <ArrowLeft size={16} /> <span className="text-xs uppercase tracking-widest font-black">Retour à la connexion</span>
+          </button>
+        </div>
 
-        <br />
-
-        {/* Secondary button */}
-        <button
-          onClick={() => onNavigate('login')}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: '6px',
-            padding: '10px 24px',
-            borderRadius: '999px',
-            border: '1.5px solid #e2e8f0',
-            background: 'white',
-            color: '#64748b',
-            fontSize: '14px', fontWeight: '500',
-            cursor: 'pointer',
-            marginTop: '4px',
-          }}
-        >
-          <ArrowLeft size={14} /> Retour à la connexion
-        </button>
-
-        {/* Support */}
-        <p style={{ marginTop: '44px', fontSize: '13px', color: '#94a3b8' }}>
-          Besoin d'aide ?{' '}
-          <a href="mailto:admin@visionmed.com" style={{ color: '#0A1172', fontWeight: '600', textDecoration: 'none' }}>
-            admin@visionmed.com
-          </a>
+        <p className="text-xs text-slate-400 pt-8 uppercase tracking-widest font-bold">
+          Besoin d'aide ? <a href="mailto:admin@neuroscan.med" className="text-blue-600 hover:underline font-bold">admin@neuroscan.med</a>
         </p>
       </div>
 
       {/* Bottom badges */}
-      <div style={{
-        position: 'absolute', bottom: '24px',
-        display: 'flex', gap: '28px',
-        fontSize: '11px', fontWeight: '600',
-        color: '#cbd5e1', textTransform: 'uppercase', letterSpacing: '1.5px',
-      }}>
+      <div className="absolute bottom-8 flex gap-8 text-[10px] font-black text-slate-300 uppercase tracking-widest">
         <span>ISO 27001</span><span>HIPAA Compliant</span><span>CE Class IIb</span>
       </div>
     </div>
   )
 }
 
-export default function ResetPasswordPage({ onNavigate, token }) {
+export default function ResetPasswordPage({ onNavigate, token, mode = 'reset' }) {
   const [step, setStep] = useState('form')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -139,39 +78,84 @@ export default function ResetPasswordPage({ onNavigate, token }) {
   const [confirmError, setConfirmError] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
   const [isValidatingToken, setIsValidatingToken] = useState(true)
+  /** Which backend flow to use after validation (activation vs password reset). */
+  const [effectiveMode, setEffectiveMode] = useState(() => (mode === 'activation' ? 'activation' : 'reset'))
+  const isActivationMode = effectiveMode === 'activation'
 
   useEffect(() => {
-    if (!token) {
+    setEffectiveMode(mode === 'activation' ? 'activation' : 'reset')
+  }, [mode])
+
+  useEffect(() => {
+    const normalized = (token || '').trim()
+    if (!normalized) {
       setStep('error')
       setErrorMessage('Lien de réinitialisation invalide')
       setIsValidatingToken(false)
       return
     }
-    const validateToken = async () => {
+    const validate = async () => {
+      setEffectiveMode(mode === 'activation' ? 'activation' : 'reset')
       try {
-        const response = await fetch('http://localhost:8000/api/validate_reset_token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token }),
-        })
-        const data = await response.json()
-        if (!response.ok) {
-          if (data.error_type === 'token_expired') setStep('expired')
-          else { setStep('error'); setErrorMessage(data.error || 'Lien invalide') }
-        } else { setStep('form') }
-      } catch { setStep('error'); setErrorMessage('Erreur lors de la validation du lien') }
-      finally { setIsValidatingToken(false) }
+        const primaryIsActivation = mode === 'activation'
+        const tryActivation = () => validateActivationToken(normalized)
+        const tryReset = () => validateResetToken(normalized)
+
+        const first = primaryIsActivation ? await tryActivation() : await tryReset()
+        if (first.data?.ok) {
+          setEffectiveMode(primaryIsActivation ? 'activation' : 'reset')
+          setStep('form')
+          return
+        }
+        if (first.data?.error_type === 'token_expired') {
+          setStep('expired')
+          return
+        }
+        // App.jsx redirects "/?token=" to /reset-password — that validates reset tokens only.
+        // Activation links then wrongly hit validate_reset_token → token_invalid. Try the other API.
+        if (first.data?.error_type === 'token_invalid') {
+          const second = primaryIsActivation ? await tryReset() : await tryActivation()
+          if (second.data?.ok) {
+            setEffectiveMode(primaryIsActivation ? 'reset' : 'activation')
+            setStep('form')
+            return
+          }
+          if (second.data?.error_type === 'token_expired') {
+            setStep('expired')
+            return
+          }
+          setStep('error')
+          setErrorMessage(second.data?.error || first.data?.error || 'Lien invalide')
+          return
+        }
+        setStep('error')
+        setErrorMessage(first.data?.error || 'Lien invalide')
+      } catch (err) {
+        console.error(err)
+        const data = err?.response?.data
+        if (data?.error_type === 'token_expired') {
+          setStep('expired')
+        } else if (data?.error_type === 'token_invalid') {
+          setStep('error')
+          setErrorMessage(data?.error || 'Lien invalide')
+        } else {
+          setStep('error')
+          setErrorMessage('Erreur lors de la validation du lien')
+        }
+      } finally {
+        setIsValidatingToken(false)
+      }
     }
-    validateToken()
-  }, [token])
+    validate()
+  }, [token, mode])
 
   const validatePassword = (pwd) => {
     if (!pwd) return 'Le mot de passe est requis'
-    if (pwd.length < 8) return 'Le mot de passe doit contenir au moins 8 caractères'
-    if (!/[A-Z]/.test(pwd)) return 'Le mot de passe doit contenir au moins une majuscule'
-    if (!/[a-z]/.test(pwd)) return 'Le mot de passe doit contenir au moins une minuscule'
-    if (!/[0-9]/.test(pwd)) return 'Le mot de passe doit contenir au moins un chiffre'
-    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pwd)) return 'Le mot de passe doit contenir au moins un caractère spécial (!@#$%^&*...)'
+    if (pwd.length < 8) return 'Minimum 8 caractères requis'
+    if (!/[A-Z]/.test(pwd)) return 'Une majuscule requise'
+    if (!/[a-z]/.test(pwd)) return 'Une minuscule requise'
+    if (!/[0-9]/.test(pwd)) return 'Un chiffre requis'
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pwd)) return 'Un caractère spécial requis'
     return ''
   }
 
@@ -181,19 +165,34 @@ export default function ResetPasswordPage({ onNavigate, token }) {
     if (v) { setPasswordError(v); return }
     if (newPassword !== confirmPassword) { setConfirmError('Les mots de passe ne correspondent pas'); setPasswordError(''); return }
     setIsLoading(true); setPasswordError(''); setConfirmError(''); setErrorMessage('')
+    const normalized = (token || '').trim()
     try {
-      const response = await fetch('http://localhost:8000/api/reset_password', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ token, new_password: newPassword }),
-      })
-      const data = await response.json()
-      if (!response.ok) {
-        if (data.error_type === 'token_expired') setStep('expired')
-        else if (data.error_type === 'token_invalid') { setStep('error'); setErrorMessage('Lien invalide ou expiré') }
-        else { setStep('error'); setErrorMessage(data.error || 'Erreur inconnue') }
-      } else { setStep('success') }
-    } catch { setStep('error'); setErrorMessage('Erreur de connexion. Veuillez réessayer.') }
-    finally { setIsLoading(false) }
+      const response = isActivationMode
+        ? await activateAccount(normalized, newPassword)
+        : await resetPassword(normalized, newPassword)
+      if (response.data && response.data.ok) {
+        setStep('success')
+      } else {
+        const data = response.data
+        if (data?.error_type === 'token_expired') setStep('expired')
+        else if (data?.error_type === 'token_invalid') { setStep('error'); setErrorMessage('Lien invalide ou expiré') }
+        else { setStep('error'); setErrorMessage(data?.error || 'Erreur inconnue') }
+      }
+    } catch (err) {
+      console.error(err)
+      const data = err?.response?.data
+      if (data?.error_type === 'token_expired') {
+        setStep('expired')
+      } else if (data?.error_type === 'token_invalid') {
+        setStep('error')
+        setErrorMessage(data?.error || 'Lien invalide ou expiré')
+      } else {
+        setStep('error')
+        setErrorMessage('Erreur de connexion. Veuillez réessayer.')
+      }
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   if (!isValidatingToken && (step === 'error' || step === 'expired')) {
@@ -201,134 +200,219 @@ export default function ResetPasswordPage({ onNavigate, token }) {
   }
 
   return (
-    <div className="min-h-screen flex bg-blue-50 font-sans">
-      <div className="flex-1 flex flex-col justify-center px-4 sm:px-6 lg:px-20 xl:px-24 py-12">
-        <div className="mx-auto w-full max-w-sm lg:w-96 py-8">
+    <div className="min-h-screen flex bg-[#e9eef8] font-sans selection:bg-blue-100 selection:text-blue-900">
+      <div className="fixed top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-400 via-blue-600 to-blue-800 z-50"></div>
 
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 bg-blue-900 rounded-xl flex items-center justify-center">
-              <Activity className="w-6 h-6 text-white" />
+      <div className="flex-1 flex flex-col justify-center px-8 sm:px-16 lg:px-24 xl:px-32 relative py-12">
+        <div className="absolute top-0 left-0 w-full h-full bg-[#e9eef8] -z-10"></div>
+        
+        <div className="max-w-md w-full mx-auto space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-700">
+          
+          <div className="space-y-6">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-600/30">
+                <Brain className="w-7 h-7 text-white" />
+              </div>
+              <span className="text-2xl font-extrabold text-slate-900 tracking-tight">NeuroScan</span>
             </div>
-            <span className="text-2xl font-bold text-gray-800 tracking-tight">VisionMed</span>
+            
+            <button 
+              onClick={() => onNavigate('login')}
+              className="flex items-center gap-2 text-sm font-bold text-slate-400 hover:text-blue-600 transition-colors group"
+            >
+              <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
+              Retour à la connexion
+            </button>
           </div>
 
-          <div className="flex items-center gap-2 mb-8 mt-6">
-            <div className="w-7 h-7 rounded-full flex items-center justify-center bg-emerald-500 text-white"><CheckCircle className="w-4 h-4" /></div>
-            <div className="flex-1 h-0.5 bg-emerald-400"></div>
-            <div className="w-7 h-7 rounded-full flex items-center justify-center bg-emerald-500 text-white"><CheckCircle className="w-4 h-4" /></div>
-            <div className={`flex-1 h-0.5 ${step === 'form' || step === 'success' ? 'bg-emerald-400' : 'bg-gray-200'}`}></div>
-            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold ${step === 'form' || step === 'success' ? 'bg-emerald-500' : 'bg-red-600'}`}>
-              {step === 'form' || step === 'success' ? <CheckCircle className="w-4 h-4" /> : '3'}
-            </div>
+          <div className="flex items-center gap-4 py-2">
+            {[1, 2, 3].map((num) => {
+              const isDone = num < 3 || step === 'success';
+              const isActive = num === 3 && step === 'form';
+              
+              return (
+                <React.Fragment key={num}>
+                  <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-bold text-sm transition-all duration-500 shadow-sm
+                    ${isDone ? 'bg-emerald-500 text-white' : isActive ? 'bg-blue-600 text-white scale-110 shadow-blue-200' : 'bg-slate-100 text-slate-400'}`}>
+                    {isDone ? <CheckCircle2 className="w-5 h-5" /> : num}
+                  </div>
+                  {num < 3 && (
+                    <div className={`flex-1 h-1 rounded-full transition-all duration-500 ${isDone ? 'bg-emerald-200' : 'bg-slate-100'}`}></div>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </div>
 
-          <button onClick={() => onNavigate('login')} className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 transition-colors mb-6">
-            <ArrowLeft className="w-4 h-4" /> Retour à la connexion
-          </button>
-
-          {isValidatingToken && (
-            <div className="text-center py-12">
-              <div className="w-16 h-16 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4"></div>
-              <p className="font-semibold text-gray-600">Validation du lien en cours...</p>
+          {isValidatingToken ? (
+            <div className="text-center py-20 space-y-6">
+              <div className="w-12 h-12 border-4 border-slate-100 border-t-blue-600 rounded-full animate-spin mx-auto"></div>
+              <p className="text-slate-500 font-bold tracking-tight uppercase text-[10px]">Validation de sécurité...</p>
             </div>
-          )}
+          ) : step === 'form' ? (
+            <div className="space-y-8">
+              <div className="space-y-3">
+                <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight leading-tight uppercase">
+                  {isActivationMode ? 'Activation' : 'Nouveau'} <br/><span className="text-blue-600">mot de passe</span>
+                </h2>
+                <p className="text-slate-500 font-medium leading-relaxed">
+                  {isActivationMode
+                    ? 'Bienvenue sur NeuroScan. Choisissez votre mot de passe pour activer votre compte.'
+                    : 'Identité vérifiée. Veuillez choisir un nouveau mot de passe robuste.'}
+                </p>
+              </div>
 
-          {!isValidatingToken && step === 'form' && (
-            <div>
-              <h2 className="text-3xl font-extrabold text-blue-900 tracking-tight mb-2">Réinitialiser votre mot de passe</h2>
-              <p className="text-gray-500 font-light mb-8">Entrez votre nouveau mot de passe en respectant les critères de sécurité.</p>
-              <div className="bg-white border border-gray-200 rounded-xl p-4 mb-6">
-                <div className="flex items-start gap-3">
-                  <Shield className="w-5 h-5 text-gray-500 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <p className="text-sm font-semibold text-gray-700">Critères de sécurité requis</p>
-                    <ul className="text-xs text-gray-500 mt-2 space-y-1 font-light">
-                      <li>✓ Au minimum 8 caractères</li>
-                      <li>✓ Au moins une majuscule (A-Z)</li>
-                      <li>✓ Au moins une minuscule (a-z)</li>
-                      <li>✓ Au moins un chiffre (0-9)</li>
-                      <li>✓ Au moins un caractère spécial (!@#$%^&*...)</li>
+              <div className="bg-white border border-blue-50 p-6 rounded-3xl shadow-sm space-y-4 relative overflow-hidden group">
+                <div className="flex items-start gap-4 relative z-10">
+                  <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <Shield className="w-5 h-5 text-blue-600" />
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-sm font-bold text-slate-900 leading-tight">Exigences de sécurité</p>
+                    <ul className="text-[10px] text-slate-400 grid grid-cols-2 gap-x-4 gap-y-1 font-bold">
+                      <li className="flex items-center gap-1.5"><div className="w-1 h-1 bg-blue-400 rounded-full"></div> 8+ caractères</li>
+                      <li className="flex items-center gap-1.5"><div className="w-1 h-1 bg-blue-400 rounded-full"></div> Majuscules</li>
+                      <li className="flex items-center gap-1.5"><div className="w-1 h-1 bg-blue-400 rounded-full"></div> Minuscules</li>
+                      <li className="flex items-center gap-1.5 col-span-2"><div className="w-1 h-1 bg-blue-400 rounded-full"></div> Caractères spéciaux</li>
                     </ul>
                   </div>
                 </div>
               </div>
-              <form onSubmit={handleResetPassword}>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">Nouveau mot de passe</label>
-                <div className="relative mb-4">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Lock className="h-5 w-5 text-gray-400" /></div>
-                  <input type={showPassword ? 'text' : 'password'} value={newPassword}
-                    onChange={(e) => { setNewPassword(e.target.value); setPasswordError('') }}
-                    className={`block w-full pl-10 pr-10 py-3 border ${passwordError ? 'border-red-300' : 'border-gray-200'} rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-900 sm:text-sm text-gray-900`}
-                    placeholder="••••••••" />
-                  <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600">
-                    {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                  </button>
+
+              <form onSubmit={handleResetPassword} className="space-y-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Nouveau mot de passe</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                      <Lock className="h-5 w-5 text-slate-400" />
+                    </div>
+                    <input 
+                      type={showPassword ? 'text' : 'password'} 
+                      value={newPassword}
+                      onChange={(e) => { setNewPassword(e.target.value); setPasswordError('') }}
+                      className={`block w-full pl-12 pr-12 py-4 border ${passwordError ? 'border-red-300' : 'border-slate-100'} rounded-2xl bg-slate-50/50 focus:bg-white transition-all duration-300 placeholder-slate-300 focus:outline-none focus:ring-4 focus:ring-blue-500/10 sm:text-sm text-slate-900 font-medium`}
+                      placeholder="••••••••" 
+                    />
+                    <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute inset-y-0 right-4 flex items-center text-slate-400 hover:text-blue-600 transition-colors">
+                      {showPassword ? <EyeOff strokeWidth={2.5} className="w-4 h-4" /> : <Eye strokeWidth={2.5} className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  {passwordError && <p className="text-xs text-red-600 font-bold pl-1">{passwordError}</p>}
                 </div>
-                {passwordError && <p className="text-xs text-red-600 font-medium mb-4">{passwordError}</p>}
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">Confirmer le mot de passe</label>
-                <div className="relative mb-6">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Lock className="h-5 w-5 text-gray-400" /></div>
-                  <input type={showConfirmPassword ? 'text' : 'password'} value={confirmPassword}
-                    onChange={(e) => { setConfirmPassword(e.target.value); setConfirmError('') }}
-                    className={`block w-full pl-10 pr-10 py-3 border ${confirmError ? 'border-red-300' : 'border-gray-200'} rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-900 sm:text-sm text-gray-900`}
-                    placeholder="••••••••" />
-                  <button type="button" onClick={() => setShowConfirmPassword(!showConfirmPassword)} className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600">
-                    {showConfirmPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                  </button>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Confirmer le mot de passe</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                      <Lock className="h-5 w-5 text-slate-400" />
+                    </div>
+                    <input 
+                      type={showConfirmPassword ? 'text' : 'password'} 
+                      value={confirmPassword}
+                      onChange={(e) => { setConfirmPassword(e.target.value); setConfirmError('') }}
+                      className={`block w-full pl-12 pr-12 py-4 border ${confirmError ? 'border-red-300' : 'border-slate-100'} rounded-2xl bg-slate-50/50 focus:bg-white transition-all duration-300 placeholder-slate-300 focus:outline-none focus:ring-4 focus:ring-blue-500/10 sm:text-sm text-slate-900 font-medium`}
+                      placeholder="••••••••" 
+                    />
+                    <button type="button" onClick={() => setShowConfirmPassword(!showConfirmPassword)} className="absolute inset-y-0 right-4 flex items-center text-slate-400 hover:text-blue-600 transition-colors">
+                      {showConfirmPassword ? <EyeOff strokeWidth={2.5} className="w-4 h-4" /> : <Eye strokeWidth={2.5} className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  {confirmError && <p className="text-xs text-red-600 font-bold pl-1">{confirmError}</p>}
                 </div>
-                {confirmError && <p className="text-xs text-red-600 font-medium mb-4">{confirmError}</p>}
-                <button type="submit" disabled={isLoading}
-                  style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', padding: '14px', borderRadius: '12px', border: 'none', background: '#0A1172', color: 'white', fontSize: '14px', fontWeight: '600', cursor: isLoading ? 'not-allowed' : 'pointer', opacity: isLoading ? 0.6 : 1, boxShadow: '0 4px 16px rgba(10,17,114,0.25)' }}>
-                  {isLoading ? <span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></span> : <><span>Réinitialiser le mot de passe</span><ArrowRight size={16} /></>}
+
+                <button 
+                  type="submit" 
+                  disabled={isLoading}
+                  className="w-full h-14 flex justify-center items-center gap-3 py-4 bg-gradient-to-r from-blue-600 to-blue-800 text-white font-bold rounded-2xl hover:shadow-xl hover:shadow-blue-600/20 active:scale-[0.98] transition-all duration-300 group disabled:opacity-50"
+                >
+                  {isLoading ? (
+                    <span className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                  ) : (
+                    <>
+                      <span className="text-sm">{isActivationMode ? 'Activer mon compte' : 'Mettre à jour'}</span>
+                      <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                    </>
+                  )}
                 </button>
               </form>
             </div>
-          )}
-
-          {step === 'success' && (
-            <div className="text-center">
-              <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                <CheckCircle className="w-10 h-10 text-emerald-600" />
+          ) : step === 'success' ? (
+            <div className="text-center space-y-10 animate-in fade-in zoom-in duration-500">
+              <div className="space-y-4">
+                <div className="w-24 h-24 bg-emerald-50 rounded-3xl flex items-center justify-center mx-auto mb-6 ring-1 ring-emerald-100 shadow-sm">
+                  <CheckCircle2 className="w-12 h-12 text-emerald-600" />
+                </div>
+                <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">{isActivationMode ? 'Compte activé !' : 'Mot de passe mis à jour !'}</h2>
+                <p className="text-slate-500 font-medium">
+                  {isActivationMode
+                    ? 'Votre compte est maintenant actif. Vous pouvez vous connecter à la plateforme.'
+                    : 'Votre nouveau mot de passe a été enregistré avec succès.'}
+                </p>
               </div>
-              <h2 className="text-3xl font-extrabold text-blue-900 mb-2">Mot de passe réinitialisé !</h2>
-              <p className="text-gray-500 font-light mb-8">Votre mot de passe a été réinitialisé avec succès. Vous pouvez maintenant vous connecter.</p>
-              <button onClick={() => onNavigate('login')}
-                style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', padding: '14px', borderRadius: '12px', border: 'none', background: '#0A1172', color: 'white', fontSize: '14px', fontWeight: '600', cursor: 'pointer', boxShadow: '0 4px 16px rgba(10,17,114,0.25)' }}>
-                Se connecter <ArrowRight size={16} />
+              
+              <button 
+                onClick={() => onNavigate('login')}
+                className="w-full flex justify-center items-center gap-3 py-4 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold rounded-2xl hover:shadow-xl hover:shadow-emerald-600/20 active:scale-[0.98] transition-all duration-300 group"
+              >
+                <span className="text-sm">Accéder à la connexion</span> <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
               </button>
             </div>
-          )}
-
+          ) : null}
         </div>
       </div>
 
-      <div className="hidden lg:flex flex-1 relative" style={{ background: '#0A1172' }}>
-        <div className="absolute inset-0" style={{ background: 'linear-gradient(135deg, #1e3a8a 0%, #0A1172 100%)' }}></div>
-        <div className="relative z-10 w-full h-full flex flex-col justify-between p-20 text-white">
-          <div></div>
-          <div style={{ maxWidth: '420px' }}>
-            <h1 style={{ fontSize: '48px', fontWeight: '800', lineHeight: '1.15', letterSpacing: '-1px', marginBottom: '24px' }}>
-              La référence en imagerie de précision.
-            </h1>
-            <p style={{ fontSize: '16px', color: 'rgba(191,219,254,0.8)', fontWeight: '300', lineHeight: '1.7', marginBottom: '40px' }}>
-              "VisionMed a transformé notre flux de travail. Automatisez les étapes clés de l'imagerie médicale sans compromettre la précision."
+      <div className="hidden lg:flex w-[450px] xl:w-[550px] relative overflow-hidden bg-[#0a0f2c] flex-col justify-between p-16">
+        <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-blue-950 to-slate-950"></div>
+        <div className="absolute top-0 right-0 w-full h-full bg-[radial-gradient(circle_at_50%_0%,_rgba(59,130,246,0.15),transparent_50%)]"></div>
+        <div className="absolute bottom-0 left-0 w-full h-full bg-[radial-gradient(circle_at_0%_100%,_rgba(59,130,246,0.1),transparent_50%)]"></div>
+        
+        <div className="absolute top-1/4 -right-20 w-80 h-80 bg-blue-500/10 rounded-full blur-[100px] animate-pulse"></div>
+        <div className="absolute bottom-0 -left-20 w-80 h-80 bg-blue-400/5 rounded-full blur-[100px] animate-pulse" style={{ animationDelay: '2s' }}></div>
+
+        <div className="relative z-10">
+          <div className="inline-flex items-center gap-2 bg-white/5 border border-white/10 backdrop-blur-md rounded-full px-4 py-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping"></div>
+            <span className="text-[8px] font-black text-white uppercase tracking-widest">Medical Cloud Security</span>
+          </div>
+        </div>
+
+        <div className="relative z-10 space-y-10">
+          <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-blue-700 rounded-2xl p-0.5 shadow-2xl rotate-3">
+             <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center">
+                <Brain className="w-7 h-7 text-blue-400" />
+             </div>
+          </div>
+
+          <div className="space-y-6">
+            <h2 className="text-3xl font-extrabold text-white leading-tight tracking-tight">
+              Une sécurité <br/>
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-blue-200">
+                clinique sans faille.
+              </span>
+            </h2>
+            <p className="text-base text-blue-200/60 font-light leading-relaxed max-w-sm">
+              Accédez à vos outils de neuro-imagerie préférés en toute confiance.
             </p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-              <div style={{ display: 'flex' }}>
-                {[1,2,3].map(i => (
-                  <img key={i} src={`/assets/images/doctor${i}.jpg`} alt={`Médecin ${i}`}
-                    style={{ width: '44px', height: '44px', borderRadius: '50%', border: '2px solid rgba(96,165,250,0.6)', objectFit: 'cover', marginLeft: i > 1 ? '-10px' : 0 }} />
-                ))}
-              </div>
-              <div>
-                <p style={{ fontWeight: '700', fontSize: '14px', margin: 0 }}>Rejoignez 500+ experts</p>
-                <p style={{ color: 'rgba(191,219,254,0.7)', fontSize: '13px', margin: 0 }}>Radiologues & Neurologues</p>
-              </div>
-            </div>
           </div>
-          <div style={{ display: 'flex', gap: '32px', fontSize: '11px', fontWeight: '600', color: 'rgba(147,197,253,0.5)', textTransform: 'uppercase', letterSpacing: '2px' }}>
-            <span>ISO 27001</span><span>HIPAA Compliant</span><span>CE Class IIb</span>
+
+          <div className="grid grid-cols-2 gap-4 pt-4">
+             {[
+               { label: 'Chiffrement', val: 'AES-256' },
+               { label: 'Standard', val: 'HIPAA' },
+               { label: 'Infrastructure', val: 'HDS' },
+               { label: 'Audit Log', val: 'Tier-III' }
+             ].map((stat, i) => (
+               <div key={i} className="p-4 bg-white/5 border border-white/5 rounded-2xl backdrop-blur-sm group hover:bg-white/10 transition-colors">
+                  <p className="text-blue-400 font-extrabold text-[10px] uppercase tracking-widest mb-1">{stat.label}</p>
+                  <p className="text-white font-bold text-base tracking-tight">{stat.val}</p>
+               </div>
+             ))}
           </div>
+        </div>
+
+        <div className="relative z-10 flex gap-6 text-[10px] font-black text-white/30 uppercase tracking-widest">
+          <span>ISO 27001 Certified</span>
+          <span>NeuroScan Network</span>
         </div>
       </div>
     </div>

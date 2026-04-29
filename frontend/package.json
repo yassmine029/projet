@@ -14,6 +14,8 @@
     "@kitware/vtk.js": "^34.14.0",
     "@tailwindcss/postcss": "^4.1.18",
     "axios": "^1.7.2",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^4.2.1",
     "lucide-react": "^0.563.0",
     "mongodb": "^6.20.0",
     "react": "^18.2.0",

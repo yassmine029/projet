@@ -12,3 +12,9 @@ scikit-image
 scipy
 onnxruntime
 trimesh
+reportlab
+
+nibabel
+SimpleITK
+nilearn
+channels

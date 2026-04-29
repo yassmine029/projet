@@ -9,6 +9,10 @@ if sys.platform == 'win32':
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+# En dev, réutiliser frontend/.env pour VITE_ADMIN_DASHBOARD_* (portail admin SPA)
+_frontend_env = BASE_DIR.parent / 'frontend' / '.env'
+if _frontend_env.is_file():
+    load_dotenv(_frontend_env)
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'change-me')
 DEBUG = os.getenv('DEBUG', '1') == '1'
@@ -87,15 +91,31 @@ MEDIA_ROOT = os.getenv('MEDIA_ROOT', str(Path.home() / 'recalage_uploads'))
 os.makedirs(MEDIA_ROOT, exist_ok=True)
 MEDIA_URL = '/media/'
 
-CORS_ALLOW_ALL_ORIGINS = True
-CORS_ALLOWED_ORIGINS = [
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-]
+# Ne pas combiner ALLOW_ALL_ORIGINS + CREDENTIALS : le navigateur refuse les cookies de session.
+CORS_ALLOW_ALL_ORIGINS = False
+
+
+def _local_frontend_origins():
+    """Vite prend 5174, 5175… si 5173 est pris ; preview souvent 4173."""
+    out = []
+    for host in ('localhost', '127.0.0.1'):
+        for port in (3000, 4173, 4174, 5173, 5174, 5175, 5176, 5177, 5178, 5179, 5180):
+            out.append(f'http://{host}:{port}')
+    return out
+
+
+CORS_ALLOWED_ORIGINS = _local_frontend_origins()
 
 CORS_ALLOW_CREDENTIALS = True
+
+# Requis pour les POST avec session depuis le front (Django 4+)
+CSRF_TRUSTED_ORIGINS = list(CORS_ALLOWED_ORIGINS)
+
+# Session cookie : rester cohérent avec l’URL du front (préférer http://localhost:5173, pas 127.0.0.1 mélangé).
+SESSION_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SECURE = os.getenv('SESSION_COOKIE_SECURE', '0') == '1'
+SESSION_SAVE_EVERY_REQUEST = True
 
 CORS_ALLOW_METHODS = [
     'DELETE',

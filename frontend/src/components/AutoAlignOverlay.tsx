@@ -6,6 +6,8 @@ interface QualityMetrics {
   // Métrique principale IRM/PET — retournée par MINE ET par align() corrigé
   mutual_information?: number;
   mi_quality?: string;
+  /** Appareil PyTorch réel (ex. cuda:0, cpu) — renvoyé par le backend MINE 3D */
+  device?: string;
   // Métriques complémentaires — retournées par align()
   rmse?: number;
   normalized_rmse?: number;
@@ -19,6 +21,8 @@ interface AutoAlignOverlayProps {
   isVisible: boolean;
   status: 'processing' | 'success' | 'error';
   metrics?: QualityMetrics;
+  progressOverride?: number;
+  stageMessage?: string;
   errorMessage?: string;
   onClose?: () => void;
   algorithm?: 'ANTs' | 'MINE';
@@ -28,26 +32,29 @@ const AutoAlignOverlay: React.FC<AutoAlignOverlayProps> = ({
   isVisible,
   status,
   metrics,
+  progressOverride,
+  stageMessage,
   errorMessage,
   onClose,
   algorithm = 'MINE',
 }) => {
   const [elapsedTime, setElapsedTime] = useState(0);
-  const [progress, setProgress] = useState(0);
+  const [indeterminate, setIndeterminate] = useState(true);
 
+  // ✅ FIX: timer ne dépend QUE de `status` — si progressOverride change, le timer ne se remet PAS à 0
   useEffect(() => {
-    if (status === 'processing') {
-      setElapsedTime(0);
-      setProgress(0);
-      const timer = setInterval(() => {
-        setElapsedTime((prev) => prev + 0.1);
-        setProgress((prev) => prev < 90 ? prev + (90 - prev) * 0.05 : prev);
-      }, 100);
-      return () => clearInterval(timer);
-    } else if (status === 'success') {
-      setProgress(100);
-    }
-  }, [status]);
+    if (status !== 'processing') return;
+    setElapsedTime(0);
+    const timer = setInterval(() => {
+      setElapsedTime((prev) => prev + 0.1);
+    }, 100);
+    return () => clearInterval(timer);
+  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Mise à jour du mode indéterminé uniquement
+  useEffect(() => {
+    setIndeterminate(typeof progressOverride !== 'number');
+  }, [progressOverride]);
 
   if (!isVisible) return null;
 
@@ -77,21 +84,45 @@ const AutoAlignOverlay: React.FC<AutoAlignOverlayProps> = ({
                 <div className="spinner-ring"></div>
                 <div className="spinner-ring"></div>
                 <div className="spinner-ring"></div>
-                <div className="spinner-percentage">{Math.round(progress)}%</div>
-              </div>
-            </div>
-            <h2 className="overlay-title">Analyse en cours...</h2>
-            <p className="overlay-subtitle">
-              {algorithm === 'MINE'
-                ? "Le modèle Deep Learning MINE synchronise vos images"
-                : "L'algorithme ANTs SyN recalage vos données"}
-            </p>
-            <div className="progress-container">
-              <div className="progress-bar-bg">
-                <div className="progress-fill" style={{ width: `${progress}%` }}>
-                  <div className="progress-light" />
+                <div className="spinner-percentage">
+                  {typeof progressOverride === 'number' ? `${Math.round(progressOverride)}%` : '…'}
                 </div>
               </div>
+            </div>
+            <h2 className="overlay-title">Recalage en cours…</h2>
+            <p className="overlay-subtitle">
+              {algorithm === 'MINE'
+                ? 'Alignement neuronal automatique — veuillez patienter.'
+                : 'Optimisation ANTs SyN en cours — veuillez patienter.'}
+            </p>
+            {stageMessage && (
+              <div className="stage-badge">
+                <span className="stage-dot" />
+                {stageMessage}
+              </div>
+            )}
+            <div className="progress-container">
+              <div className="progress-bar-bg">
+                {indeterminate && typeof progressOverride !== 'number' ? (
+                  <div className="progress-fill progress-fill-indeterminate">
+                    <div className="progress-light" />
+                  </div>
+                ) : (
+                  <div
+                    className="progress-fill"
+                    style={{
+                      width: `${Math.max(0, Math.min(100, progressOverride ?? 0))}%`,
+                    }}
+                  >
+                    <div className="progress-light" />
+                  </div>
+                )}
+              </div>
+              {indeterminate && typeof progressOverride !== 'number' && (
+                <p className="progress-hint">
+                  Attente des premiers retours du moteur de recalage...
+                </p>
+              )}
             </div>
             <div className="elapsed-time">
               <span className="time-label">Temps écoulé :</span>
@@ -148,8 +179,21 @@ const AutoAlignOverlay: React.FC<AutoAlignOverlayProps> = ({
                   <div className="secondary-card">
                     <div className="card-icon">⚡</div>
                     <div className="card-content">
-                      <span className="card-label">Temps GPU</span>
+                      <span className="card-label">Temps total (serveur)</span>
                       <span className="card-value">{(metrics.processing_time_ms / 1000).toFixed(1)}s</span>
+                      {metrics.device !== undefined && (
+                        <span className="card-device">
+                          Appareil :{' '}
+                          <strong>
+                            {String(metrics.device).toLowerCase().includes('cuda')
+                              ? 'GPU (CUDA)'
+                              : String(metrics.device).toLowerCase().includes('mps')
+                                ? 'GPU (Apple MPS)'
+                                : 'CPU'}
+                          </strong>
+                          {` (${metrics.device})`}
+                        </span>
+                      )}
                     </div>
                   </div>
                 )}
@@ -347,7 +391,61 @@ const AutoAlignOverlay: React.FC<AutoAlignOverlayProps> = ({
  
          .progress-container { margin-bottom: 2rem; }
          .progress-bar-bg { height: 10px; background: #f1f5f9; border-radius: 6px; overflow: hidden; }
-         .progress-fill { position: relative; height: 100%; background: linear-gradient(90deg, #3b82f6, #8062f8); border-radius: 6px; transition: width 0.4s ease; }
+         .progress-fill { position: relative; height: 100%; background: linear-gradient(90deg, #3b82f6, #8062f8); border-radius: 6px; transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1); }
+         .progress-fill-indeterminate {
+           width: 38% !important;
+           animation: indeterminateSlide 1.6s ease-in-out infinite;
+         }
+         @keyframes indeterminateSlide {
+           0%   { transform: translateX(-120%); }
+           100% { transform: translateX(380%); }
+         }
+         .progress-hint {
+           margin: 0.65rem 0 0;
+           font-size: 0.72rem;
+           color: #94a3b8;
+           text-align: center;
+           line-height: 1.35;
+         }
+
+         /* Stage badge */
+         .stage-badge {
+           display: flex;
+           align-items: center;
+           justify-content: center;
+           gap: 0.5rem;
+           margin: -0.75rem auto 1.75rem;
+           padding: 0.45rem 1.1rem;
+           background: rgba(59, 130, 246, 0.07);
+           border: 1px solid rgba(59, 130, 246, 0.18);
+           border-radius: 20px;
+           font-size: 0.82rem;
+           font-weight: 600;
+           color: #2563eb;
+           max-width: 92%;
+           text-align: center;
+           line-height: 1.4;
+         }
+         .stage-dot {
+           flex-shrink: 0;
+           width: 7px;
+           height: 7px;
+           border-radius: 50%;
+           background: #3b82f6;
+           animation: pulseDot 1.4s ease-in-out infinite;
+         }
+         @keyframes pulseDot {
+           0%, 100% { opacity: 1; transform: scale(1); }
+           50%       { opacity: 0.4; transform: scale(0.65); }
+         }
+         .card-device {
+           display: block;
+           margin-top: 0.35rem;
+           font-size: 0.68rem;
+           color: #64748b;
+           font-weight: 500;
+           line-height: 1.3;
+         }
          .progress-light {
           position: absolute; top: 0; left: 0; right: 0; bottom: 0;
           background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);

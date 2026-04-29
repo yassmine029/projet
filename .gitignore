@@ -14,6 +14,11 @@ __pycache__/
 # Base de donnees
 *.sqlite3
 db.sqlite3
+backend_django/db_backups/*.json
+backend_django/db_backups/_*.py
+# Exports DB accidentels (scripts PowerShell)
+backend_django/*.json
+backend_django/db_export*
 
 # Fichiers uploades
 uploads/
@@ -51,5 +56,7 @@ dist/
 *.md
 !README.md
 
+# MAIS garder le README.md
+!README.md
 # Modeles ONNX
 *.onnx

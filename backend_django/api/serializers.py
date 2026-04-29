@@ -1,15 +1,9 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
 from .models import (
-    Series,
-    Average,
-    Reclamation,
-    Patient,
-    MRIFile,
-    SegmentationRun,
-    SegmentationMaskResult,
+    Series, Average, Reclamation, Patient, MRIFile, SegmentationRun, SegmentationMaskResult,
+    ContactRequest, PatientImage, PatientImageOrientation
 )
-
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -29,24 +23,57 @@ class AverageSerializer(serializers.ModelSerializer):
         fields = ('id', 'name', 'files', 'created_at')
 
 
+# ✅ Tes serializers (Yesmine)
+class OrientationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PatientImageOrientation
+        fields = ["id", "patient_id", "rotation", "flip_h", "flip_v", "updated_at"]
+        read_only_fields = ["id", "updated_at"]
+
+    def validate_rotation(self, value):
+        if not (-180 <= int(value) <= 180):
+            raise serializers.ValidationError("rotation doit etre entre -180 et 180.")
+        return int(value)
+
+
+class PatientImageSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PatientImage
+        fields = ["id", "patient_id", "image_url", "uploaded_at"]
+
+    def get_image_url(self, obj):
+        request = self.context.get("request")
+        if obj.image and request:
+            return request.build_absolute_uri(obj.image.url)
+        return None
+
+
+# ✅ Serializers de Nadine
 class PatientSerializer(serializers.ModelSerializer):
     patient_id = serializers.IntegerField(source='id', read_only=True)
     num_dossier = serializers.CharField(source='dossier_number', read_only=True)
     mri_files = serializers.SerializerMethodField(read_only=True)
+    segmentation_runs = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Patient
         fields = (
             'id', 'patient_id', 'dossier_number', 'num_dossier', 'nom', 'prenom', 'date_naissance', 'sexe',
             'telephone', 'email', 'pathologie', 'stade', 'antecedents', 'notes',
-            'autres_maladies', 'doctor', 'created_at', 'mri_files'
+            'autres_maladies', 'doctor', 'created_at', 'mri_files', 'segmentation_runs'
         )
-        # dossier_number is included by default as it is in fields
         read_only_fields = ('id', 'doctor', 'created_at')
 
     def get_mri_files(self, obj):
         files = obj.mri_files.all().order_by('-uploaded_at')
         return MRIFileSerializer(files, many=True, context=self.context).data
+
+    def get_segmentation_runs(self, obj):
+        # Uniquement les runs terminés (status='done') — les pending/running n'ont pas de résultats
+        runs = obj.segmentation_runs.filter(status='done').order_by('-created_at')
+        return SegmentationRunSerializer(runs, many=True, context=self.context).data
 
 
 class MRIFileSerializer(serializers.ModelSerializer):
@@ -55,13 +82,32 @@ class MRIFileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = MRIFile
-        fields = ('id', 'patient', 'file', 'file_url', 'preview_url', 'original_filename', 'relative_path', 'file_size', 'uploaded_at')
+        fields = ('id', 'patient', 'file', 'file_url', 'preview_url', 'original_filename', 'relative_path', 'file_size', 'file_type', 'uploaded_at')
+        fields = (
+            'id',
+            'patient',
+            'file',
+            'file_url',
+            'preview_url',
+            'original_filename',
+            'relative_path',
+            'file_size',
+            'image_width',
+            'image_height',
+            'uploaded_at',
+        )
 
     def get_file_url(self, obj):
+        try:
+            file_url = obj.file.url
+        except Exception:
+            # Avoid crashing patient detail when a DB row points to a missing file.
+            return None
+
         request = self.context.get('request')
         if request:
-            return request.build_absolute_uri(obj.file.url)
-        return obj.file.url
+            return request.build_absolute_uri(file_url)
+        return file_url
 
     def get_preview_url(self, obj):
         request = self.context.get('request')
@@ -71,7 +117,31 @@ class MRIFileSerializer(serializers.ModelSerializer):
         return url
 
 
+def _model_key_to_label(key: str):
+    k = str(key or '').strip().lower()
+    if k == 'unetpp':
+        return 'Modèle 1'
+    if k == 'nnunet':
+        return 'Modèle 2'
+    if k == 'swinunetr':
+        return 'Modèle 3'
+    return k or None
+
+
 class SegmentationMaskResultSerializer(serializers.ModelSerializer):
+    mask_model_version = serializers.SerializerMethodField(read_only=True)
+    prior_mask_model_version = serializers.SerializerMethodField(read_only=True)
+    initial_mask_model_version = serializers.SerializerMethodField(read_only=True)
+
+    def get_mask_model_version(self, obj):
+        return _model_key_to_label(getattr(obj, 'mask_model_key', '') or '')
+
+    def get_prior_mask_model_version(self, obj):
+        return _model_key_to_label(getattr(obj, 'prior_mask_model_key', '') or '')
+
+    def get_initial_mask_model_version(self, obj):
+        return _model_key_to_label(getattr(obj, 'initial_mask_model_key', '') or '')
+
     class Meta:
         model = SegmentationMaskResult
         fields = (
@@ -83,6 +153,17 @@ class SegmentationMaskResultSerializer(serializers.ModelSerializer):
             'source_url',
             'mask_file',
             'mask_url',
+            'mask_model_key',
+            'mask_model_version',
+            'prior_mask_file',
+            'prior_mask_url',
+            'prior_mask_model_key',
+            'prior_mask_model_version',
+            'initial_mask_file',
+            'initial_mask_url',
+            'initial_mask_model_key',
+            'initial_mask_model_version',
+            'review_status',
             'created_at',
         )
 
@@ -92,14 +173,7 @@ class SegmentationRunSerializer(serializers.ModelSerializer):
     model_version = serializers.SerializerMethodField(read_only=True)
 
     def get_model_version(self, obj):
-        key = str(getattr(obj, 'model_key', '') or '').strip().lower()
-        if key == 'nnunet':
-            return 'nnU-Net fold0 2D ONNX'
-        if key == 'unetpp':
-            return 'U-Net++ ONNX'
-        if key == 'swinunetr':
-            return 'SwinUNETR ONNX'
-        return key or 'Modele inconnu'
+        return _model_key_to_label(getattr(obj, 'model_key', '') or '') or 'Modèle inconnu'
 
     class Meta:
         model = SegmentationRun
@@ -160,3 +234,10 @@ class UserSettingsSerializer(serializers.Serializer):
     notifications = serializers.DictField(required=False)
     security = serializers.DictField(required=False)
     integrations = serializers.DictField(required=False)
+
+
+class ContactRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ContactRequest
+        fields = ('id', 'full_name', 'email', 'institution', 'subject', 'message', 'created_at')
+        read_only_fields = ('id', 'created_at')

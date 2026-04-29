@@ -31,6 +31,12 @@ export default function PatientsList() {
   });
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState('');
+
+  const getSlicesCount = (patient) => {
+    if (typeof patient?.slices_count === 'number') return patient.slices_count;
+    if (Array.isArray(patient?.mri_files)) return patient.mri_files.length;
+    return null;
+  };
   
   // Filter states
   const [filters, setFilters] = useState({
@@ -127,23 +133,50 @@ export default function PatientsList() {
     e.preventDefault();
     if (!editingPatient?.id) return;
 
+    // ─── Front-end Validations ───
+    const errors = [];
+    
+    // 1. Required fields
+    if (!editForm.dossier_number?.trim()) errors.push("Le numéro de dossier est obligatoire.");
+    if (!editForm.sexe) errors.push("Le sexe du patient est obligatoire.");
+    if (!editForm.date_naissance) {
+      errors.push("La date de naissance est obligatoire.");
+    } else {
+      // 2. Date in the future check
+      const d = new Date(editForm.date_naissance);
+      if (d > new Date()) {
+        errors.push("La date de naissance ne peut pas être dans le futur.");
+      }
+    }
+
+    // 3. Email format check
+    if (editForm.email?.trim()) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(editForm.email)) {
+        errors.push("Le format de l'email est invalide.");
+      }
+    }
+
+    if (errors.length > 0) {
+      setEditError(errors[0]); // Display first error
+      return;
+    }
+
     setEditLoading(true);
     setEditError('');
     try {
-      const payload = {
-        dossier_number: editForm.dossier_number,
+      await api.patch(`/patients/${editingPatient.id}/`, {
+        dossier_number: editForm.dossier_number, 
         date_naissance: editForm.date_naissance,
-        sexe: editForm.sexe,
-        telephone: editForm.telephone,
+        sexe: editForm.sexe, 
+        telephone: editForm.telephone, 
         email: editForm.email,
-        pathologie: editForm.pathologie,
-        stade: editForm.stade,
+        pathologie: editForm.pathologie, 
+        stade: editForm.stade, 
         antecedents: editForm.antecedents,
-        autres_maladies: editForm.autres_maladies,
+        autres_maladies: editForm.autres_maladies, 
         notes: editForm.notes,
-      };
-
-      await api.patch(`/patients/${editingPatient.id}/`, payload);
+      });
       closeEditModal();
       fetchPatients();
     } catch (err) {
@@ -155,7 +188,7 @@ export default function PatientsList() {
         const msg = Array.isArray(val) ? val[0] : val;
         setEditError(`${key}: ${msg}`);
       } else {
-        setEditError(err?.response?.data?.error || 'La modification du patient a echoue.');
+        setEditError(err?.response?.data?.error || 'La modification du patient a échoué.');
       }
     } finally {
       setEditLoading(false);
@@ -235,6 +268,7 @@ export default function PatientsList() {
                 <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Prenom</th>
                 <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Date Naissance</th>
                 <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Sexe</th>
+                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Coupes MRI</th>
                 <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Diagnostics</th>
                 <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide text-right">Actions</th>
               </tr>
@@ -242,51 +276,53 @@ export default function PatientsList() {
             <tbody className="divide-y divide-surface-border">
               {loading ? (
                 <tr>
-                  <td colSpan="7" className="p-8 text-center text-gray-600">Chargement des patients...</td>
+                  <td colSpan="8" className="p-8 text-center text-gray-600">Chargement des patients...</td>
                 </tr>
               ) : patients.length === 0 ? (
                 <tr>
-                  <td colSpan="7" className="p-8 text-center text-gray-600">Aucun patient trouve.</td>
+                  <td colSpan="8" className="p-8 text-center text-gray-600">Aucun patient trouve.</td>
                 </tr>
               ) : (
                 patients.map(patient => (
-                  <tr key={patient.id} className="hover:bg-[#f5f7ff] transition-colors">
-                    <td className="p-4 text-sm font-semibold text-primary">{patient.num_dossier}</td>
-                    <td className="p-4 text-sm font-medium text-primary">{patient.nom}</td>
-                    <td className="p-4 text-sm text-gray-600">{patient.prenom}</td>
-                    <td className="p-4 text-sm text-gray-600">{patient.date_naissance}</td>
-                    <td className="p-4">
-                      <Badge variant="info">{patient.sexe === 'M' ? 'Homme' : 'Femme'}</Badge>
-                    </td>
-                    <td className="p-4 text-sm text-gray-600 truncate max-w-[200px]">
-                      {patient.autres_maladies || '-'}
-                    </td>
-                    <td className="p-4 text-right">
-                      <div className="inline-flex items-center gap-2">
-                        <Button
-                          variant="ghost"
-                          onClick={() => navigate(`/dashboard/patients/${patient.id}`)}
-                          className="font-medium"
-                        >
-                          Voir
-                        </Button>
-                        <Button
-                          variant="outline"
-                          onClick={() => openEditModal(patient)}
-                          className="font-medium"
-                        >
-                          Modifier
-                        </Button>
-                        <Button
-                          variant="accent"
-                          onClick={() => handleDeletePatient(patient)}
-                          className="font-medium"
-                        >
-                          Supprimer
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
+<tr 
+  key={patient.id} 
+  onClick={() => navigate(`/dashboard/patients/${patient.id}`)}
+  className="hover:bg-blue-50/50 transition-colors cursor-pointer group"
+>
+  <td className="p-4 text-sm font-semibold text-primary">{patient.num_dossier}</td>
+  <td className="p-4 text-sm font-medium text-primary">{patient.nom}</td>
+  <td className="p-4 text-sm text-gray-600">{patient.prenom}</td>
+  <td className="p-4 text-sm text-gray-600">{patient.date_naissance}</td>
+  <td className="p-4">
+    <Badge variant="info">{patient.sexe === 'M' ? 'Homme' : 'Femme'}</Badge>
+  </td>
+  <td className="p-4 text-sm text-gray-600">{getSlicesCount(patient) ?? '—'}</td>
+  <td className="p-4 text-sm text-gray-600 truncate max-w-[200px]">
+    {patient.autres_maladies || '—'}
+  </td>
+  <td className="p-4 text-right">
+    <div className="inline-flex items-center gap-1.5">
+      <button 
+        onClick={(e) => { e.stopPropagation(); navigate(`/dashboard/patients/${patient.id}`); }}
+        className="px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+      >
+        Voir
+      </button>
+      <button 
+        onClick={(e) => { e.stopPropagation(); openEditModal(patient); }}
+        className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+      >
+        Modifier
+      </button>
+      <button 
+        onClick={(e) => { e.stopPropagation(); handleDeletePatient(patient); }}
+        className="px-3 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
+      >
+        Supprimer
+      </button>
+    </div>
+  </td>
+</tr>
                 ))
               )}
             </tbody>

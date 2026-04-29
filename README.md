@@ -3,7 +3,7 @@ Recalage Procrustes - projet corrigé (backend + frontend)
 Backend (Flask):
   cd backend
   python -m venv .venv
-  .venv\Scripts\activate
+  .venv\Scripts\activate   # Windows (PowerShell: .venv\Scripts\Activate.ps1) or use cmd .venv\Scripts\activate
   pip install -r requirements.txt
   python app.py
 

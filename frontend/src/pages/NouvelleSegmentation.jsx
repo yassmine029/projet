@@ -2347,64 +2347,66 @@ export default function NouvelleSegmentation() {
             {step === 1 && (
               <div className="space-y-5">
 
-                {/* ── Mode tabs ──────────────────────────────────────────────── */}
-                <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1 w-fit">
-                  <button
-                    type="button"
-                    onClick={() => setPatientSelectMode('existing')}
-                    className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-all ${
-                      patientSelectMode === 'existing'
-                        ? 'bg-white text-blue-700 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-700'
-                    }`}
-                  >
-                    <Users className="h-4 w-4" />
-                    Patient existant
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPatientSelectMode('new')}
-                    className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-all ${
-                      patientSelectMode === 'new'
-                        ? 'bg-white text-blue-700 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-700'
-                    }`}
-                  >
-                    <UserPlus className="h-4 w-4" />
-                    Nouveau patient
-                  </button>
+                {/* ── Mode tabs ────────────────────────────────────────────── */}
+                <div className="flex items-center gap-2">
+                  {[
+                    { mode: 'existing', icon: Users,    label: 'Patient existant' },
+                    { mode: 'new',      icon: UserPlus, label: 'Nouveau patient'  },
+                  ].map(({ mode, icon: Icon, label }) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setPatientSelectMode(mode)}
+                      className={`inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-all duration-200 ${
+                        patientSelectMode === mode
+                          ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-200'
+                          : 'border border-slate-200 bg-white text-slate-500 hover:border-blue-300 hover:text-blue-600'
+                      }`}
+                    >
+                      <Icon className="h-4 w-4" />
+                      {label}
+                    </button>
+                  ))}
                 </div>
 
-                {/* ── TAB: Patient existant ───────────────────────────────────── */}
+                {/* ── TAB: Patient existant ─────────────────────────────────── */}
                 {patientSelectMode === 'existing' && (<>
-                <div className="relative">
-                  <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="text"
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder="Rechercher par nom, prénom ou IPP…"
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-28 text-sm text-slate-800 placeholder-slate-400 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/20"
-                  />
-                  <span className="absolute right-3.5 top-1/2 -translate-y-1/2 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-500 whitespace-nowrap">
-                    {filteredPatients.length} patient{filteredPatients.length !== 1 ? 's' : ''}
-                  </span>
+
+                {/* Barre de recherche premium */}
+                <div className="relative group">
+                  <div className={`absolute inset-0 rounded-2xl bg-gradient-to-r from-blue-500 to-indigo-500 opacity-0 blur transition-opacity duration-300 group-focus-within:opacity-10`} />
+                  <div className="relative flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm transition-all focus-within:border-blue-400 focus-within:shadow-md focus-within:shadow-blue-100/50">
+                    <Search className="h-4 w-4 shrink-0 text-slate-400" />
+                    <input
+                      type="text"
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                      placeholder="Rechercher par nom, prénom ou IPP…"
+                      className="flex-1 bg-transparent text-sm text-slate-800 placeholder-slate-400 outline-none"
+                    />
+                    <span className="shrink-0 rounded-full border border-slate-100 bg-slate-50 px-3 py-1 text-[11px] font-bold text-slate-500">
+                      {filteredPatients.length} patient{filteredPatients.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Loading */}
                 {loading && (
-                  <div className="flex h-52 items-center justify-center gap-3 text-slate-500">
-                    <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
-                    <span className="text-sm font-medium">Chargement des patients…</span>
+                  <div className="flex h-52 flex-col items-center justify-center gap-4">
+                    <div className="relative">
+                      <div className="h-12 w-12 rounded-full border-4 border-blue-100" />
+                      <Loader2 className="absolute inset-0 m-auto h-7 w-7 animate-spin text-blue-500" />
+                    </div>
+                    <p className="text-sm font-semibold text-slate-500">Chargement des patients…</p>
                   </div>
                 )}
 
                 {/* Error */}
                 {!loading && error && (
                   <div className="flex h-52 flex-col items-center justify-center gap-3">
-                    <p className="text-sm font-semibold text-red-600">Erreur de chargement</p>
+                    <p className="text-sm font-semibold text-red-500">Erreur de chargement</p>
                     <button type="button" onClick={fetchPatients}
-                      className="rounded-xl border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-50">
+                      className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-100">
                       Réessayer
                     </button>
                   </div>
@@ -2414,9 +2416,12 @@ export default function NouvelleSegmentation() {
                 {!loading && !error && (
                   <>
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">
-                        Mes patients
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                        <p className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+                          Mes patients
+                        </p>
+                      </div>
                       {filteredPatients.length > 0 && (
                         <GmailStylePagination
                           page={patientListPage} pageSize={LIST_PAGE_SIZE}
@@ -2431,9 +2436,11 @@ export default function NouvelleSegmentation() {
 
                     <div className="max-h-[400px] space-y-2 overflow-y-auto pr-1">
                       {filteredPatients.length === 0 && (
-                        <div className="flex flex-col items-center gap-2 py-14 text-slate-400">
-                          <UserRound className="h-10 w-10 opacity-25" />
-                          <p className="text-sm font-medium">Aucun patient correspondant</p>
+                        <div className="flex flex-col items-center gap-3 py-16 text-slate-400">
+                          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100">
+                            <UserRound className="h-8 w-8 opacity-40" />
+                          </div>
+                          <p className="text-sm font-semibold">Aucun patient correspondant</p>
                         </div>
                       )}
 
@@ -2453,61 +2460,77 @@ export default function NouvelleSegmentation() {
                             key={key}
                             type="button"
                             onClick={() => setSelectedPatient(patient)}
-                            className={`group w-full rounded-xl border p-4 text-left transition-all duration-150 ${
+                            className={`group relative w-full overflow-hidden rounded-2xl border text-left transition-all duration-200 ${
                               isSelected
-                                ? 'border-blue-500 bg-blue-50 shadow-md shadow-blue-100/60'
-                                : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-slate-50 hover:shadow-sm'
+                                ? 'border-blue-400 bg-gradient-to-r from-blue-50 to-indigo-50 shadow-md shadow-blue-100/50'
+                                : 'border-slate-150 bg-white hover:border-blue-200 hover:shadow-sm hover:shadow-blue-50'
                             }`}
                           >
-                            <div className="flex items-center gap-3">
+                            {/* Barre latérale colorée */}
+                            <div className={`absolute left-0 top-0 h-full w-1 rounded-l-2xl transition-all duration-200 ${
+                              isSelected ? 'bg-gradient-to-b from-blue-500 to-indigo-500' : 'bg-slate-100 group-hover:bg-blue-200'
+                            }`} />
+
+                            <div className="flex items-center gap-3 pl-4 pr-4 py-3.5">
                               {/* Radio dot */}
-                              <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition ${
-                                isSelected ? 'border-blue-600 bg-blue-600' : 'border-slate-300 bg-white group-hover:border-blue-400'
+                              <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-all duration-200 ${
+                                isSelected
+                                  ? 'border-blue-600 bg-blue-600 shadow-sm shadow-blue-200'
+                                  : 'border-slate-300 bg-white group-hover:border-blue-300'
                               }`}>
                                 {isSelected && <Check className="h-3 w-3 text-white" strokeWidth={3} />}
                               </span>
 
                               {/* Avatar */}
-                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl font-bold text-sm text-white shadow-sm"
+                              <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-sm font-black text-white shadow-sm transition-transform duration-200 group-hover:scale-105 ${isSelected ? 'ring-2 ring-blue-300 ring-offset-1' : ''}`}
                                 style={{ backgroundColor: avatarColor }}>
                                 {getInitials(patient)}
                               </div>
 
-                              {/* Info */}
+                              {/* Info principale */}
                               <div className="min-w-0 flex-1">
-                                <p className={`truncate text-sm font-bold ${isSelected ? 'text-blue-900' : 'text-slate-800'}`}>
+                                <p className={`truncate text-sm font-black ${isSelected ? 'text-blue-900' : 'text-slate-800'}`}>
                                   {getPatientName(patient)}
                                 </p>
-                                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-500">
-                                  <span className="flex items-center gap-1">
+                                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                                  <span className="flex items-center gap-1 text-[11px] text-slate-500">
                                     <CalendarDays className="h-3 w-3" />
-                                    {getBirthPrefix(patient)} {formatDate(dob)} · {age !== null ? `${age} ans` : 'Âge inconnu'}
+                                    {getBirthPrefix(patient)} {formatDate(dob)}{age !== null ? ` · ${age} ans` : ''}
                                   </span>
-                                  <span className="inline-flex items-center gap-0.5 rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">
+                                  <span className="inline-flex items-center gap-0.5 rounded-lg bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">
                                     <Hash className="h-2.5 w-2.5" />{ippLabel}
                                   </span>
                                 </div>
                               </div>
 
-                              {/* Pathologie badge */}
+                              {/* Pathologie */}
                               <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ${pathology.classes}`}>
                                 {pathology.label}
                               </span>
 
-                              {/* Coupes */}
-                              <div className="w-12 shrink-0 text-center">
-                                <p className="text-sm font-bold text-slate-700">{slicesCount ?? '—'}</p>
-                                <p className="text-[9px] font-medium uppercase tracking-wide text-slate-400">coupes</p>
+                              {/* Stats */}
+                              <div className={`flex shrink-0 items-center gap-1 rounded-xl px-3 py-2 ${isSelected ? 'bg-blue-100/60' : 'bg-slate-50'}`}>
+                                <div className="text-center">
+                                  <p className={`text-base font-black leading-none tabular-nums ${isSelected ? 'text-blue-700' : 'text-slate-700'}`}>
+                                    {slicesCount ?? '—'}
+                                  </p>
+                                  <p className="mt-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-400">coupes</p>
+                                </div>
+                                <div className="mx-2 h-6 w-px bg-slate-200" />
+                                <div className="text-center">
+                                  <p className={`text-xs font-bold leading-none ${isSelected ? 'text-blue-700' : 'text-slate-600'}`}>
+                                    {formatDate(getLastExam(patient), false)}
+                                  </p>
+                                  <p className="mt-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-400">dernier</p>
+                                </div>
                               </div>
 
-                              {/* Last exam */}
-                              <div className="w-16 shrink-0 text-center">
-                                <p className="text-xs font-semibold text-slate-700">{formatDate(getLastExam(patient), false)}</p>
-                                <p className="text-[9px] font-medium uppercase tracking-wide text-slate-400">dernier</p>
+                              {/* Indicateur sélection */}
+                              <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-all duration-200 ${
+                                isSelected ? 'bg-blue-600 shadow-sm shadow-blue-200' : 'bg-slate-100 group-hover:bg-blue-100'
+                              }`}>
+                                <ChevronRight className={`h-4 w-4 transition-all duration-200 ${isSelected ? 'text-white rotate-90' : 'text-slate-400 group-hover:text-blue-500'}`} />
                               </div>
-
-                              {/* Arrow */}
-                              <ChevronRight className={`h-4 w-4 shrink-0 transition-transform ${isSelected ? 'rotate-90 text-blue-500' : 'text-slate-300'}`} />
                             </div>
                           </button>
                         );
@@ -2516,16 +2539,23 @@ export default function NouvelleSegmentation() {
 
                     {/* Selected patient banner */}
                     {selectedPatient && (
-                      <div className="flex items-center gap-3 rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 px-4 py-3">
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl font-bold text-sm text-white shadow-sm"
-                          style={{ backgroundColor: AVATAR_COLORS[0] }}>
-                          {getInitials(selectedPatient)}
+                      <div className="relative overflow-hidden rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-4 shadow-md shadow-blue-200/50">
+                        <span className="absolute -right-6 -top-6 h-24 w-24 rounded-full bg-white/10 pointer-events-none" />
+                        <div className="relative flex items-center gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/20 font-bold text-sm text-white shadow-inner"
+                            style={{ backgroundColor: AVATAR_COLORS[0] }}>
+                            {getInitials(selectedPatient)}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-black text-white truncate">{getPatientName(selectedPatient)}</p>
+                            <p className="text-[11px] font-medium text-blue-200">
+                              {getSlicesCount(selectedPatient) ?? '—'} coupes IRM · Prêt pour la segmentation
+                            </p>
+                          </div>
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/20">
+                            <CheckCircle2 className="h-5 w-5 text-white" />
+                          </div>
                         </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-bold text-blue-900 truncate">{getPatientName(selectedPatient)}</p>
-                          <p className="text-xs text-blue-600">{getSlicesCount(selectedPatient) ?? '—'} coupes IRM disponibles</p>
-                        </div>
-                        <CheckCircle2 className="h-5 w-5 shrink-0 text-blue-500" />
                       </div>
                     )}
                   </>

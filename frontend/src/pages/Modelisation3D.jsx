@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Box, ArrowLeft, X, FileText, Download, UserRound, Hash, CalendarDays, Brain, Activity, BarChart3 } from 'lucide-react';
+import { Box, ArrowLeft, X, FileText, Download, UserRound, Hash, CalendarDays, Brain, Activity, BarChart3, CheckCircle2, Loader2 } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import ModelViewerBlender from '../components/ModelViewerBlender.jsx';
@@ -499,7 +499,7 @@ function ReportPreviewModal({
     },
     {
       name: "Indice d'asymetrie (IA)",
-      value: `${Number(ci.asymmetry_index_percent || 0).toFixed(2)} %`,
+      value: `${Math.abs(Number(ci.asymmetry_index_percent || 0)).toFixed(2)} %`,
       norm: '< 10 %',
       status: Math.abs(Number(ci.asymmetry_index_percent || 0)) < 10 ? 'Normal' : 'Alerte',
     },
@@ -735,155 +735,6 @@ function ReportPreviewModal({
               </div>
             </div>
 
-            {/* SUPPRIMÉ: ancien bloc images cles qui s'affichait ici */}
-            <div className="hidden">
-            <p className="inline-flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400"><Brain className="h-4 w-4" />Images cles — IRM segmentation</p>
-            <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-12">
-              <div className="lg:col-span-8 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <p className="mb-2 text-[11px] uppercase tracking-[0.12em] text-slate-500">Coupes du patient ({allSlices.length})</p>
-                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
-                  {allSlices.map((slice, idx) => (
-                    <div key={slice.id || idx} className="overflow-hidden rounded-lg border border-slate-200 bg-slate-900">
-                      <div className="relative aspect-[4/3]">
-                        {slice?.source_url ? (
-                          <>
-                            <img
-                              src={toAbsoluteMediaUrl(slice.source_url)}
-                              alt={`slice-${slice.slice_index || idx + 1}`}
-                              className="h-full w-full object-cover"
-                            />
-                            {slice?.mask_url ? (
-                              <div
-                                aria-hidden
-                                className="pointer-events-none absolute inset-0 h-full w-full"
-                                style={{
-                                  backgroundColor: 'rgba(6, 182, 212, 0.55)',
-                                  WebkitMaskImage: `url(${toAbsoluteMediaUrl(slice.mask_url)})`,
-                                  maskImage: `url(${toAbsoluteMediaUrl(slice.mask_url)})`,
-                                  WebkitMaskRepeat: 'no-repeat',
-                                  maskRepeat: 'no-repeat',
-                                  WebkitMaskPosition: 'center',
-                                  maskPosition: 'center',
-                                  WebkitMaskSize: 'cover',
-                                  maskSize: 'cover',
-                                }}
-                              />
-                            ) : null}
-                          </>
-                        ) : (
-                          <div className="flex h-full items-center justify-center text-red-500"><Brain className="h-5 w-5" /></div>
-                        )}
-                      </div>
-                      <p className="border-t border-white/10 px-2 py-1 text-center text-[10px] text-slate-200">Slice {slice?.slice_index ?? idx + 1}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div className="lg:col-span-4 overflow-hidden rounded-xl border border-slate-200 bg-white p-3">
-                <ModelViewerBlender
-                  variant="mini"
-                  objUrl={toAbsoluteMediaUrl(modelingResult?.obj_url)}
-                  stlUrl={toAbsoluteMediaUrl(modelingResult?.stl_url)}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-6">
-            <p className="inline-flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400"><FileText className="h-4 w-4" />Tableau des mesures volumetriques</p>
-            <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200/60">
-              <table className="w-full text-left">
-                <thead className="bg-gradient-to-r from-blue-600 to-blue-700">
-                  <tr>
-                    <th className="px-5 py-3.5 text-[11px] font-bold uppercase tracking-widest text-white">Mesure</th>
-                    <th className="px-5 py-3.5 text-[11px] font-bold uppercase tracking-widest text-white">Valeur</th>
-                    <th className="px-5 py-3.5 text-[11px] font-bold uppercase tracking-widest text-white">Norme</th>
-                    <th className="px-5 py-3.5 text-[11px] font-bold uppercase tracking-widest text-white">Statut</th>
-                  </tr>
-                </thead>
-                <tbody className="text-sm">
-                  {measures.map((row, idx) => (
-                    <tr key={row.name} className={`border-t border-slate-100 ${idx % 2 === 0 ? '' : 'bg-slate-50/40'}`}>
-                      <td className="px-5 py-3 font-medium text-slate-700">{row.name}</td>
-                      <td className="px-5 py-3 font-bold text-blue-600">{row.value}</td>
-                      <td className="px-5 py-3 text-slate-500">{row.norm}</td>
-                      <td className="px-5 py-3">
-                        <span className="inline-flex items-center gap-1.5">
-                          <span className={`h-2 w-2 rounded-full ${statusDotClass(row.status)}`} />
-                          <span className={`text-xs font-semibold ${row.status === 'Normal' ? 'text-emerald-600' : 'text-amber-600'}`}>{row.status}</span>
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="mt-6">
-            <p className="inline-flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400"><Activity className="h-4 w-4" />Interpretation clinique automatique</p>
-            <div className="mt-3 space-y-3">
-              <div className="rounded-xl border border-violet-200/60 bg-violet-50/50 px-5 py-4">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-violet-600">Epilepsie (MTLE) — IA</p>
-                <p className="mt-2 text-sm leading-relaxed text-slate-700">{interp.mtle_message || interp.ai_message || '-'}</p>
-              </div>
-              <div className="rounded-xl border border-emerald-200/60 bg-emerald-50/50 px-5 py-4">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-600">Alzheimer (MA) — IN</p>
-                <p className="mt-2 text-sm leading-relaxed text-slate-700">{interp.ni_message || '-'}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="hidden">
-            <p>Graphiques personnalises du patient</p>
-            <div className="mt-3 grid grid-cols-1 gap-4 xl:grid-cols-2">
-              <ComparativeGroupedChart
-                title="Volumes hippocampiques (mm3)"
-                unit="mm3"
-                yTicks={volumeTicks}
-                yMax={volumeMaxValue}
-                series={[
-                  { key: 'patient', label: 'Patient', color: '#2563eb' },
-                  { key: 'minNorm', label: 'Norme minimale', color: '#a8c5e6' },
-                  { key: 'maxNorm', label: 'Norme maximale', color: '#d7dfc8' },
-                ]}
-                categories={volumeCategories}
-              />
-
-              <ComparativeGroupedChart
-                title="Indices cliniques IA et IN (%)"
-                unit="%"
-                yTicks={indexTicks}
-                yMax={indicesMaxValue}
-                series={[
-                  { key: 'patient', label: 'Valeur patient', color: '#ef4444' },
-                  { key: 'seuil', label: 'Seuil clinique', color: '#c4cad8', borderColor: '#2563eb' },
-                ]}
-                categories={indicesCategories}
-              />
-            </div>
-            <p className="mt-3 text-xs text-slate-500">
-              Donnees patient: G={formatMm3(vols.left)} mm3, D={formatMm3(vols.right)} mm3, Total={formatMm3(vols.total)} mm3, IA={iaValue.toFixed(2)} %, IN={inValue.toFixed(2)} %.
-            </p>
-          </div>
-
-          <div className="hidden">
-            <p>Remarques et constatations</p>
-            <p className="mt-3 text-base leading-8 font-semibold text-white">{interp.summary || '-'}</p>
-            <div className="mt-4 pt-4 border-t border-white/10 flex flex-wrap gap-x-4 gap-y-1">
-              {[
-                { l: 'Vol. G', v: `${Number(vols.left || 0).toFixed(0)} mm\u00B3` },
-                { l: 'Vol. D', v: `${Number(vols.right || 0).toFixed(0)} mm\u00B3` },
-                { l: 'Total', v: `${Number(vols.total || 0).toFixed(0)} mm\u00B3` },
-                { l: 'IA', v: `${Number(ci.asymmetry_index_percent || 0).toFixed(2)}%` },
-                { l: 'IN', v: `${Number(ci.normality_index_percent || 0).toFixed(2)}%` },
-              ].map((item) => (
-                <span key={item.l} className="text-xs text-slate-400 font-medium">
-                  <span className="text-slate-500">{item.l}:</span> <span className="text-blue-300 font-bold">{item.v}</span>
-                </span>
-              ))}
-            </div>
-          </div>
 
           {/* ── Conclusion du médecin dans le rapport ── */}
           {(doctorConclusion || (doctorRecommendations && doctorRecommendations.size > 0)) && (
@@ -953,6 +804,10 @@ export default function Modelisation3D() {
   const [modelingError, setModelingError] = useState('');
   const [modelingResult, setModelingResult] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [archiveSuccess, setArchiveSuccess] = useState(null); // { id, date }
+  const [archiveError, setArchiveError] = useState('');
+  const [existingReport, setExistingReport] = useState(null); // rapport déjà archivé pour ce run
   const [reportError, setReportError] = useState('');
   const [reportPreviewOpen, setReportPreviewOpen] = useState(false);
   const [reportPatientDetail, setReportPatientDetail] = useState(null);
@@ -1015,6 +870,20 @@ export default function Modelisation3D() {
         setRunInfo(run);
         if (run?.threshold != null) {
           setStandardMode((prev) => ({ ...prev, threshold: String(run.threshold) }));
+        }
+
+        // Vérifier si un rapport a déjà été archivé pour ce run
+        if (run?.patient) {
+          try {
+            const rToken = localStorage.getItem('access');
+            const rRes = await api.get(`/patients/${run.patient}/reports/list/`, {
+              headers: rToken ? { Authorization: `Bearer ${rToken}` } : {},
+            });
+            const existing = (rRes.data?.reports || []).find(
+              (r) => r.run_id === run.id
+            );
+            if (existing) setExistingReport(existing);
+          } catch { /* silencieux */ }
         }
       } catch {
         setRunError('Impossible de charger le run de segmentation.');
@@ -1156,6 +1025,245 @@ export default function Modelisation3D() {
       setReportPatientDetail(patient || null);
     } catch {
       setReportPatientDetail(null);
+    }
+  };
+
+  const buildArchivePdfBlob = (patientDetail) => {
+    // Helpers
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const W = pdf.internal.pageSize.getWidth();
+    const H = pdf.internal.pageSize.getHeight();
+    const m = 15;
+    const w = W - m * 2;
+    let y = m;
+    const nl = (n = 5) => { y += n; };
+    const sep = () => {
+      pdf.setDrawColor(226, 232, 240);
+      pdf.line(m, y, W - m, y);
+      nl(5);
+    };
+    const check = (needed = 30) => {
+      if (y + needed > H - 15) { pdf.addPage(); y = m; }
+    };
+    // Remplacer les caracteres non supportes par Helvetica de base
+    const safe = (s) => String(s || '-')
+      .replace(/³/g, '3')   // ³ -> 3
+      .replace(/–/g, '-')   // en dash
+      .replace(/—/g, '-')   // em dash
+      .replace(/•/g, '-')   // bullet
+      .replace(/’/g, "'");  // right single quote
+
+    const vols   = modelingResult?.volumes_mm3 || {};
+    const ci     = modelingResult?.clinical_indices || {};
+    const interp = modelingResult?.clinical_interpretation || {};
+    const ia     = Math.abs(Number(ci.asymmetry_index_percent || 0));
+    const inn    = Number(ci.normality_index_percent || 0);
+    const age    = ageFromBirthDate(patientDetail?.date_naissance);
+    const sex    = patientDetail?.sexe === 'F' ? 'Feminin' : patientDetail?.sexe === 'M' ? 'Masculin' : '-';
+    const exDate = formatDateFr(runInfo?.completed_at || runInfo?.created_at);
+    const runId  = String(runInfo?.id || '-');
+    const today  = new Date().toLocaleDateString('fr-FR');
+
+    // ── En-tete ──────────────────────────────────────────────
+    pdf.setFillColor(15, 31, 75);
+    pdf.rect(0, 0, W, 26, 'F');
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(20);
+    pdf.setTextColor(255, 255, 255);
+    pdf.text('NeuroScan', m, 15);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(8);
+    pdf.setTextColor(147, 197, 253);
+    pdf.text('Rapport de volumetrie hippocampique - Analyse assistee par IA', m, 22);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(8);
+    pdf.setTextColor(255, 255, 255);
+    pdf.text('Run #' + runId, W - m, 13, { align: 'right' });
+    pdf.setFont('helvetica', 'normal');
+    pdf.text(exDate, W - m, 20, { align: 'right' });
+    y = 34;
+
+    // ── Patient ───────────────────────────────────────────────
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(7);
+    pdf.setTextColor(100, 116, 139);
+    pdf.text('INFORMATIONS PATIENT', m, y);
+    nl(5);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    pdf.setTextColor(30, 41, 59);
+    pdf.text('Sexe : ' + sex, m, y);
+    pdf.text('Age : ' + (age != null ? age + ' ans' : '-'), m + 55, y);
+    pdf.text('Date examen : ' + exDate, m + 110, y);
+    nl(9);
+    sep();
+
+    // ── Tableau mesures ───────────────────────────────────────
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(7);
+    pdf.setTextColor(100, 116, 139);
+    pdf.text('MESURES VOLUMETRIQUES', m, y);
+    nl(5);
+    pdf.setFillColor(15, 31, 75);
+    pdf.rect(m, y, w, 7, 'F');
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFontSize(8);
+    pdf.text('Mesure', m + 2, y + 5);
+    pdf.text('Valeur', m + 105, y + 5);
+    pdf.text('Norme', m + 135, y + 5);
+    pdf.text('Statut', m + 162, y + 5);
+    nl(7);
+
+    const rows = [
+      ['Vol. hippocampe gauche', Number(vols.left  || 0).toFixed(0) + ' mm3', '2200-2600', Number(vols.left  || 0) >= 2200 && Number(vols.left  || 0) <= 2600],
+      ['Vol. hippocampe droit',  Number(vols.right || 0).toFixed(0) + ' mm3', '2200-2600', Number(vols.right || 0) >= 2200 && Number(vols.right || 0) <= 2600],
+      ['Volume total',           Number(vols.total || 0).toFixed(0) + ' mm3', '4500-5300', Number(vols.total || 0) >= 4500 && Number(vols.total || 0) <= 5300],
+      ["Indice asymetrie (IA)",  ia.toFixed(2) + ' %',  '< 10 %',   ia < 10],
+      ['Indice normalisation (IN)', inn.toFixed(2) + ' %', '90-110 %', inn >= 90 && inn <= 110],
+    ];
+
+    rows.forEach(([label, val, norm, ok], i) => {
+      check(8);
+      if (i % 2 === 1) { pdf.setFillColor(248, 250, 252); pdf.rect(m, y, w, 7, 'F'); }
+      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.setTextColor(30, 41, 59);
+      pdf.text(label, m + 2, y + 5);
+      pdf.setFont('helvetica', 'bold'); pdf.setTextColor(37, 99, 235);
+      pdf.text(val, m + 105, y + 5);
+      pdf.setFont('helvetica', 'normal'); pdf.setTextColor(100, 116, 139);
+      pdf.text(norm, m + 135, y + 5);
+      pdf.setTextColor(ok ? 5 : 180, ok ? 150 : 100, ok ? 90 : 30);
+      pdf.text(ok ? 'Normal' : 'Alerte', m + 162, y + 5);
+      nl(7);
+    });
+    nl(2);
+    sep();
+
+    // ── Interpretation ────────────────────────────────────────
+    check(40);
+    pdf.setFont('helvetica', 'bold'); pdf.setFontSize(7); pdf.setTextColor(100, 116, 139);
+    pdf.text('INTERPRETATION CLINIQUE AUTOMATIQUE', m, y);
+    nl(5);
+
+    const block = (rawText, tr, tg, tb, fr, fg, fb) => {
+      const text = safe(rawText);
+      const lines = pdf.splitTextToSize(text, w - 4);
+      const bh = lines.length * 5 + 6;
+      check(bh + 4);
+      pdf.setFillColor(fr, fg, fb);
+      pdf.rect(m, y, w, bh, 'F');
+      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.setTextColor(tr, tg, tb);
+      pdf.text(lines, m + 2, y + 5);
+      nl(bh + 4);
+    };
+
+    block(
+      'MTLE - IA = ' + ia.toFixed(2) + '% : ' + (interp.mtle_message || interp.ai_message || '-'),
+      109, 40, 217, 245, 243, 255
+    );
+    block(
+      'Alzheimer MA - IN = ' + inn.toFixed(2) + '% : ' + (interp.ni_message || '-'),
+      4, 120, 87, 240, 253, 244
+    );
+    sep();
+
+    // ── Conclusion medecin ────────────────────────────────────
+    if (doctorConclusion || doctorRecommendations.size > 0) {
+      check(50);
+      pdf.setFillColor(15, 31, 75);
+      pdf.rect(0, y - 2, W, 12, 'F');
+      pdf.setFont('helvetica', 'bold'); pdf.setFontSize(9); pdf.setTextColor(255, 255, 255);
+      pdf.text('CONCLUSION ET RECOMMANDATIONS CLINIQUES', m, y + 6);
+      nl(14);
+
+      if (doctorConclusion) {
+        pdf.setFont('helvetica', 'bold'); pdf.setFontSize(7); pdf.setTextColor(100, 116, 139);
+        pdf.text('Synthese clinique', m, y);
+        nl(5);
+        const cLines = pdf.splitTextToSize(safe(doctorConclusion), w);
+        check(cLines.length * 5 + 5);
+        pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9); pdf.setTextColor(30, 41, 59);
+        pdf.text(cLines, m, y);
+        nl(cLines.length * 5 + 6);
+      }
+
+      const checkedRecs = RECOMMENDATIONS.filter((r) => doctorRecommendations.has(r.id));
+      if (checkedRecs.length > 0) {
+        check(10 + checkedRecs.length * 7);
+        pdf.setFont('helvetica', 'bold'); pdf.setFontSize(7); pdf.setTextColor(100, 116, 139);
+        pdf.text('Recommandations', m, y);
+        nl(5);
+        pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9); pdf.setTextColor(30, 41, 59);
+        checkedRecs.forEach((r) => { pdf.text('- ' + safe(r.label), m + 3, y); nl(6); });
+        nl(3);
+      }
+
+      sep();
+      pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8); pdf.setTextColor(30, 41, 59);
+      pdf.text(safe(runInfo?.doctor_name || runInfo?.created_by || '_____________________'), W - m, y, { align: 'right' });
+      nl(4);
+      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7); pdf.setTextColor(100, 116, 139);
+      pdf.text('Signature du medecin responsable', W - m, y, { align: 'right' });
+      nl(4);
+      pdf.text('Cette conclusion engage la responsabilite medicale du praticien signataire.', W - m, y, { align: 'right' });
+    }
+
+    // ── Pied de page ──────────────────────────────────────────
+    const totalPages = pdf.internal.getNumberOfPages();
+    for (let p = 1; p <= totalPages; p++) {
+      pdf.setPage(p);
+      pdf.setFillColor(248, 250, 252);
+      pdf.rect(0, H - 10, W, 10, 'F');
+      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7); pdf.setTextColor(148, 163, 184);
+      pdf.text('NeuroScan - Plateforme de neuro-imagerie clinique', m, H - 4);
+      pdf.text('Page ' + p + ' / ' + totalPages + '  |  ' + today, W - m, H - 4, { align: 'right' });
+    }
+
+    return pdf.output('blob');
+  };
+
+  const handleArchiveReport = async () => {
+    if (!runInfo?.patient || !modelingResult) return;
+    setArchiving(true);
+    setArchiveError('');
+    setArchiveSuccess(null);
+    try {
+      // Charger les infos patient si besoin
+      let patientDetail = reportPatientDetail;
+      if (!patientDetail) {
+        try {
+          const token = localStorage.getItem('access');
+          const r = await api.get(`/patients/${runInfo.patient}/`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          });
+          patientDetail = r?.data?.patient || r?.data || null;
+          setReportPatientDetail(patientDetail);
+        } catch { /* continue sans */ }
+      }
+
+      // Générer le PDF via jsPDF (pas de html2canvas = pas de problème oklab)
+      const pdfBlob = buildArchivePdfBlob(patientDetail);
+
+      // Envoyer au backend
+      const token = localStorage.getItem('access');
+      const filename = `rapport_run${runInfo?.id || 'X'}_${new Date().toISOString().slice(0, 10)}.pdf`;
+      const formData = new FormData();
+      formData.append('pdf', pdfBlob, filename);
+      if (runInfo?.id) formData.append('run_id', String(runInfo.id));
+      formData.append('doctor_conclusion', doctorConclusion || '');
+      formData.append('doctor_recommendations', JSON.stringify(
+        RECOMMENDATIONS.filter((r) => doctorRecommendations.has(r.id)).map((r) => r.label)
+      ));
+      const res = await api.post(`/patients/${runInfo.patient}/reports/`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      });
+      const newReport = { id: res.data.report_id, date: res.data.created_at };
+      setArchiveSuccess(newReport);
+      setExistingReport({ ...newReport, created_at: res.data.created_at, doctor_name: 'vous', file_url: null, run_id: runInfo?.id });
+    } catch (err) {
+      const msg = err?.response?.data?.error || err?.message || 'Erreur lors de l\'archivage.';
+      setArchiveError(msg);
+    } finally {
+      setArchiving(false);
     }
   };
 
@@ -1836,41 +1944,95 @@ export default function Modelisation3D() {
                   </div>
 
                   <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-4">Actions &amp; exports</p>
+                    <div className="mb-4 flex items-center justify-between gap-2">
+                      <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Actions &amp; exports</p>
+                    </div>
+
+                    {/* Boutons export 3D */}
                     <div className="flex flex-wrap items-center gap-3">
-                      <a
-                        href={toAbsoluteMediaUrl(modelingResult.obj_url)}
-                        target="_blank"
-                        rel="noreferrer"
-                        download
-                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all"
-                      >
-                        <Download className="h-4 w-4" />
-                        OBJ
+                      <a href={toAbsoluteMediaUrl(modelingResult.obj_url)} target="_blank" rel="noreferrer" download
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all">
+                        <Download className="h-4 w-4" /> OBJ
                       </a>
-                      <a
-                        href={toAbsoluteMediaUrl(modelingResult.stl_url)}
-                        target="_blank"
-                        rel="noreferrer"
-                        download
-                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all"
-                      >
-                        <Download className="h-4 w-4" />
-                        STL
+                      <a href={toAbsoluteMediaUrl(modelingResult.stl_url)} target="_blank" rel="noreferrer" download
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all">
+                        <Download className="h-4 w-4" /> STL
                       </a>
-                      <button
-                        type="button"
-                        onClick={handleOpenReportPreview}
+                      <button type="button" onClick={handleOpenReportPreview}
                         disabled={reportLoading || !modelingResult}
-                        className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 px-5 py-2.5 text-sm font-bold text-white hover:from-blue-700 hover:to-blue-800 disabled:opacity-60 disabled:cursor-not-allowed shadow-lg shadow-blue-600/20 transition-all active:scale-[0.98]"
-                      >
-                        <FileText className="h-4 w-4" />
-                        Apercu du rapport
+                        className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 px-5 py-2.5 text-sm font-bold text-white hover:from-blue-700 hover:to-blue-800 disabled:opacity-60 disabled:cursor-not-allowed shadow-lg shadow-blue-600/20 transition-all">
+                        <FileText className="h-4 w-4" /> Aperçu du rapport
                       </button>
                     </div>
-                    {reportError ? (
-                      <p className="mt-3 text-xs font-medium text-red-600">{reportError}</p>
-                    ) : null}
+
+                    {/* Archiver dans le dossier patient */}
+                    <div className={`mt-4 rounded-xl border p-4 transition-all ${
+                      existingReport || archiveSuccess
+                        ? 'border-emerald-200 bg-emerald-50'
+                        : 'border-slate-200 bg-slate-50'
+                    }`}>
+                      {/* En-tête avec statut */}
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-sm font-bold text-slate-800">Rapport dans le dossier patient</p>
+                            {(existingReport || archiveSuccess) ? (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-100 px-2.5 py-0.5 text-[10px] font-black text-emerald-700">
+                                <CheckCircle2 className="h-3 w-3" /> Archivé
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-black text-amber-600">
+                                Non archivé
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-0.5 text-[11px] text-slate-500">
+                            {existingReport ? (
+                              <>Rapport archivé le <strong>{existingReport.created_at}</strong> par Dr. {existingReport.doctor_name}. Visible dans le dossier patient.</>
+                            ) : archiveSuccess ? (
+                              <>Rapport #{archiveSuccess.id} archivé le <strong>{archiveSuccess.date}</strong> — visible dans le dossier patient.</>
+                            ) : (
+                              <>
+                                Génère le rapport PDF et l'enregistre dans le dossier du patient.
+                                {!doctorConclusion && <span className="ml-1 font-semibold text-amber-600">Rédigez votre conclusion ci-dessus avant d'archiver.</span>}
+                              </>
+                            )}
+                          </p>
+                        </div>
+
+                        {/* Bouton — masqué si déjà archivé */}
+                        {!existingReport && !archiveSuccess ? (
+                          <button
+                            type="button"
+                            onClick={handleArchiveReport}
+                            disabled={archiving || !modelingResult}
+                            className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm shadow-blue-200 transition-all hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {archiving ? (
+                              <><Loader2 className="h-4 w-4 animate-spin" /> Archivage…</>
+                            ) : (
+                              <><FileText className="h-4 w-4" /> Archiver dans le dossier</>
+                            )}
+                          </button>
+                        ) : (
+                          <a
+                            href={existingReport?.file_url || '#'}
+                            target="_blank"
+                            rel="noreferrer"
+                            download
+                            className="shrink-0 inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-4 py-2.5 text-sm font-bold text-emerald-700 transition-all hover:bg-emerald-600 hover:text-white"
+                          >
+                            <Download className="h-4 w-4" /> Télécharger le PDF
+                          </a>
+                        )}
+                      </div>
+
+                      {archiveError && (
+                        <p className="mt-2 text-xs font-semibold text-red-600">{archiveError}</p>
+                      )}
+                    </div>
+
+                    {reportError && <p className="mt-3 text-xs font-medium text-red-600">{reportError}</p>}
                     <p className="mt-3 text-[11px] text-slate-400 font-medium">
                       Les fichiers OBJ/STL sont compatibles avec Blender, MeshLab et 3D Slicer.
                     </p>

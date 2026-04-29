@@ -321,106 +321,207 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
         </div>
       </nav>
 
-      {/* Services : titre + deux cartes (mise en page type capture « plateforme simple ») */}
-      <section
-        id="features"
-        className="relative z-10 pt-24 pb-14 md:pb-20 lg:pt-28 lg:pb-24 overflow-hidden bg-white border-b border-slate-100"
-        aria-label="Services"
-      >
-        <div className="max-w-7xl mx-auto px-4 md:px-8">
-          <div className="text-center mb-14 md:mb-20 space-y-4">
-            <h2 className="text-3xl md:text-5xl font-bold text-slate-900 tracking-tight">
-              Une plateforme simple,{' '}
-              <span className="text-blue-600">pour vos analyses d&apos;imagerie</span>
-            </h2>
-            <p className="text-slate-600 text-lg md:text-xl max-w-3xl mx-auto font-medium leading-relaxed">
-              Rassemblez vos outils au même endroit et avancez plus sereinement au quotidien, seul ou en équipe.
+      {/* Hero Section & Axes Cliniques (Light Theme) */}
+      <section id="features" className="relative pt-24 pb-20 lg:pt-32 lg:pb-28 overflow-hidden bg-white selection:bg-blue-100 selection:text-blue-900">
+        {/* Background Elements */}
+        <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
+          {/* Halos colorés */}
+          <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[70%] bg-blue-100/50 blur-[100px] rounded-full" />
+          <div className="absolute top-[20%] right-[-10%] w-[40%] h-[60%] bg-cyan-50/50 blur-[100px] rounded-full" />
+          <div className="absolute inset-0 bg-[url('/grid-pattern.svg')] opacity-[0.03]" />
+
+          {/* Cerveau SVG — arrière-plan décoratif centré */}
+          <svg
+            viewBox="0 0 200 200"
+            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[520px] h-[520px] opacity-[0.045] text-blue-600"
+            fill="none"
+            aria-hidden="true"
+          >
+            {/* Hémisphère droit */}
+            <path
+              d="M100 40 C60 38 30 55 20 78 C10 100 15 125 28 142 C38 155 52 162 65 165 C72 167 78 166 82 163 C86 160 88 155 87 148 C85 138 80 130 78 120 C75 108 76 95 82 85 C88 75 97 70 100 68"
+              stroke="currentColor" strokeWidth="3.5" strokeLinecap="round"
+            />
+            <path
+              d="M100 68 C103 62 108 57 110 52 C112 47 110 43 107 41 C104 39 101 39 100 40"
+              stroke="currentColor" strokeWidth="3" strokeLinecap="round"
+            />
+            <path d="M28 100 C35 95 45 93 52 96 C58 99 62 106 60 113" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+            <path d="M22 118 C30 112 42 110 50 115 C56 119 58 128 54 135" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+            <path d="M55 145 C62 138 72 136 78 140" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+            <path d="M40 80 C48 74 58 72 65 77" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+            {/* Hémisphère gauche */}
+            <path
+              d="M100 40 C140 38 170 55 180 78 C190 100 185 125 172 142 C162 155 148 162 135 165 C128 167 122 166 118 163 C114 160 112 155 113 148 C115 138 120 130 122 120 C125 108 124 95 118 85 C112 75 103 70 100 68"
+              stroke="currentColor" strokeWidth="3.5" strokeLinecap="round"
+            />
+            <path
+              d="M100 68 C97 62 92 57 90 52 C88 47 90 43 93 41 C96 39 99 39 100 40"
+              stroke="currentColor" strokeWidth="3" strokeLinecap="round"
+            />
+            <path d="M172 100 C165 95 155 93 148 96 C142 99 138 106 140 113" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+            <path d="M178 118 C170 112 158 110 150 115 C144 119 142 128 146 135" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+            <path d="M145 145 C138 138 128 136 122 140" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+            <path d="M160 80 C152 74 142 72 135 77" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+            {/* Sillon central */}
+            <path d="M100 40 L100 165" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeDasharray="4 3" />
+            {/* Tronc */}
+            <path d="M88 165 C90 172 94 178 100 180 C106 178 110 172 112 165" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+            {/* Cercle décoratif */}
+            <circle cx="100" cy="110" r="75" stroke="currentColor" strokeWidth="1" strokeDasharray="6 4" opacity="0.4" />
+          </svg>
+
+          {/* Points décoratifs */}
+          <div className="absolute top-[15%] left-[8%] h-2 w-2 rounded-full bg-blue-400/30" />
+          <div className="absolute top-[25%] left-[12%] h-1.5 w-1.5 rounded-full bg-cyan-400/30" />
+          <div className="absolute top-[10%] right-[8%] h-2 w-2 rounded-full bg-blue-300/30" />
+          <div className="absolute top-[30%] right-[14%] h-1.5 w-1.5 rounded-full bg-blue-400/25" />
+          <div className="absolute bottom-[20%] left-[6%] h-2 w-2 rounded-full bg-cyan-300/30" />
+          <div className="absolute bottom-[15%] right-[10%] h-2 w-2 rounded-full bg-blue-300/25" />
+        </div>
+
+        <div className="max-w-7xl mx-auto px-4 md:px-8 relative z-20">
+          <div className="text-center mb-16 lg:mb-20 space-y-5">
+            <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-full text-[11px] font-bold uppercase tracking-widest shadow-sm border border-blue-100">
+              <Brain className="w-4 h-4" /> Deux axes. Une seule plateforme.
+            </div>
+
+            <h1 className="text-2xl md:text-3xl lg:text-4xl font-extrabold tracking-tight text-slate-900 leading-[1.2]">
+              Une plateforme, <br className="hidden md:block" />
+              <span className="text-blue-600 relative inline-block mt-1">
+                deux chemins vers le diagnostic.
+                <svg className="absolute -bottom-2 w-full h-3 text-blue-200/50 -z-10" viewBox="0 0 100 10" preserveAspectRatio="none">
+                  <path d="M0 5 Q 50 10 100 5" stroke="currentColor" strokeWidth="8" fill="none" />
+                </svg>
+              </span>
+            </h1>
+
+            <p className="text-base md:text-lg text-slate-600 leading-relaxed max-w-3xl mx-auto font-medium">
+              Selon votre contexte clinique, choisissez l'axe adapté. Chaque flux délivre des mesures précises, visuelles et exploitables — pour poser un diagnostic documenté, pas estimé.
             </p>
+
             {!user && (
-              <p className="mx-auto mt-3 max-w-3xl rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-700">
-                Modules protégés : Segmentation et Recalage nécessitent un compte actif.
+              <p className="mx-auto mt-4 max-w-2xl rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-700">
+                <Lock className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Modules protégés : Les axes cliniques nécessitent un compte médecin actif.
               </p>
             )}
             {featureAccessHint && (
-              <p className="mx-auto mt-2 max-w-3xl rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-700">
+              <p className="mx-auto mt-2 max-w-2xl rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-xs font-semibold text-blue-700 animate-pulse">
                 {featureAccessHint}
               </p>
             )}
           </div>
 
-          <div className="max-w-5xl mx-auto grid md:grid-cols-2 gap-8 md:gap-10 reveal reveal-up">
-            {features.map((feature: any, i) => (
-              <div
-                key={i}
-                role="button"
-                tabIndex={0}
-                onClick={() => handleFeatureAccess(feature.target)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    handleFeatureAccess(feature.target);
-                  }
-                }}
-                className={`relative p-10 bg-white border border-slate-100 rounded-[2.5rem] shadow-sm hover:shadow-2xl hover:-translate-y-2 transition-all duration-500 group feature-card-pop cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${!user ? 'opacity-95' : ''}`}
-                style={{ animationDelay: `${i * 120}ms` }}
-              >
-                {!user && (
-                  <div className="absolute right-5 top-5 inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-700">
-                    <Lock className="h-3 w-3" /> Compte requis
-                  </div>
-                )}
-                <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mb-8 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors duration-500 shadow-inner">
-                  {React.cloneElement(feature.icon as React.ReactElement, { className: 'w-8 h-8' })}
-                </div>
-                <h3 className="text-2xl font-bold text-slate-900 mb-4 tracking-tight">{feature.title}</h3>
-                <p className="text-slate-500 text-base leading-relaxed font-medium">{feature.description}</p>
-                <div className="mt-8 flex items-center gap-2 text-blue-600 font-bold text-xs uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity translate-y-2 group-hover:translate-y-0 duration-500">
-                  {user ? 'Ouvrir le module' : 'Connexion requise'} <ArrowRight className="w-3 h-3" />
-                </div>
+          {/* Clean, Bright Axes Cards */}
+          <div className="grid md:grid-cols-2 gap-8 lg:gap-12 max-w-6xl mx-auto reveal reveal-up">
+            {/* Axe 1: Segmentation */}
+            <div
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleFeatureAccess('/segmentation/nouvelle');
+                }
+              }}
+              onClick={() => handleFeatureAccess('/segmentation/nouvelle')}
+              className="group relative bg-white border border-slate-200 rounded-[2.5rem] p-10 hover:border-blue-300 hover:shadow-2xl hover:shadow-blue-600/10 transition-all duration-500 cursor-pointer overflow-hidden outline-none focus-visible:ring-4 focus-visible:ring-blue-100 flex flex-col"
+            >
+              {/* Card Background Decoration */}
+              <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity duration-500 pointer-events-none transform translate-x-1/4 -translate-y-1/4 group-hover:scale-110">
+                <Brain className="w-64 h-64 text-blue-600" />
               </div>
-            ))}
-          </div>
-        </div>
-      </section>
 
-      {/* Hero Section */}
-      <section className="relative pt-16 pb-20 lg:pt-24 lg:pb-32 overflow-hidden bg-white">
-        <div className="pointer-events-none absolute left-8 top-24 h-44 w-44 rounded-full bg-cyan-100/60 blur-3xl hero-orb"></div>
-        <div className="pointer-events-none absolute right-12 bottom-12 h-52 w-52 rounded-full bg-blue-100/60 blur-3xl hero-orb hero-orb-delay"></div>
-        <div className="absolute top-0 right-0 -z-10 w-1/2 h-full bg-gradient-to-l from-blue-50/30 to-transparent"></div>
-        <div className="max-w-7xl mx-auto px-4 md:px-8 text-center lg:text-left">
-          <div className="grid lg:grid-cols-2 gap-16 items-center">
-            <div className="space-y-8 max-w-2xl">
-              <div className="inline-flex items-center gap-2 px-3 py-1 bg-blue-50 border border-blue-100 text-blue-700 rounded-full text-[10px] font-bold uppercase tracking-wider hero-badge">
-                NEUROIMAGERIE CLINIQUE ASSISTÉE PAR IA
-              </div>
-              <h1 className="text-4xl md:text-6xl font-bold tracking-tight text-slate-900 leading-tight hero-title">
-                <span className="block">On ne devine plus.</span>
-                <span className="block text-blue-600">On mesure.</span>
-              </h1>
-              <p className="text-lg text-slate-500 leading-relaxed max-w-xl mx-auto lg:mx-0 hero-subtitle">
-                Segmentation de l&apos;hippocampe et recalage volumétrique — pour les cas où votre intuition clinique mérite d&apos;être confirmée par des chiffres.
-              </p>
-              <div className="flex flex-col sm:flex-row gap-4 pt-4 justify-center lg:justify-start hero-actions">
-                <button
-                  onClick={() => scrollToSection('features')}
-                  className="px-8 py-3.5 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 shadow-xl shadow-blue-600/20 transition-all font-sans hero-cta-primary"
-                >
-                  Lancer une analyse
-                </button>
-                <button className="px-8 py-3.5 bg-white text-slate-900 font-bold rounded-xl border border-slate-200 hover:bg-slate-50 transition-all flex items-center justify-center gap-2 hero-cta-secondary">
-                  <Play className="w-4 h-4 text-blue-600 fill-blue-600" />
-                  Découvrir la plateforme
-                </button>
+              <div className="relative z-10 flex flex-col flex-grow">
+                <div className="flex items-center justify-between mb-8">
+                  <div className="w-16 h-16 rounded-2xl bg-blue-50 flex items-center justify-center text-blue-600 shadow-inner group-hover:bg-blue-600 group-hover:text-white transition-colors duration-500">
+                    <Brain className="w-8 h-8" />
+                  </div>
+                  <span className="px-3 py-1.5 bg-slate-100 text-slate-500 text-[10px] font-extrabold uppercase tracking-widest rounded-lg group-hover:bg-blue-50 group-hover:text-blue-600 transition-colors">
+                    Axe Clinique 1
+                  </span>
+                </div>
+
+                <div className="mb-8">
+                  <h3 className="text-3xl font-bold text-slate-900 mb-4 tracking-tight group-hover:text-blue-600 transition-colors">
+                    Segmentation 2D <br /> de l'hippocampe
+                  </h3>
+                  <p className="text-slate-500 text-base leading-relaxed font-medium">
+                    Isolez les structures hippocampiques avec une précision sub-millimétrique. Une analyse automatisée conçue pour objectiver le suivi de l'atrophie.
+                  </p>
+                </div>
+
+                {/* Micro Features */}
+                <div className="space-y-3 mb-10 flex-grow">
+                  {['Volumes hippocampiques exacts', 'Détection des asymétries', 'Rapport PDF automatique'].map((feature, idx) => (
+                    <div key={idx} className="flex items-center gap-3 text-sm font-semibold text-slate-700">
+                      <div className="w-5 h-5 rounded-full bg-blue-50 flex items-center justify-center flex-shrink-0 group-hover:bg-blue-100 transition-colors">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />
+                      </div>
+                      {feature}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-auto inline-flex items-center gap-2 text-blue-600 font-bold text-sm uppercase tracking-widest group-hover:translate-x-2 transition-transform duration-300">
+                  Lancer l'analyse <ArrowRight className="w-4 h-4" />
+                </div>
               </div>
             </div>
 
-            <div className="relative group reveal reveal-right transition-all hero-visual-float">
-              <div className="absolute -inset-4 bg-blue-400 opacity-10 blur-3xl group-hover:opacity-20 transition-opacity"></div>
-              <img
-                src="/images/axe1_brain.png"
-                alt="Segmentation 3D Detail"
-              />
+            {/* Axe 2: Recalage */}
+            <div
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleFeatureAccess('/registration');
+                }
+              }}
+              onClick={() => handleFeatureAccess('/registration')}
+              className="group relative bg-white border border-slate-200 rounded-[2.5rem] p-10 hover:border-cyan-300 hover:shadow-2xl hover:shadow-cyan-600/10 transition-all duration-500 cursor-pointer overflow-hidden outline-none focus-visible:ring-4 focus-visible:ring-cyan-100 flex flex-col"
+            >
+              {/* Card Background Decoration */}
+              <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity duration-500 pointer-events-none transform translate-x-1/4 -translate-y-1/4 group-hover:scale-110">
+                <GitMerge className="w-64 h-64 text-cyan-600" />
+              </div>
+
+              <div className="relative z-10 flex flex-col flex-grow">
+                <div className="flex items-center justify-between mb-8">
+                  <div className="w-16 h-16 rounded-2xl bg-cyan-50 flex items-center justify-center text-cyan-600 shadow-inner group-hover:bg-cyan-600 group-hover:text-white transition-colors duration-500">
+                    <GitMerge className="w-8 h-8" />
+                  </div>
+                  <span className="px-3 py-1.5 bg-slate-100 text-slate-500 text-[10px] font-extrabold uppercase tracking-widest rounded-lg group-hover:bg-cyan-50 group-hover:text-cyan-600 transition-colors">
+                    Axe Clinique 2
+                  </span>
+                </div>
+
+                <div className="mb-8">
+                  <h3 className="text-3xl font-bold text-slate-900 mb-4 tracking-tight group-hover:text-cyan-600 transition-colors">
+                    Recalage d'images <br /> multimodal
+                  </h3>
+                  <p className="text-slate-500 text-base leading-relaxed font-medium">
+                    Fusion intelligente et alignement spatial. Superposez la fonction métabolique sur l'anatomie exacte du patient avec une précision inégalée.
+                  </p>
+                </div>
+
+                {/* Micro Features */}
+                <div className="space-y-3 mb-10 flex-grow">
+                  {['Fusion IRM et TEP/IRM', 'Alignement spatial 2D/3D', 'Navigation interactive superposée'].map((feature, idx) => (
+                    <div key={idx} className="flex items-center gap-3 text-sm font-semibold text-slate-700">
+                      <div className="w-5 h-5 rounded-full bg-cyan-50 flex items-center justify-center flex-shrink-0 group-hover:bg-cyan-100 transition-colors">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-cyan-600" />
+                      </div>
+                      {feature}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-auto inline-flex items-center gap-2 text-cyan-600 font-bold text-sm uppercase tracking-widest group-hover:translate-x-2 transition-transform duration-300">
+                  Fusionner les images <ArrowRight className="w-4 h-4" />
+                </div>
+              </div>
             </div>
           </div>
         </div>

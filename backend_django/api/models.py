@@ -308,6 +308,22 @@ class SegmentationMaskResult(models.Model):
         return f"Mask #{self.id} - Run {self.run_id} - MRIFile {self.mri_file_id}"
 
 
+class PatientReport(models.Model):
+    patient             = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='reports')
+    segmentation_run    = models.ForeignKey(SegmentationRun, on_delete=models.SET_NULL, null=True, blank=True, related_name='reports')
+    doctor              = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='patient_reports')
+    file                = models.FileField(upload_to='patients_reports/', max_length=500)
+    doctor_conclusion   = models.TextField(blank=True, default='')
+    doctor_recommendations = models.JSONField(default=list, blank=True)
+    created_at          = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Rapport #{self.id} — Patient {self.patient_id} — {self.created_at.strftime('%d/%m/%Y')}"
+
+
 class Reclamation(models.Model):
     ETAT_CHOICES = [
         ('en_attente', 'En attente'),

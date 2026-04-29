@@ -708,9 +708,10 @@ function ReportPreviewModal({
   );
 }
 
-export default function Modelisation3D() {
+export default function Modelisation3D({ user = null }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const isEmergencySession = Boolean(user?.is_emergency_session);
   const runId = Number(searchParams.get('run'));
   const reportPreviewRef = useRef(null);
 
@@ -965,13 +966,15 @@ export default function Modelisation3D() {
                 Parametres 3D
               </button>
             ) : null}
-            <button
-              type="button"
-              onClick={() => navigate('/dashboard/analysesMRI')}
-              className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
-            >
-              Analyses MRI
-            </button>
+            {!isEmergencySession ? (
+              <button
+                type="button"
+                onClick={() => navigate('/dashboard/analysesMRI')}
+                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                Analyses MRI
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -1159,13 +1162,15 @@ export default function Modelisation3D() {
               </div>
 
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4">
-                <button
-                  type="button"
-                  onClick={() => navigate('/dashboard/analysesMRI')}
-                  className="rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
-                >
-                  Revenir aux analyses
-                </button>
+                {!isEmergencySession ? (
+                  <button
+                    type="button"
+                    onClick={() => navigate('/dashboard/analysesMRI')}
+                    className="rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+                  >
+                    Revenir aux analyses
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   onClick={handleLaunchModeling}

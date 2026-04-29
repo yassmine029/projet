@@ -81,6 +81,7 @@ from .serializers import (
 from .mine_registration import run_mine_registration
 from .segmentation_inference import run_segmentation_on_files
 from .modelisation_3d import run_modelisation_3d, parse_spacing, parse_reference_values
+from .emergency_access import is_emergency_session, deny_if_patient_session_mismatch
 
 # Setup logging - just flush stdout for real-time output
 sys.stdout.flush()
@@ -95,6 +96,9 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 ORDER_NUMBER_PATTERN = re.compile(r'^(?:\d{4,6}|T-\d{4,6})$')
 PHONE_NUMBER_PATTERN = re.compile(r'^[24579]\d{7}$')
+
+# Compte technique Django pour la session du dashboard admin SPA (voir admin_portal_login).
+PORTAL_ADMIN_USERNAME = '__neuroscan_portal_admin__'
 
 
 def get_frontend_origin():
@@ -775,6 +779,8 @@ def _next_dossier_number():
 @api_view(['GET'])
 @login_required
 def next_dossier_number(request):
+    if is_emergency_session(request):
+        return JsonResponse({'ok': False, 'error': 'Non disponible en mode urgence.'}, status=403)
     return JsonResponse({'ok': True, 'dossier_number': _next_dossier_number()})
 
 
@@ -917,6 +923,7 @@ def login_view(request):
 
         login(request, user)
         request.session['username'] = user.username
+        request.session.pop('emergency_access', None)
 
         profile = DoctorProfile.objects.filter(user=user).first()
         if profile and ((profile.nom or '').strip() or (profile.prenom or '').strip()):
@@ -953,13 +960,95 @@ def login_view(request):
 @require_http_methods(["POST"])
 def logout_view(request):
     print(f"Yassmine now the logout endpoint works")
+    user = getattr(request, 'user', None)
+    if user and user.is_authenticated:
+        try:
+            Patient.objects.filter(doctor=user, emergency_temp=True).delete()
+        except Exception as e:
+            print(f"Yassmine logout - purge emergency patients warning: {e}")
     logout(request)
     request.session.flush()
     print(f"Yassmine now the logout SUCCESS")
     return JsonResponse({'message': 'Déconnecté avec succès'})
 
 
-@api_view(['GET'])
+def _portal_dashboard_credentials():
+    email = (
+        os.getenv('ADMIN_PORTAL_EMAIL')
+        or os.getenv('VITE_ADMIN_DASHBOARD_EMAIL')
+        or ''
+    ).strip().lower()
+    password = os.getenv('ADMIN_PORTAL_PASSWORD') or os.getenv('VITE_ADMIN_DASHBOARD_PASSWORD') or ''
+    return email, password
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def admin_portal_login(request):
+    """
+    Authentifie le portail admin du frontend : mêmes identifiants que VITE_ADMIN_DASHBOARD_*.
+    Crée une vraie session Django (is_staff) pour que /api/admin/dashboard/* fonctionne.
+    """
+    try:
+        data = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'JSON invalide'}, status=400)
+
+    email = (data.get('email') or data.get('username') or '').strip().lower()
+    password = data.get('password') or ''
+    expected_email, expected_password = _portal_dashboard_credentials()
+
+    if not expected_email or not expected_password:
+        return JsonResponse(
+            {
+                'ok': False,
+                'error': 'Portail admin non configuré (ADMIN_PORTAL_* ou VITE_ADMIN_DASHBOARD_* dans .env).',
+            },
+            status=503,
+        )
+
+    if email != expected_email or password != expected_password:
+        return JsonResponse({'ok': False, 'error': 'Identifiants administrateur invalides.'}, status=401)
+
+    user, _created = User.objects.get_or_create(
+        username=PORTAL_ADMIN_USERNAME,
+        defaults={
+            'email': expected_email,
+            'is_staff': True,
+            'is_superuser': True,
+            'is_active': True,
+            'first_name': 'Administrateur',
+            'last_name': 'portail',
+        },
+    )
+    if not user.is_staff or not user.is_superuser or not user.is_active:
+        user.is_staff = True
+        user.is_superuser = True
+        user.is_active = True
+        user.save(update_fields=['is_staff', 'is_superuser', 'is_active'])
+
+    user.set_unusable_password()
+    user.save(update_fields=['password'])
+
+    login(request, user, backend='django.contrib.auth.backends.ModelBackend')
+    request.session.pop('emergency_access', None)
+
+    full_name = (user.get_full_name() or 'Administrateur').strip()
+    return JsonResponse({
+        'ok': True,
+        'user': {
+            'username': user.username,
+            'fullName': full_name,
+            'full_name': full_name,
+            'first_name': (user.first_name or '').strip(),
+            'last_name': (user.last_name or '').strip(),
+            'specialty': '',
+            'is_staff': True,
+            'is_admin_dashboard': True,
+        },
+    })
+
+
 def check_session(request):
     if request.user and request.user.is_authenticated:
         print(f"Yassmine now the check_session works - user: {request.user.username}")
@@ -973,8 +1062,11 @@ def check_session(request):
             username_prefix = (request.user.username or '').split('@')[0].replace('.', ' ').replace('_', ' ').strip()
             full_name = username_prefix.title() if username_prefix else 'Medecin'
 
+        is_portal = request.user.username == PORTAL_ADMIN_USERNAME
+        em = is_emergency_session(request)
         return JsonResponse({
-            'logged_in': True, 
+            'logged_in': True,
+            'is_emergency_session': em,
             'user': {
                 'username': request.user.username,
                 'fullName': full_name,
@@ -983,6 +1075,8 @@ def check_session(request):
                 'last_name': (request.user.last_name or '').strip(),
                 'specialty': (profile.specialty if profile else ''),
                 'is_staff': request.user.is_staff,
+                'is_admin_dashboard': is_portal,
+                'is_emergency_session': em,
             },
             'is_staff': request.user.is_staff
         })
@@ -1038,6 +1132,9 @@ def initialize_registration_from_patient_files(request):
             return JsonResponse({'error': 'pat_file_id is required'}, status=400)
 
         pat_file = get_object_or_404(MRIFile, id=pat_file_id, patient__doctor=request.user)
+        deny_pf = deny_if_patient_session_mismatch(request, pat_file.patient)
+        if deny_pf:
+            return deny_pf
         is_3d = pat_file.original_filename.lower().endswith(('.nii', '.nii.gz'))
         
         job_id = str(uuid.uuid4())
@@ -1076,6 +1173,9 @@ def initialize_registration_from_patient_files(request):
             if ref_file_id:
                 # Custom Atlas
                 ref_file = get_object_or_404(MRIFile, id=ref_file_id, patient__doctor=request.user)
+                deny_rf = deny_if_patient_session_mismatch(request, ref_file.patient)
+                if deny_rf:
+                    return deny_rf
                 try:
                     atlas_vol, _, _ = _load_nifti_from_path(ref_file.file.path)
                     from .volume_api import _set_custom_atlas_volume
@@ -1097,7 +1197,10 @@ def initialize_registration_from_patient_files(request):
                 return JsonResponse({'error': 'ref_file_id is required for 2D registration'}, status=400)
 
             ref_file = get_object_or_404(MRIFile, id=ref_file_id, patient__doctor=request.user)
-            
+            deny_rf2 = deny_if_patient_session_mismatch(request, ref_file.patient)
+            if deny_rf2:
+                return deny_rf2
+
             job_dir = os.path.join(UPLOAD_DIR, job_id)
             os.makedirs(job_dir, exist_ok=True)
 
@@ -1714,6 +1817,9 @@ def history(request):
 def patient_detail_update_delete(request, patient_id):
     print(f"Nadine Yassmine - patient_detail_update_delete - id: {patient_id}, user: {request.user.username}")
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
+    deny = deny_if_patient_session_mismatch(request, patient)
+    if deny:
+        return deny
 
     if request.method == 'GET':
         serializer = PatientSerializer(patient, context={'request': request})
@@ -2124,6 +2230,9 @@ def mri_file_preview(request, file_id):
         id=file_id,
         patient__doctor=request.user,
     )
+    deny_m = deny_if_patient_session_mismatch(request, mri_file.patient)
+    if deny_m:
+        return deny_m
 
     abs_path = getattr(mri_file.file, 'path', None)
     if not abs_path or not os.path.exists(abs_path):
@@ -2156,6 +2265,9 @@ def launch_patient_segmentation(request, patient_id):
             }
     """
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
+    deny_s = deny_if_patient_session_mismatch(request, patient)
+    if deny_s:
+        return deny_s
 
     model = (request.data.get('model') or 'unetpp').strip().lower()
     threshold = request.data.get('threshold', 0.75)
@@ -2275,10 +2387,14 @@ def segmentation_runs_list(request):
         limit = 20
     limit = max(1, min(limit, 100))
 
+    base = SegmentationRun.objects.filter(doctor=request.user)
+    if is_emergency_session(request):
+        base = base.filter(patient__emergency_temp=True)
+    else:
+        base = base.filter(patient__emergency_temp=False)
+
     runs_qs = (
-        SegmentationRun.objects
-        .filter(doctor=request.user)
-        .select_related('patient')
+        base.select_related('patient')
         .order_by('-created_at')[:limit]
     )
 
@@ -2308,6 +2424,9 @@ def segmentation_runs_list(request):
 @permission_classes([IsAuthenticated])
 def segmentation_run_detail(request, run_id):
     run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
+    deny_r = deny_if_patient_session_mismatch(request, run.patient)
+    if deny_r:
+        return deny_r
     serializer = SegmentationRunSerializer(run)
     return JsonResponse({'ok': True, 'run': serializer.data}, status=200)
 
@@ -2323,6 +2442,9 @@ ADOPT_MODEL_KEYS = frozenset({'unetpp', 'nnunet', 'swinunetr'})
 @permission_classes([IsAuthenticated])
 def segmentation_mask_review(request, run_id, mask_id):
     run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
+    deny_r = deny_if_patient_session_mismatch(request, run.patient)
+    if deny_r:
+        return deny_r
     mask = get_object_or_404(SegmentationMaskResult, id=mask_id, run=run)
     status_val = (request.data.get('review_status') or request.data.get('status') or '').strip().lower()
     allowed = {c[0] for c in SegmentationMaskResult.ReviewStatus.choices}
@@ -2367,6 +2489,9 @@ def _resolve_adopt_mask_source(row: SegmentationMaskResult, model_key: str):
 def segmentation_mask_adopt_reference(request, run_id, mask_id):
     """Adopte le masque M1, M2 ou M3 comme référence clinique (remplace initial + courant, efface prior)."""
     run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
+    deny_r = deny_if_patient_session_mismatch(request, run.patient)
+    if deny_r:
+        return deny_r
     if run.status != 'done':
         return JsonResponse({'ok': False, 'error': 'Le run doit etre termine.'}, status=400)
     row = get_object_or_404(SegmentationMaskResult, id=mask_id, run=run)
@@ -2416,6 +2541,9 @@ def segmentation_mask_adopt_reference(request, run_id, mask_id):
 @permission_classes([IsAuthenticated])
 def segmentation_run_resegment_masks(request, run_id):
     run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
+    deny_r = deny_if_patient_session_mismatch(request, run.patient)
+    if deny_r:
+        return deny_r
     if run.status != 'done':
         return JsonResponse({'ok': False, 'error': 'Le run doit etre termine avant une nouvelle segmentation.'}, status=400)
 
@@ -2500,6 +2628,9 @@ def segmentation_run_resegment_masks(request, run_id):
 @permission_classes([IsAuthenticated])
 def segmentation_run_modelisation_3d(request, run_id):
     run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
+    deny_r = deny_if_patient_session_mismatch(request, run.patient)
+    if deny_r:
+        return deny_r
 
     if run.status != 'done':
         return JsonResponse({'ok': False, 'error': 'Le run doit etre termine avant la modelisation 3D.'}, status=400)
@@ -3163,6 +3294,9 @@ def _build_report_pdf(run, modelisation):
 @permission_classes([IsAuthenticated])
 def segmentation_run_report_pdf(request, run_id):
     run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
+    deny_r = deny_if_patient_session_mismatch(request, run.patient)
+    if deny_r:
+        return deny_r
     if run.status != 'done':
         return JsonResponse({'ok': False, 'error': 'Le run doit etre termine avant generation du rapport PDF.'}, status=400)
 
@@ -3207,6 +3341,9 @@ def segmentation_run_report_pdf(request, run_id):
 @permission_classes([IsAuthenticated])
 def patient_files_download_zip(request, patient_id):
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
+    deny_z = deny_if_patient_session_mismatch(request, patient)
+    if deny_z:
+        return deny_z
     mri_files = MRIFile.objects.filter(patient=patient).order_by('uploaded_at')
 
     if not mri_files.exists():
@@ -3441,6 +3578,98 @@ def delete_patient(request, patient_id):
 
 
 @csrf_exempt
+@require_http_methods(['POST'])
+def emergency_stage_patient(request):
+    """
+    Crée un Patient jetable (emergency_temp) avec fichiers — réservé aux sessions urgence.
+    Même logique de validation des fichiers que POST /patients/.
+    """
+    # Pas de @login_required ici : le décorateur renvoie une redirection HTML ; Axios suit
+    # vers une autre origine (django:8000) → souvent erreur réseau / CORS côté SPA.
+    if not request.user.is_authenticated:
+        return JsonResponse(
+            {'ok': False, 'error': 'Session expirée ou non authentifié. Reconnectez-vous en mode urgence.'},
+            status=401,
+        )
+    if not is_emergency_session(request):
+        return JsonResponse({'ok': False, 'error': 'Réservé au mode urgence.'}, status=403)
+
+    files = request.FILES.getlist('files')
+    relative_paths = request.POST.getlist('relative_paths')
+    if not files:
+        return JsonResponse({'ok': False, 'error': 'Au moins un fichier est requis.'}, status=400)
+
+    dossier_number = _next_dossier_number()
+    from datetime import date as _date
+
+    try:
+        with transaction.atomic():
+            patient = Patient.objects.create(
+                dossier_number=dossier_number,
+                nom='Urgence',
+                prenom='Import',
+                date_naissance=_date(1990, 1, 1),
+                sexe='M',
+                doctor=request.user,
+                emergency_temp=True,
+                pathologie='',
+                notes='Session urgence — dossier non conservé après déconnexion.',
+            )
+
+            ALLOWED_EXTENSIONS = {
+                '.nii', '.gz', '.dcm', '.dicom',
+                '.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp',
+            }
+            MAX_FILE_SIZE_MB = 500
+            MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
+            for index, uploaded_file in enumerate(files):
+                fname_lower = uploaded_file.name.lower()
+                ext = os.path.splitext(fname_lower)[1]
+                if fname_lower.endswith('.nii.gz'):
+                    ext = '.gz'
+                if ext not in ALLOWED_EXTENSIONS:
+                    transaction.set_rollback(True)
+                    return JsonResponse({
+                        'ok': False,
+                        'error': f'Extension « {ext} » non autorisée pour le fichier « {uploaded_file.name} ».',
+                    }, status=400)
+                file_size = getattr(uploaded_file, 'size', 0) or 0
+                if file_size > MAX_FILE_SIZE_BYTES:
+                    transaction.set_rollback(True)
+                    return JsonResponse({
+                        'ok': False,
+                        'error': f'Le fichier « {uploaded_file.name} » dépasse la limite de {MAX_FILE_SIZE_MB} Mo.',
+                    }, status=400)
+
+                rel_from_client = relative_paths[index] if index < len(relative_paths) else ''
+                safe_rel = _safe_relative_path(rel_from_client, uploaded_file.name)
+                storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
+                saved_path = default_storage.save(storage_path, uploaded_file)
+
+                mri_rec = MRIFile.objects.create(
+                    patient=patient,
+                    file=saved_path,
+                    original_filename=uploaded_file.name,
+                    relative_path=safe_rel,
+                    file_size=int(getattr(uploaded_file, 'size', 0) or 0),
+                )
+                # Ne pas ouvrir chaque fichier ici (PIL/cv2 sur des stacks DICOM est coûteux et peut
+                # faire expirer le POST via le proxy Vite). Les dimensions sont calculées à l’étape
+                # « coupes » (GET …/mri-files/) via _ensure_mri_file_dimensions.
+
+            out_serializer = PatientSerializer(patient, context={'request': request})
+            return JsonResponse(
+                {'ok': True, 'message': 'Dossier urgence créé', 'patient': out_serializer.data},
+                status=201,
+            )
+    except IntegrityError:
+        return JsonResponse({'ok': False, 'error': 'Impossible de créer le dossier (conflit). Réessayez.'}, status=409)
+    except Exception as e:
+        return JsonResponse({'ok': False, 'error': f'Erreur serveur: {str(e)}'}, status=500)
+
+
+@csrf_exempt
 @require_http_methods(["POST"])
 def emergency_login(request):
     try:
@@ -3477,6 +3706,7 @@ def emergency_login(request):
         attempt.save()
         login(request, user)
         request.session['username'] = user.username
+        request.session['emergency_access'] = True
         return JsonResponse({'ok': True, 'message': f'Connexion d\'urgence réussie ({attempt.count}/2)', 'user': user.username, 'count': attempt.count})
     except json.JSONDecodeError:
         return JsonResponse({'ok': False, 'error': 'JSON invalide'}, status=400)
@@ -3983,7 +4213,11 @@ def _dashboard_patient_payload(patient):
 @login_required
 def patients_list_create(request):
     if request.method == 'GET':
-        qs = Patient.objects.filter(doctor=request.user).prefetch_related('mri_files').order_by('-created_at')
+        qs = (
+            Patient.objects.filter(doctor=request.user, emergency_temp=False)
+            .prefetch_related('mri_files')
+            .order_by('-created_at')
+        )
 
         # Dashboard filters from query params
         search = (request.GET.get('id') or '').strip()
@@ -4010,6 +4244,15 @@ def patients_list_create(request):
 
         data = [_dashboard_patient_payload(p) for p in qs]
         return JsonResponse({'ok': True, 'patients': data})
+
+    if is_emergency_session(request):
+        return JsonResponse(
+            {
+                'ok': False,
+                'error': 'En mode urgence, utilisez l’import dossier / fichiers depuis la segmentation.',
+            },
+            status=403,
+        )
 
     try:
         is_json = bool(request.content_type and 'application/json' in request.content_type)
@@ -4218,10 +4461,12 @@ def patient_detail_update_delete_legacy(request, patient_id: uuid.UUID):
 
 @csrf_exempt
 @require_http_methods(["POST"])
-@login_required
 def upload_mri_files(request, patient_id: int):
     print(f"Nadine Yassmine - upload_mri_files endpoint works - patient_id: {patient_id}, user: {request.user.username}")
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
+    deny_u = deny_if_patient_session_mismatch(request, patient)
+    if deny_u:
+        return deny_u
 
     files = request.FILES.getlist('files')
     if not files:
@@ -4339,10 +4584,12 @@ def _compute_slice_quality(file_path: str) -> dict:
 
 
 @api_view(['GET'])
-@login_required
 def list_mri_files(request, patient_id: int):
     print(f"Nadine Yassmine - list_mri_files endpoint works - patient_id: {patient_id}, user: {request.user.username}")
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
+    deny_l = deny_if_patient_session_mismatch(request, patient)
+    if deny_l:
+        return deny_l
     mri_files = list(MRIFile.objects.filter(patient=patient).order_by('-uploaded_at'))
 
     quality_map = {}
@@ -4378,8 +4625,13 @@ def list_mri_files(request, patient_id: int):
 
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
-@login_required
 def mri_files_list_upload(request, patient_id: int):
+    # Pas @login_required : redirection HTML → Axios sur autre origine = erreur réseau.
+    if not request.user.is_authenticated:
+        return JsonResponse(
+            {'ok': False, 'error': 'Session expirée ou non authentifié.', 'mri_files': []},
+            status=401,
+        )
     if request.method == 'GET':
         return list_mri_files(request, patient_id)
     return upload_mri_files(request, patient_id)

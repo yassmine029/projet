@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import AdminSidebar from '../components/AdminSidebar';
 import {
   Activity,
@@ -88,6 +88,8 @@ export default function Dashboard() {
   const [isProcessingTestimonialDecision, setIsProcessingTestimonialDecision] = useState(false);
   const [testimonialDecisionMessage, setTestimonialDecisionMessage] = useState('');
   const [testimonialDecisionError, setTestimonialDecisionError] = useState('');
+  /** Si non vide, le GET témoignages a échoué (souvent 401/403 sans session staff). */
+  const [testimonialsFetchError, setTestimonialsFetchError] = useState('');
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createdPassword, setCreatedPassword] = useState('');
   const [activationNotice, setActivationNotice] = useState('');
@@ -154,10 +156,21 @@ export default function Dashboard() {
     setUnreadCount(Number(acc?.data?.pending_count || 0));
   };
 
-  const reloadTestimonials = async () => {
-    const res = await getAdminTestimonials();
-    setTestimonialsData(res.data || null);
-  };
+  const reloadTestimonials = useCallback(async () => {
+    setTestimonialsFetchError('');
+    try {
+      const res = await getAdminTestimonials();
+      setTestimonialsData(res.data || null);
+    } catch (e) {
+      const st = e?.response?.status;
+      const msg =
+        st === 401 || st === 403
+          ? 'Session administrateur requise. Utilisez la connexion « administrateur » sur la page de connexion (portail avec cookie Django), pas le mode ?adminBypass seul.'
+          : (e?.response?.data?.error || e?.message || 'Impossible de charger les témoignages.');
+      setTestimonialsFetchError(msg);
+      console.error('getAdminTestimonials failed', e);
+    }
+  }, []);
 
   const iconByType = {
     segmentation: Eye,
@@ -207,6 +220,16 @@ export default function Dashboard() {
         const setData = setg.status === 'fulfilled' ? (setg.value?.data || null) : null;
         const anaData = ana.status === 'fulfilled' ? (ana.value?.data || null) : null;
         const tesData = tes.status === 'fulfilled' ? (tes.value?.data || null) : null;
+        if (tes.status === 'rejected') {
+          const st = tes.reason?.response?.status;
+          setTestimonialsFetchError(
+            st === 401 || st === 403
+              ? 'Session administrateur requise pour les témoignages (connectez-vous via le portail admin).'
+              : (tes.reason?.response?.data?.error || tes.reason?.message || 'Impossible de charger les témoignages.')
+          );
+        } else {
+          setTestimonialsFetchError('');
+        }
 
         setOverviewData(ovData);
         setAccountsData(accData);
@@ -221,6 +244,11 @@ export default function Dashboard() {
     };
     load();
   }, []);
+
+  useEffect(() => {
+    if (!isTestimonials) return;
+    void reloadTestimonials();
+  }, [isTestimonials, reloadTestimonials]);
 
   useEffect(() => {
     if (!settingsData) return;
@@ -1164,6 +1192,18 @@ export default function Dashboard() {
       )}
       {testimonialDecisionError && (
         <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{testimonialDecisionError}</div>
+      )}
+      {testimonialsFetchError && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">
+          {testimonialsFetchError}
+          <button
+            type="button"
+            onClick={() => void reloadTestimonials()}
+            className="ml-3 text-blue-600 underline"
+          >
+            Réessayer
+          </button>
+        </div>
       )}
 
       <div className="mb-5 overflow-x-auto rounded-2xl border border-amber-100">

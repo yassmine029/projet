@@ -3140,9 +3140,27 @@ def save_registered_to_patient(request):
     # ── Récupérer le patient ──────────────────────────────────────────────────────
     try:
         from .models import Patient, MRIFile
+        from .emergency_access import is_emergency_session
+
         patient = Patient.objects.get(id=patient_id, doctor=request.user)
     except Patient.DoesNotExist:
         return JsonResponse({'error': 'Patient introuvable ou accès refusé'}, status=404)
+
+    em = is_emergency_session(request)
+    temp = getattr(patient, 'emergency_temp', False)
+    if temp and not em:
+        return JsonResponse(
+            {'success': False, 'error': "Ce dossier temporaire n'est plus accessible."},
+            status=403,
+        )
+    if em and not temp:
+        return JsonResponse(
+            {
+                'success': False,
+                'error': 'Mode urgence : enregistrez uniquement vers un dossier importé dans cette session.',
+            },
+            status=403,
+        )
 
     # ── Données recalées : job ou image base64 (fallback 2D) ─────────────────────
     image_data_b64 = payload.get('imageData')  # base64 PNG envoyé par le frontend (mode 2D)

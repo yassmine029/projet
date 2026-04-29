@@ -32,6 +32,7 @@ interface User {
   prenom?: string;
   nom?: string;
   specialty?: string;
+  is_emergency_session?: boolean;
 }
 interface RegistrationPageProps { user: User; accessToken: string | null; onNavigate: (page: Page) => void; }
 interface Point { x: number; y: number; id: number; }
@@ -50,6 +51,7 @@ const DEFAULT_VIEW: ViewTransform = { scale: 1, panX: 0, panY: 0 };
 
 export function RegistrationPage({ user, accessToken, onNavigate }: RegistrationPageProps) {
   const navigate = useNavigate();
+  const isEmergencySession = Boolean(user?.is_emergency_session);
   const doctorDisplayName = React.useMemo(() => {
     const fromFullName = String(user?.fullName || user?.full_name || '').trim();
     if (fromFullName && !fromFullName.includes('@')) return fromFullName;
@@ -177,6 +179,14 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     danger?: boolean;
     onConfirm: () => void;
   } | null>(null);
+
+  useEffect(() => {
+    if (!isEmergencySession) return;
+    setPanelPickerOpen(null);
+    setPickerSelectedPatient(null);
+    setPickerPatientFiles([]);
+    setPickerSearch('');
+  }, [isEmergencySession]);
 
   const refCanvasRef       = useRef<HTMLCanvasElement>(null);
   const patCanvasRef       = useRef<HTMLCanvasElement>(null);
@@ -2204,7 +2214,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     setPanelPatientFiles({ reference: [], patient: [] });
     setConfirmedPanelPatients({ reference: null, patient: null });
 
-    void fetchAllPatientsForPanels();
+    if (!isEmergencySession) void fetchAllPatientsForPanels();
 
     setRegistrationMode(mode === '2d' ? 'manual' : 'mine');
     setReferenceJobId('');
@@ -2311,6 +2321,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
 
   // ── Picker modal helpers ──────────────────────────────────────────────────────
   const openPanelPicker = (panelType: 'reference' | 'patient') => {
+    if (isEmergencySession) return;
     setPickerSelectedPatient(null);
     setPickerPatientFiles([]);
     setPickerSearch('');
@@ -2823,13 +2834,15 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
           </p>
         </div>{/* end cards section */}
 
-        <PatientSelectionModal
-          isOpen={showPatientSelector}
-          onClose={() => setShowPatientSelector(false)}
-          onSelectPatient={handlePatientSelect}
-          onLocalImport={handleLocalImport}
-          mode={selectionPendingMode}
-        />
+        {!isEmergencySession ? (
+          <PatientSelectionModal
+            isOpen={showPatientSelector}
+            onClose={() => setShowPatientSelector(false)}
+            onSelectPatient={handlePatientSelect}
+            onLocalImport={handleLocalImport}
+            mode={selectionPendingMode}
+          />
+        ) : null}
       </div>
     );
   }
@@ -3513,10 +3526,16 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                             Comment voulez-vous charger cette image ?
                           </p>
 
-                          {/* Two big choice cards */}
-                          <div className="grid grid-cols-2 gap-4 w-full max-w-sm">
+                          {/* Même mise en page qu’en flux normal : 2 colonnes — en urgence, import local uniquement (pas « Mes patients »). */}
+                          <div
+                            className={
+                              isEmergencySession
+                                ? 'w-full max-w-md mx-auto'
+                                : 'grid gap-4 w-full max-w-sm grid-cols-2'
+                            }
+                          >
 
-                            {/* ── Choice 1: Local disk ── */}
+                            {/* ── Choix unique partagé : disque local (identique au mode normal, colonne 1) ── */}
                             <label className="group relative flex flex-col items-center gap-3 p-5 rounded-2xl border-2 border-dashed border-blue-200 bg-blue-50/40 cursor-pointer hover:border-blue-500 hover:bg-blue-50/80 hover:-translate-y-0.5 transition-all duration-200 shadow-sm hover:shadow-md hover:shadow-blue-100">
                               <div className="w-12 h-12 rounded-xl bg-white border border-blue-200 flex items-center justify-center text-blue-400 group-hover:text-blue-600 group-hover:border-blue-400 transition-colors shadow-sm">
                                 <Upload className="w-6 h-6" />
@@ -3541,27 +3560,30 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                               />
                             </label>
 
-                            {/* ── Choice 2: From patients DB ── */}
-                            <button
-                              onClick={() => openPanelPicker(type)}
-                              className="group relative flex flex-col items-center gap-3 p-5 rounded-2xl border-2 border-emerald-200 bg-emerald-50/40 hover:border-emerald-500 hover:bg-emerald-50/80 hover:-translate-y-0.5 transition-all duration-200 shadow-sm hover:shadow-md hover:shadow-emerald-100"
-                            >
-                              <div className="w-12 h-12 rounded-xl bg-white border border-emerald-200 flex items-center justify-center text-emerald-400 group-hover:text-emerald-600 group-hover:border-emerald-400 transition-colors shadow-sm">
-                                <Users className="w-6 h-6" />
-                              </div>
-                              <div className="text-center">
-                                <p className="text-sm font-black text-slate-800 group-hover:text-emerald-800 leading-tight">Mes patients</p>
-                                <p className="text-[10px] text-slate-400 mt-1">
-                                  {allPatientsLoading
-                                    ? 'Chargement…'
-                                    : `${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length} dossier${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length !== 1 ? 's' : ''} disponible${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length !== 1 ? 's' : ''}`
-                                  }
-                                </p>
-                              </div>
-                              <span className="text-[9px] font-black uppercase tracking-[0.12em] text-emerald-600 border border-emerald-200 rounded-full px-2 py-0.5 bg-white">
-                                Base de données
-                              </span>
-                            </button>
+                            {/* ── Colonne 2 — base dossiers médecin (masquée en urgence, même comportement fonctionnel ensuite) ── */}
+                            {!isEmergencySession ? (
+                              <button
+                                type="button"
+                                onClick={() => openPanelPicker(type)}
+                                className="group relative flex flex-col items-center gap-3 p-5 rounded-2xl border-2 border-emerald-200 bg-emerald-50/40 hover:border-emerald-500 hover:bg-emerald-50/80 hover:-translate-y-0.5 transition-all duration-200 shadow-sm hover:shadow-md hover:shadow-emerald-100"
+                              >
+                                <div className="w-12 h-12 rounded-xl bg-white border border-emerald-200 flex items-center justify-center text-emerald-400 group-hover:text-emerald-600 group-hover:border-emerald-400 transition-colors shadow-sm">
+                                  <Users className="w-6 h-6" />
+                                </div>
+                                <div className="text-center">
+                                  <p className="text-sm font-black text-slate-800 group-hover:text-emerald-800 leading-tight">Mes patients</p>
+                                  <p className="text-[10px] text-slate-400 mt-1">
+                                    {allPatientsLoading
+                                      ? 'Chargement…'
+                                      : `${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length} dossier${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length !== 1 ? 's' : ''} disponible${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length !== 1 ? 's' : ''}`
+                                    }
+                                  </p>
+                                </div>
+                                <span className="text-[9px] font-black uppercase tracking-[0.12em] text-emerald-600 border border-emerald-200 rounded-full px-2 py-0.5 bg-white">
+                                  Base de données
+                                </span>
+                              </button>
+                            ) : null}
 
                           </div>
                         </div>
@@ -3939,7 +3961,10 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                           Êtes-vous satisfait du résultat<br />du recalage ?
                         </h4>
                         <p className="mt-2 text-sm text-slate-500">
-                          Vérifiez la superposition avant de confirmer. Cette décision est enregistrée dans le dossier patient.
+                          Vérifiez la superposition avant de confirmer.
+                          {isEmergencySession
+                            ? ' En session urgence, exportez vos résultats depuis cette interface ; aucun enregistrement dans un dossier patient de la plateforme.'
+                            : ' Cette décision est enregistrée dans le dossier patient.'}
                         </p>
                       </div>
 
@@ -4041,8 +4066,9 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                         </div>
                       )}
 
-                      {/* ── Option : Sauvegarder dans le dossier patient (DB uniquement) ── */}
+                      {/* ── Option : Sauvegarder dans le dossier patient (flux normal uniquement ; besoin d’un dossier choisi depuis « Mes patients ») ── */}
                       {(() => {
+                        if (isEmergencySession) return null;
                         const dbPatient = confirmedPanelPatients.patient ?? confirmedPanelPatients.reference;
                         if (!dbPatient) return null;
                         return (
@@ -4181,18 +4207,20 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         onClose={()=>setAutoAlignStatus('idle')}
       />
 
-      <PatientSelectionModal
-        isOpen={showPatientSelector}
-        onClose={() => setShowPatientSelector(false)}
-        onSelectPatient={handlePatientSelect}
-        onLocalImport={handleLocalImport}
-        mode={selectionPendingMode}
-      />
+      {!isEmergencySession ? (
+        <PatientSelectionModal
+          isOpen={showPatientSelector}
+          onClose={() => setShowPatientSelector(false)}
+          onSelectPatient={handlePatientSelect}
+          onLocalImport={handleLocalImport}
+          mode={selectionPendingMode}
+        />
+      ) : null}
 
       {/* ══════════════════════════════════════════════════════════════════════
           PATIENT PICKER MODAL — full-screen, per-panel
       ══════════════════════════════════════════════════════════════════════ */}
-      {panelPickerOpen && (
+      {panelPickerOpen && !isEmergencySession && (
         <div className="fixed inset-0 z-[200] flex items-stretch justify-center bg-slate-900/60 backdrop-blur-md p-4 sm:p-6">
           <div className="relative flex w-full max-w-6xl flex-col overflow-hidden rounded-[28px] border border-white/20 bg-white shadow-[0_40px_80px_-16px_rgba(0,0,0,0.35)] animate-in zoom-in-95 slide-in-from-bottom-6 duration-400">
 

@@ -26,7 +26,7 @@ import {
   ZoomOut,
   RotateCcw,
 } from 'lucide-react';
-import api, { createPatient } from '../api';
+import api, { createPatient, stageEmergencyPatient } from '../api';
 
 const CHECKLIST_STEPS = [
   'Préparation des données',
@@ -1248,7 +1248,7 @@ function SliceMetaModalDialog({ slice, coupeXY, seriesTotal, onClose }) {
   );
 }
 
-export default function NouvelleSegmentation() {
+export default function NouvelleSegmentation({ user: userProp = null }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const launchTriggeredRef = useRef(false);
@@ -1302,8 +1302,14 @@ export default function NouvelleSegmentation() {
   const [sliceQuality, setSliceQuality] = useState({});     // { fileId: {brain_ratio, is_empty, is_low_content, recommended} }
   const [qualitySummary, setQualitySummary] = useState(null); // { total, recommended, low_content, empty, auto_excluded }
 
-  // ── Mode sélection patient (existant | nouveau) ───────────────────────────
+  // ── Mode sélection patient (existant | nouveau | import urgence) ───────────
   const [patientSelectMode, setPatientSelectMode] = useState('existing');
+  const [isEmergencySession, setIsEmergencySession] = useState(() =>
+    Boolean(userProp?.is_emergency_session)
+  );
+  const [emergencyFiles, setEmergencyFiles] = useState([]);
+  const emergencyFolderInputRef = useRef(null);
+  const emergencyMultiInputRef = useRef(null);
   const [npForm, setNpForm] = useState({ prenom: '', nom: '', date_naissance: '', sexe: '', pathologie: '', dossier_number: '' });
   const [npErrors, setNpErrors] = useState({});
   const [npSubmitting, setNpSubmitting] = useState(false);
@@ -1314,6 +1320,12 @@ export default function NouvelleSegmentation() {
 
   const [doctorName, setDoctorName] = useState(getDoctorName());
   const runIdFromQuery = searchParams.get('run');
+
+  useEffect(() => {
+    if (userProp == null || typeof userProp !== 'object') return;
+    setIsEmergencySession(Boolean(userProp.is_emergency_session));
+    if (userProp.is_emergency_session) setPatientSelectMode('emergency_upload');
+  }, [userProp]);
 
   useEffect(() => {
     const loadDoctorName = async () => {
@@ -1335,7 +1347,11 @@ export default function NouvelleSegmentation() {
         }
 
         setDoctorName(display);
-        localStorage.setItem('user', JSON.stringify(user));
+        setIsEmergencySession(Boolean(response?.data?.is_emergency_session));
+        localStorage.setItem('user', JSON.stringify({
+          ...user,
+          is_emergency_session: Boolean(response?.data?.is_emergency_session),
+        }));
       } catch {
         // Keep local fallback name when session call fails.
       }
@@ -1343,6 +1359,10 @@ export default function NouvelleSegmentation() {
 
     loadDoctorName();
   }, []);
+
+  useEffect(() => {
+    if (isEmergencySession) setPatientSelectMode('emergency_upload');
+  }, [isEmergencySession]);
 
   const fetchPatients = async () => {
     setLoading(true);
@@ -2184,7 +2204,7 @@ export default function NouvelleSegmentation() {
       Object.entries(npForm).forEach(([k, v]) => { if (v) payload.append(k, v); });
       if (npFile) payload.append('files', npFile);
       const res = await createPatient(payload);
-      const created = res.data;
+      const created = res.data?.patient ?? res.data;
       // Add to patients list and select
       setPatients((prev) => [created, ...prev]);
       setSelectedPatient(created);
@@ -2193,6 +2213,53 @@ export default function NouvelleSegmentation() {
       const msg = err?.response?.data
         ? Object.values(err.response.data).flat().join(' · ')
         : 'Erreur lors de la création du patient.';
+      setNpApiError(msg);
+    } finally {
+      setNpSubmitting(false);
+    }
+  };
+
+  const pickEmergencyFiles = (fileList) => {
+    const list = fileList ? Array.from(fileList) : [];
+    setEmergencyFiles(list);
+    setNpApiError('');
+  };
+
+  const submitEmergencyStaging = async () => {
+    if (emergencyFiles.length === 0) {
+      setNpApiError('Ajoutez au moins un fichier ou choisissez un dossier.');
+      return;
+    }
+    setNpSubmitting(true);
+    setNpApiError('');
+    try {
+      const fd = new FormData();
+      emergencyFiles.forEach((f) => {
+        fd.append('files', f);
+        fd.append('relative_paths', f.webkitRelativePath || f.name);
+      });
+      const res = await stageEmergencyPatient(fd);
+      if (!res.data?.ok) {
+        setNpApiError(res.data?.error || 'Import impossible.');
+        return;
+      }
+      const patient = res.data.patient;
+      setSelectedPatient(patient);
+      setStep(2);
+    } catch (err) {
+      const apiDetail = err?.response?.data?.error || err?.response?.data?.detail;
+      const isNetwork =
+        !err.response &&
+        (err.code === 'ERR_NETWORK' ||
+          String(err.message || '').toLowerCase().includes('network'));
+      let msg = apiDetail
+        ? (Array.isArray(apiDetail) ? apiDetail.join(' ') : String(apiDetail))
+        : '';
+      if (!msg && isNetwork) {
+        msg =
+          'Connexion au serveur interrompue (session expirée, backend arrêté, ou import très lourd). Reconnectez-vous ou réessayez.';
+      }
+      if (!msg) msg = err.message || 'Erreur lors de l’import.';
       setNpApiError(msg);
     } finally {
       setNpSubmitting(false);
@@ -2230,6 +2297,7 @@ export default function NouvelleSegmentation() {
     setResultsViewRangeFromInput('');
     setResultsViewRangeToInput('');
     setResultsViewRangeMessage('');
+    setEmergencyFiles([]);
   };
 
   return (
@@ -2245,13 +2313,15 @@ export default function NouvelleSegmentation() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => navigate('/dashboard')}
-            className="inline-flex items-center rounded-md border border-white/30 px-3 py-1.5 text-sm font-medium text-white hover:bg-white/10"
-          >
-            Acceder au dashboard
-          </button>
+          {!isEmergencySession ? (
+            <button
+              type="button"
+              onClick={() => navigate('/dashboard')}
+              className="inline-flex items-center rounded-md border border-white/30 px-3 py-1.5 text-sm font-medium text-white hover:bg-white/10"
+            >
+              Acceder au dashboard
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => navigate('/')}
@@ -2326,7 +2396,82 @@ export default function NouvelleSegmentation() {
           <div className="p-6 lg:p-8">
             {step === 1 && (
               <div className="space-y-5">
-
+                {isEmergencySession ? (
+                  <>
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                      <p className="font-bold text-amber-900">Session urgence</p>
+                      <p className="mt-1 text-xs text-amber-800/90">
+                        Importez un dossier ou plusieurs fichiers : DICOM (.dcm), NIfTI (.nii,
+                        .nii.gz), images (JPEG, PNG, TIFF, BMP). Même préparation que le mode
+                        standard. Les données temporaires sont supprimées à la déconnexion.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => emergencyMultiInputRef.current?.click()}
+                        className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        Choisir des fichiers
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => emergencyFolderInputRef.current?.click()}
+                        className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        Choisir un dossier
+                      </button>
+                      {emergencyFiles.length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => pickEmergencyFiles([])}
+                          className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700"
+                        >
+                          Effacer la sélection
+                        </button>
+                      ) : null}
+                    </div>
+                    <input
+                      ref={emergencyMultiInputRef}
+                      type="file"
+                      multiple
+                      className="hidden"
+                      accept=".nii,.nii.gz,.dcm,.dicom,.jpg,.jpeg,.png,.tif,.tiff,.bmp"
+                      onChange={(e) => {
+                        pickEmergencyFiles(e.target.files);
+                        e.target.value = '';
+                      }}
+                    />
+                    <input
+                      ref={emergencyFolderInputRef}
+                      type="file"
+                      multiple
+                      className="hidden"
+                      accept=".nii,.nii.gz,.dcm,.dicom,.jpg,.jpeg,.png,.tif,.tiff,.bmp"
+                      {...{ webkitdirectory: '', directory: '' }}
+                      onChange={(e) => {
+                        pickEmergencyFiles(e.target.files);
+                        e.target.value = '';
+                      }}
+                    />
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                      {emergencyFiles.length === 0 ? (
+                        <span className="text-slate-500">Aucun fichier sélectionné.</span>
+                      ) : (
+                        <span className="font-semibold">
+                          {emergencyFiles.length} fichier{emergencyFiles.length !== 1 ? 's' : ''} prêt
+                          {emergencyFiles.length !== 1 ? 's' : ''}
+                        </span>
+                      )}
+                    </div>
+                    {npApiError ? (
+                      <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-600">
+                        {npApiError}
+                      </div>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
                 {/* ── Mode tabs ──────────────────────────────────────────────── */}
                 <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1 w-fit">
                   <button
@@ -2660,6 +2805,8 @@ export default function NouvelleSegmentation() {
                     )}
                   </div>
                 )}
+                  </>
+                )}
 
                 {/* ── Footer ─────────────────────────────────────────────── */}
                 <div className="mt-4 -mx-6 -mb-6 px-6 py-4 bg-white border-t border-slate-100 flex items-center justify-between">
@@ -2669,7 +2816,18 @@ export default function NouvelleSegmentation() {
                       className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
                       Annuler
                     </button>
-                    {patientSelectMode === 'existing' ? (
+                    {isEmergencySession ? (
+                      <button
+                        type="button"
+                        onClick={submitEmergencyStaging}
+                        disabled={npSubmitting || emergencyFiles.length === 0}
+                        className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-5 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {npSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CloudUpload className="h-4 w-4" />}
+                        {npSubmitting ? 'Import…' : 'Importer et continuer'}
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    ) : patientSelectMode === 'existing' ? (
                       <button type="button" disabled={!selectedPatient} onClick={() => setStep(2)}
                         className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2 text-sm font-bold text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
                         Confirmer le patient

@@ -44,6 +44,7 @@ interface User {
   speciality?: string;
   specialty?: string;
   is_staff?: boolean;
+  is_emergency_session?: boolean;
 }
 
 interface LandingPageProps {
@@ -187,6 +188,10 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
       onNavigate('login');
       return;
     }
+    if (user.is_emergency_session) {
+      scrollToSection('features');
+      return;
+    }
     onNavigate('dashboard');
   };
 
@@ -290,14 +295,26 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
               <>
                 <div className="hidden xl:flex flex-col items-end pr-3 border-r border-slate-100">
                   <span className="text-[11px] font-bold text-slate-900 leading-tight">Dr. {doctorDisplayName}</span>
-                  <span className="text-[9px] text-blue-600 font-bold uppercase tracking-widest opacity-80">{user.speciality || user.specialty || 'Neurologie'}</span>
+                  <span className="text-[9px] text-blue-600 font-bold uppercase tracking-widest opacity-80">
+                    {user.is_emergency_session ? 'Session urgence' : (user.speciality || user.specialty || 'Neurologie')}
+                  </span>
                 </div>
-                <button
-                  onClick={() => onNavigate('dashboard')}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-xl text-[11px] font-bold shadow-lg shadow-blue-600/20 hover:bg-blue-700 transition-all active:scale-95"
-                >
-                  Votre Dashboard
-                </button>
+                {user.is_emergency_session ? (
+                  <button
+                    type="button"
+                    onClick={() => scrollToSection('features')}
+                    className="bg-amber-600 text-white px-4 py-2 rounded-xl text-[11px] font-bold shadow-lg shadow-amber-600/20 hover:bg-amber-700 transition-all active:scale-95"
+                  >
+                    Outils démo
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => onNavigate('dashboard')}
+                    className="bg-blue-600 text-white px-4 py-2 rounded-xl text-[11px] font-bold shadow-lg shadow-blue-600/20 hover:bg-blue-700 transition-all active:scale-95"
+                  >
+                    Votre Dashboard
+                  </button>
+                )}
                 <button
                   onClick={onLogout}
                   className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"

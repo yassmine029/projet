@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Mail, ArrowLeft, ShieldAlert, CheckCircle2, AlertTriangle, Brain, Zap, ArrowRight, Briefcase } from 'lucide-react'
-import { emergencyLogin } from '../api'
+import { emergencyLogin, checkSession } from '../api'
 
-export default function EmergencyLoginPage({ onBack }) {
+export default function EmergencyLoginPage({ onBack, onLogin }) {
+  const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [orderNumber, setOrderNumber] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -31,9 +33,40 @@ export default function EmergencyLoginPage({ onBack }) {
     try {
       const response = await emergencyLogin(email, orderNumber)
       if (response.data && response.data.ok) {
-        setSent(true)
-        setSuccessMessage('Accès d\'urgence validé.')
-        // Redirect logic could happen here
+        // La session Django est déjà créée par emergency_login (Set-Cookie).
+        // checkSession peut parfois ne pas voir le cookie tout de suite (timing / onglet) :
+        // on enrichit via l’API si possible, sinon on dérive l’utilisateur depuis la réponse.
+        let merged = null
+        try {
+          const sess = await checkSession()
+          if (sess.data?.logged_in) {
+            const raw = sess.data.user
+            const u =
+              raw && typeof raw === 'object'
+                ? raw
+                : { username: raw, fullName: raw, is_staff: sess.data.is_staff }
+            merged = {
+              ...u,
+              is_emergency_session: Boolean(sess.data.is_emergency_session),
+            }
+          }
+        } catch (sessErr) {
+          console.error(sessErr)
+        }
+
+        if (!merged) {
+          const uname = (response.data.user || email || '').trim()
+          merged = {
+            username: uname,
+            fullName: uname.includes('@') ? uname.split('@')[0].replace(/[._]/g, ' ') : uname,
+            is_emergency_session: true,
+          }
+        }
+
+        localStorage.setItem('user', JSON.stringify(merged))
+        onLogin?.(merged)
+        navigate('/', { replace: true })
+        return
       } else {
         setEmailError(response.data?.error || 'Validation d\'urgence échouée.')
       }

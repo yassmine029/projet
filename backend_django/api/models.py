@@ -209,6 +209,11 @@ class Patient(models.Model):
     autres_maladies = models.TextField(blank=True, null=True)
     doctor = models.ForeignKey(User, on_delete=models.CASCADE, related_name='patients')
     created_at = models.DateTimeField(auto_now_add=True)
+    emergency_temp = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text='Dossier jetable créé en session urgence (exclu des listes médecin).',
+    )
 
     def __str__(self):
         return f"{self.nom} {self.prenom} - {self.dossier_number}"

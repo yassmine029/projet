@@ -78,27 +78,58 @@ export default function ResetPasswordPage({ onNavigate, token, mode = 'reset' })
   const [confirmError, setConfirmError] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
   const [isValidatingToken, setIsValidatingToken] = useState(true)
-  const isActivationMode = mode === 'activation'
+  /** Which backend flow to use after validation (activation vs password reset). */
+  const [effectiveMode, setEffectiveMode] = useState(() => (mode === 'activation' ? 'activation' : 'reset'))
+  const isActivationMode = effectiveMode === 'activation'
 
   useEffect(() => {
-    if (!token) {
+    setEffectiveMode(mode === 'activation' ? 'activation' : 'reset')
+  }, [mode])
+
+  useEffect(() => {
+    const normalized = (token || '').trim()
+    if (!normalized) {
       setStep('error')
       setErrorMessage('Lien de réinitialisation invalide')
       setIsValidatingToken(false)
       return
     }
     const validate = async () => {
+      setEffectiveMode(mode === 'activation' ? 'activation' : 'reset')
       try {
-        const response = isActivationMode
-          ? await validateActivationToken(token)
-          : await validateResetToken(token)
-        if (response.data && response.data.ok) {
+        const primaryIsActivation = mode === 'activation'
+        const tryActivation = () => validateActivationToken(normalized)
+        const tryReset = () => validateResetToken(normalized)
+
+        const first = primaryIsActivation ? await tryActivation() : await tryReset()
+        if (first.data?.ok) {
+          setEffectiveMode(primaryIsActivation ? 'activation' : 'reset')
           setStep('form')
-        } else {
-          const data = response.data
-          if (data?.error_type === 'token_expired') setStep('expired')
-          else { setStep('error'); setErrorMessage(data?.error || 'Lien invalide') }
+          return
         }
+        if (first.data?.error_type === 'token_expired') {
+          setStep('expired')
+          return
+        }
+        // App.jsx redirects "/?token=" to /reset-password — that validates reset tokens only.
+        // Activation links then wrongly hit validate_reset_token → token_invalid. Try the other API.
+        if (first.data?.error_type === 'token_invalid') {
+          const second = primaryIsActivation ? await tryReset() : await tryActivation()
+          if (second.data?.ok) {
+            setEffectiveMode(primaryIsActivation ? 'reset' : 'activation')
+            setStep('form')
+            return
+          }
+          if (second.data?.error_type === 'token_expired') {
+            setStep('expired')
+            return
+          }
+          setStep('error')
+          setErrorMessage(second.data?.error || first.data?.error || 'Lien invalide')
+          return
+        }
+        setStep('error')
+        setErrorMessage(first.data?.error || 'Lien invalide')
       } catch (err) {
         console.error(err)
         const data = err?.response?.data
@@ -116,7 +147,7 @@ export default function ResetPasswordPage({ onNavigate, token, mode = 'reset' })
       }
     }
     validate()
-  }, [token, isActivationMode])
+  }, [token, mode])
 
   const validatePassword = (pwd) => {
     if (!pwd) return 'Le mot de passe est requis'
@@ -134,10 +165,11 @@ export default function ResetPasswordPage({ onNavigate, token, mode = 'reset' })
     if (v) { setPasswordError(v); return }
     if (newPassword !== confirmPassword) { setConfirmError('Les mots de passe ne correspondent pas'); setPasswordError(''); return }
     setIsLoading(true); setPasswordError(''); setConfirmError(''); setErrorMessage('')
+    const normalized = (token || '').trim()
     try {
       const response = isActivationMode
-        ? await activateAccount(token, newPassword)
-        : await resetPassword(token, newPassword)
+        ? await activateAccount(normalized, newPassword)
+        : await resetPassword(normalized, newPassword)
       if (response.data && response.data.ok) {
         setStep('success')
       } else {

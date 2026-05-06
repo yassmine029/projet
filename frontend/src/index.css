@@ -65,7 +65,7 @@
 .theme-toggle-btn {
   position: fixed;
   right: 16px;
-  bottom: 16px;
+  top: 16px;
   z-index: 9999;
   display: inline-flex;
   align-items: center;
@@ -261,6 +261,26 @@
   top: 0;
   bottom: 0;
   left: 20px;
+}
+
+/* Scrollbar discrète pour les sections du dossier patient */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 5px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 10px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }
 
 /* Extended dark-mode overrides for registration page */

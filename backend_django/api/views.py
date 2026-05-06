@@ -51,7 +51,14 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from datetime import timedelta
 from django.utils import timezone
 from django.core.mail import send_mail
-# from django.core.paginator import Paginator # Not used, can be removed
+
+# WebSocket support for registration progress
+try:
+    from asgiref.sync import async_to_sync
+    from channels.layers import get_channel_layer
+except Exception:
+    async_to_sync = None
+    get_channel_layer = None
 from django.db.models import Q
 from .models import Series, PasswordResetToken, AccountActivationToken, EmergencyLoginAttempt, Patient, Reclamation, MRIFile, ContactRequest, DoctorProfile, Testimonial
 from .serializers import ReclamationSerializer, PatientSerializer, MRIFileSerializer, ContactRequestSerializer
@@ -96,6 +103,31 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 ORDER_NUMBER_PATTERN = re.compile(r'^(?:\d{4,6}|T-\d{4,6})$')
 PHONE_NUMBER_PATTERN = re.compile(r'^[24579]\d{7}$')
+
+
+def _emit_registration_progress(job_id: str, progress: int, stage: str, message: str, status: str = 'processing'):
+    """Send registration progress update via WebSocket to frontend."""
+    if not job_id or get_channel_layer is None or async_to_sync is None:
+        return
+    try:
+        channel_layer = get_channel_layer()
+        if channel_layer is None:
+            return
+        pct = int(max(0, min(100, int(progress))))
+        async_to_sync(channel_layer.group_send)(
+            f'registration_{job_id}',
+            {
+                'type': 'registration_progress',
+                'jobId': str(job_id),
+                'status': status,
+                'stage': stage,
+                'progress': pct,
+                'message': message,
+            },
+        )
+    except Exception:
+        # Never fail registration because of websocket updates.
+        return
 
 
 def get_frontend_origin():
@@ -409,6 +441,71 @@ def affine_from_tform(tform):
     M[:, :2] = (b * T).T
     M[:, 2] = c
     return M
+
+
+def _get_warp_from_tform(tform, upload_dir, target_size=(512, 512)):
+    """
+    Returns a callable warp_fn(img_gray) -> warped_img.
+    Handles three tform formats:
+      - MINE: {"method": "mine", "transform_file": "relative/path/H.npy"}
+              3×3 homography stored in normalized [-1,1] coords
+      - RANSAC manual: {"M": [[2x3 list]]}
+      - Procrustes: {"rotation": ..., "scale": ..., "translation": ...}
+    """
+    method = tform.get('method', '')
+    w, h = target_size
+
+    if method == 'mine':
+        transform_file = tform.get('transform_file', '')
+        if not transform_file:
+            raise ValueError('MINE tform missing transform_file path')
+        H_path = os.path.join(upload_dir, transform_file)
+        if not os.path.exists(H_path):
+            raise ValueError(f'MINE transform file not found: {H_path}')
+        H = np.load(H_path).astype(np.float64)
+        # Convert from MINE normalized [-1,1] space to pixel space
+        N2P = np.array([
+            [(w - 1) / 2, 0, (w - 1) / 2],
+            [0, (h - 1) / 2, (h - 1) / 2],
+            [0, 0, 1],
+        ], dtype=np.float64)
+        P2N = np.array([
+            [2 / (w - 1), 0, -1],
+            [0, 2 / (h - 1), -1],
+            [0, 0, 1],
+        ], dtype=np.float64)
+        H_px = N2P @ H @ P2N
+
+        def warp_fn(img):
+            if img.shape[:2] != (h, w):
+                img = cv2.resize(img, target_size, interpolation=cv2.INTER_LINEAR)
+            # MINE H maps dst→src (inverse mapping) — use WARP_INVERSE_MAP
+            return cv2.warpPerspective(img, H_px, target_size,
+                                       flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
+                                       borderMode=cv2.BORDER_CONSTANT,
+                                       borderValue=0)
+    elif 'M' in tform:
+        M = np.array(tform['M'], dtype=np.float32)
+
+        def warp_fn(img):
+            if img.shape[:2] != (h, w):
+                img = cv2.resize(img, target_size, interpolation=cv2.INTER_LINEAR)
+            return cv2.warpAffine(img, M, target_size,
+                                  flags=cv2.INTER_LINEAR,
+                                  borderMode=cv2.BORDER_CONSTANT,
+                                  borderValue=0)
+    else:
+        M = affine_from_tform(tform)
+
+        def warp_fn(img):
+            if img.shape[:2] != (h, w):
+                img = cv2.resize(img, target_size, interpolation=cv2.INTER_LINEAR)
+            return cv2.warpAffine(img, M, target_size,
+                                  flags=cv2.INTER_LINEAR,
+                                  borderMode=cv2.BORDER_CONSTANT,
+                                  borderValue=0)
+
+    return warp_fn
 
 
 def select_brain_candidate(img):
@@ -1429,16 +1526,26 @@ def auto_align(request):
         print(f"Yassmine: Starting MINE registration for job {job_id} with n_iters={n_iters}...")
         os.makedirs(auto_dir, exist_ok=True)
         print(f"AUTO DIR created: {auto_dir}")
+        
+        # Send initial progress update via WebSocket
+        _emit_registration_progress(job_id, 10, 'initialisation', 'Initialisation du recalage MINE...')
+        
+        # Create a callback to send progress updates during registration
+        def on_progress(pct: int, msg: str):
+            _emit_registration_progress(job_id, pct, 'optimisation', msg)
+        
         result = run_mine_registration(
             ref_path,
             pat_path,
             os.path.join(auto_dir, f"mine_{job_id}"),
             n_iters=n_iters,
-            device_name="auto"
+            device_name="auto",
+            progress_callback=on_progress
         )
 
         if not result.get('success', False):
             print(f"Yassmine now the auto_align FAILED - MINE failed")
+            _emit_registration_progress(job_id, 100, 'error', 'Le recalage MINE a échoué', status='error')
             return JsonResponse({
                 'error': 'alignment failed',
                 'message': 'Le recalage MINE a échoué',
@@ -1532,6 +1639,7 @@ def auto_align(request):
 
         except Exception as e:
             print(f"Yassmine now the auto_align WARNING - failed to read warped image: {str(e)}")
+            _emit_registration_progress(job_id, 100, 'completed', 'Recalage terminé avec succès', status='success')
             return JsonResponse({
                 'success': True,
                 'message': 'Recalage automatique réussi',
@@ -1539,6 +1647,7 @@ def auto_align(request):
             })
 
         print(f"Yassmine now the auto_align SUCCESS - job_id: {job_id}, RMSE: {metrics.get('rmse')}")
+        _emit_registration_progress(job_id, 100, 'completed', 'Recalage terminé avec succès', status='success')
 
         return JsonResponse({
             'success': True,
@@ -3322,6 +3431,390 @@ def apply_tform_to_series(request):
         return JsonResponse({'error': f'transformation failed: {str(e)}'}, status=500)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def apply_to_patient_series(request):
+    """
+    Apply the 2D registration transform to all MRI slices of a patient.
+    Uses parallel I/O, generates thumbnails in the same pass, returns
+    thumbnails directly so no second API call is needed.
+    """
+    import time as _time
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from threading import Lock
+
+    THUMB_SIZE = 96   # smaller = faster encoding
+    MAX_WORKERS = 6   # parallel file operations
+
+    if not request.user or not request.user.is_authenticated:
+        return JsonResponse({'error': 'login required'}, status=401)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'invalid JSON'}, status=400)
+
+    job_id     = data.get('jobId')
+    patient_id = data.get('patientId')
+    ref_patient_id = data.get('refPatientId')
+    print(f'apply_to_patient_series — job={job_id!r} patient={patient_id!r} ref={ref_patient_id!r}')
+
+    if not job_id or not patient_id:
+        return JsonResponse({'error': 'missing jobId or patientId'}, status=400)
+
+    # Series + transform
+    try:
+        series = Series.objects.get(job_id=job_id, user=request.user)
+        tform  = series.tform
+        if not tform:
+            return JsonResponse({'error': 'Aucune transformation trouvée. Faites d\'abord le recalage.'}, status=404)
+    except Series.DoesNotExist:
+        return JsonResponse({'error': 'Session de recalage introuvable.'}, status=404)
+
+    # Patient
+    try:
+        patient   = Patient.objects.get(id=int(patient_id), doctor=request.user)
+    except (Patient.DoesNotExist, ValueError, TypeError):
+        return JsonResponse({'error': f'Patient introuvable (id={patient_id}).'}, status=404)
+
+    mri_files = list(MRIFile.objects.filter(patient=patient, file_type='original').order_by('uploaded_at'))
+    if not mri_files:
+        return JsonResponse({'error': f'Aucune coupe IRM originale pour {patient.nom} {patient.prenom}.'}, status=404)
+
+    try:
+        warp_fn = _get_warp_from_tform(tform, UPLOAD_DIR)
+    except ValueError as e:
+        return JsonResponse({'error': f'Transformation invalide: {str(e)}'}, status=400)
+
+    t0 = _time.time()
+
+    # Send initial progress update
+    _emit_registration_progress(job_id, 5, 'application', f'Application à la série ({len(mri_files)} coupes)...')
+
+    registered_dir = os.path.join(UPLOAD_DIR, job_id, 'registered_series')
+    os.makedirs(registered_dir, exist_ok=True)
+
+    # Track progress with thread-safe counter
+    progress_lock = Lock()
+    processed_count = [0]  # Use list for mutable reference in nested function
+
+    def _process_patient_slice(mri):
+        """Read → warp → save full-size + generate thumbnail. Returns (order, path, thumb_b64|None)."""
+        try:
+            img = cv2.imread(mri.file.path, cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                return None
+            warped  = warp_fn(img)
+            out_path = os.path.join(registered_dir, f'reg_{mri.id}_{mri.original_filename}')
+            cv2.imwrite(out_path, warped)
+            # thumbnail in same pass
+            thumb = cv2.resize(warped, (THUMB_SIZE, THUMB_SIZE), interpolation=cv2.INTER_AREA)
+            _, buf = cv2.imencode('.jpg', thumb, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            b64 = base64.b64encode(buf).decode('utf-8')
+            
+            # Update progress
+            with progress_lock:
+                processed_count[0] += 1
+                pct = 5 + int((processed_count[0] / len(mri_files)) * 85)  # 5-90%
+                _emit_registration_progress(
+                    job_id, 
+                    pct, 
+                    'application',
+                    f'Traitement des coupes: {processed_count[0]}/{len(mri_files)}'
+                )
+            
+            return out_path, f'data:image/jpeg;base64,{b64}'
+        except Exception as e:
+            print(f'  patient slice error {mri.original_filename}: {e}')
+            with progress_lock:
+                processed_count[0] += 1
+            return None
+
+    # Run patient slices in parallel, preserve order
+    patient_results = [None] * len(mri_files)
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+        futures = {ex.submit(_process_patient_slice, mri): i for i, mri in enumerate(mri_files)}
+        for fut in as_completed(futures):
+            idx = futures[fut]
+            patient_results[idx] = fut.result()
+
+    patient_slice_paths = [r[0] for r in patient_results if r]
+    patient_thumbs_b64  = [r[1] if r else None for r in patient_results]
+
+    # Reference slices (optional) — also parallel
+    ref_slice_paths = []
+    ref_thumbs_b64  = []
+    ref_name = ''
+    
+    if ref_patient_id:
+        _emit_registration_progress(job_id, 91, 'reference', 'Traitement des coupes de référence...')
+
+        try:
+            ref_patient = Patient.objects.get(id=int(ref_patient_id), doctor=request.user)
+            ref_mri     = list(MRIFile.objects.filter(patient=ref_patient, file_type='original').order_by('uploaded_at'))
+            ref_dir     = os.path.join(UPLOAD_DIR, job_id, 'ref_series')
+            os.makedirs(ref_dir, exist_ok=True)
+
+            def _process_ref_slice(mri):
+                try:
+                    img = cv2.imread(mri.file.path, cv2.IMREAD_GRAYSCALE)
+                    if img is None:
+                        return None
+                    img = cv2.resize(img, (512, 512), interpolation=cv2.INTER_LINEAR)
+                    out_path = os.path.join(ref_dir, f'ref_{mri.id}_{mri.original_filename}')
+                    cv2.imwrite(out_path, img)
+                    thumb = cv2.resize(img, (THUMB_SIZE, THUMB_SIZE), interpolation=cv2.INTER_AREA)
+                    _, buf = cv2.imencode('.jpg', thumb, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                    b64 = base64.b64encode(buf).decode('utf-8')
+                    return out_path, f'data:image/jpeg;base64,{b64}'
+                except Exception as e:
+                    print(f'  ref slice error {mri.original_filename}: {e}')
+                    return None
+
+            ref_results = [None] * len(ref_mri)
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+                futures = {ex.submit(_process_ref_slice, mri): i for i, mri in enumerate(ref_mri)}
+                for fut in as_completed(futures):
+                    ref_results[futures[fut]] = fut.result()
+
+            ref_slice_paths = [r[0] for r in ref_results if r]
+            ref_thumbs_b64  = [r[1] if r else None for r in ref_results]
+            ref_name = f'{ref_patient.prenom} {ref_patient.nom}'.strip()
+        except (Patient.DoesNotExist, ValueError, TypeError) as e:
+            print(f'apply_to_patient_series — ref patient introuvable: {e}')
+
+    # Save metadata for series_comparison_slice
+    meta = {'patient_slices': patient_slice_paths, 'ref_slices': ref_slice_paths}
+    with open(os.path.join(UPLOAD_DIR, job_id, 'series_comparison.json'), 'w') as f:
+        json.dump(meta, f)
+
+    elapsed = round(_time.time() - t0, 1)
+    skipped = len(mri_files) - len(patient_slice_paths)
+    print(f'apply_to_patient_series OK — {len(patient_slice_paths)} pat + {len(ref_slice_paths)} ref in {elapsed}s')
+
+    # Send completion progress update
+    _emit_registration_progress(job_id, 100, 'completed', 'Application réussie — série recaléée prête', status='success')
+
+    return JsonResponse({
+        'success': True,
+        'patient_count':  len(patient_slice_paths),
+        'ref_count':      len(ref_slice_paths),
+        'skipped':        skipped,
+        'patient_name':   f'{patient.prenom} {patient.nom}'.strip(),
+        'patient_dossier': patient.dossier_number or '',
+        'ref_name':       ref_name,
+        'patient_thumbs': patient_thumbs_b64,   # list[str|None] — already generated
+        'ref_thumbs':     ref_thumbs_b64,
+    })
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def save_registered_series_to_patient(request):
+    """
+    Sauvegarde la série recalée complète comme un fichier ZIP dans le dossier patient (MRIFile).
+    Payload JSON : { jobId, patientId }
+    """
+    import io, zipfile
+    from datetime import datetime
+    from django.core.files.base import ContentFile
+    from django.conf import settings as _settings
+
+    if not request.user or not request.user.is_authenticated:
+        return JsonResponse({'error': 'login required'}, status=401)
+
+    try:
+        data = json.loads(request.body)
+    except Exception:
+        return JsonResponse({'error': 'invalid JSON'}, status=400)
+
+    job_id     = data.get('jobId', '')
+    patient_id = data.get('patientId')
+
+    if not job_id:
+        return JsonResponse({'error': 'jobId manquant'}, status=400)
+    if not patient_id:
+        return JsonResponse({'error': 'patientId manquant'}, status=400)
+
+    meta_path = os.path.join(UPLOAD_DIR, job_id, 'series_comparison.json')
+    if not os.path.exists(meta_path):
+        return JsonResponse({'error': 'Données de série introuvables — relancez l\'application.'}, status=404)
+
+    with open(meta_path, 'r') as f:
+        meta = json.load(f)
+
+    patient_slices = [p for p in meta.get('patient_slices', []) if os.path.exists(p)]
+    if not patient_slices:
+        return JsonResponse({'error': 'Aucune coupe recalée disponible.'}, status=404)
+
+    try:
+        patient = Patient.objects.get(id=int(patient_id), doctor=request.user)
+    except Patient.DoesNotExist:
+        return JsonResponse({'error': 'Patient introuvable'}, status=404)
+
+    # Générer le ZIP en mémoire
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for path in patient_slices:
+            zf.write(path, os.path.basename(path))
+    buf.seek(0)
+    zip_bytes = buf.read()
+
+    now_str  = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f'reg_serie_{patient.dossier_number}_{now_str}.zip'
+
+    mri_file = MRIFile(
+        patient=patient,
+        original_filename=filename,
+        file_size=len(zip_bytes),
+        file_type='analysis',
+        relative_path=f'patients_mri_files/patient_{patient.id}/registered_series/{filename}',
+    )
+    mri_file.file.save(filename, ContentFile(zip_bytes), save=True)
+
+    return JsonResponse({
+        'success': True,
+        'file_id': mri_file.id,
+        'filename': filename,
+        'slice_count': len(patient_slices),
+        'file_size_mb': round(len(zip_bytes) / 1024 / 1024, 2),
+    })
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def download_registered_series(request):
+    """Download registered and/or reference slices as a ZIP file."""
+    if not request.user or not request.user.is_authenticated:
+        return JsonResponse({'error': 'login required'}, status=401)
+
+    job_id = request.GET.get('jobId', '')
+    panel  = request.GET.get('panel', 'patient')   # 'patient' | 'reference' | 'all'
+
+    if not job_id:
+        return JsonResponse({'error': 'missing jobId'}, status=400)
+
+    meta_path = os.path.join(UPLOAD_DIR, job_id, 'series_comparison.json')
+    if not os.path.exists(meta_path):
+        return JsonResponse({'error': 'comparison data not found — run apply first'}, status=404)
+
+    with open(meta_path, 'r') as f:
+        meta = json.load(f)
+
+    to_zip = []
+    if panel in ('patient', 'all'):
+        for p in meta.get('patient_slices', []):
+            if os.path.exists(p):
+                to_zip.append((p, f'patient_recale/{os.path.basename(p)}'))
+    if panel in ('reference', 'all'):
+        for p in meta.get('ref_slices', []):
+            if os.path.exists(p):
+                to_zip.append((p, f'reference/{os.path.basename(p)}'))
+
+    if not to_zip:
+        return JsonResponse({'error': 'no files to export'}, status=404)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for abs_path, arc_name in to_zip:
+            zf.write(abs_path, arc_name)
+    buf.seek(0)
+
+    label = {'patient': 'serie_recalee', 'reference': 'serie_reference', 'all': 'series_completes'}.get(panel, panel)
+    filename = f'{label}_{job_id[:8]}.zip'
+    response = HttpResponse(buf.read(), content_type='application/zip')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def series_all_thumbnails(request):
+    """Return ALL slices of a panel as small (120×120) base64 thumbnails in one request."""
+    if not request.user or not request.user.is_authenticated:
+        return JsonResponse({'error': 'login required'}, status=401)
+
+    job_id = request.GET.get('jobId', '')
+    panel = request.GET.get('panel', 'patient')  # 'patient' | 'reference'
+
+    if not job_id:
+        return JsonResponse({'error': 'missing jobId'}, status=400)
+
+    meta_path = os.path.join(UPLOAD_DIR, job_id, 'series_comparison.json')
+    if not os.path.exists(meta_path):
+        return JsonResponse({'error': 'comparison data not found'}, status=404)
+
+    with open(meta_path, 'r') as f:
+        meta = json.load(f)
+
+    slices = meta.get('patient_slices' if panel == 'patient' else 'ref_slices', [])
+    if not slices:
+        return JsonResponse({'thumbs': [], 'count': 0})
+
+    THUMB_SIZE = 120
+    thumbs = []
+    for idx, path in enumerate(slices):
+        if not os.path.exists(path):
+            thumbs.append({'index': idx, 'b64': None})
+            continue
+        try:
+            img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                thumbs.append({'index': idx, 'b64': None})
+                continue
+            img = cv2.resize(img, (THUMB_SIZE, THUMB_SIZE), interpolation=cv2.INTER_AREA)
+            _, buf = cv2.imencode('.png', img)
+            b64 = base64.b64encode(buf).decode('utf-8')
+            thumbs.append({'index': idx, 'b64': f'data:image/png;base64,{b64}'})
+        except Exception as e:
+            print(f'series_all_thumbnails WARNING idx={idx}: {e}')
+            thumbs.append({'index': idx, 'b64': None})
+
+    return JsonResponse({'thumbs': thumbs, 'count': len(slices)})
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def series_comparison_slice(request):
+    """Return a single slice (base64 PNG) from the registered or reference series."""
+    if not request.user or not request.user.is_authenticated:
+        return JsonResponse({'error': 'login required'}, status=401)
+
+    job_id = request.GET.get('jobId', '')
+    panel = request.GET.get('panel', 'patient')   # 'patient' | 'reference'
+    try:
+        index = int(request.GET.get('index', 0))
+    except (ValueError, TypeError):
+        return JsonResponse({'error': 'invalid index'}, status=400)
+
+    if not job_id:
+        return JsonResponse({'error': 'missing jobId'}, status=400)
+
+    meta_path = os.path.join(UPLOAD_DIR, job_id, 'series_comparison.json')
+    if not os.path.exists(meta_path):
+        return JsonResponse({'error': 'comparison data not found — run apply first'}, status=404)
+
+    with open(meta_path, 'r') as f:
+        meta = json.load(f)
+
+    slices = meta.get('patient_slices' if panel == 'patient' else 'ref_slices', [])
+    if not slices:
+        return JsonResponse({'error': f'no slices for panel {panel}'}, status=404)
+
+    idx = max(0, min(index, len(slices) - 1))
+    img_path = slices[idx]
+    if not os.path.exists(img_path):
+        return JsonResponse({'error': f'slice file missing: {os.path.basename(img_path)}'}, status=404)
+
+    img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        return JsonResponse({'error': 'cannot read slice image'}, status=500)
+
+    _, buf = cv2.imencode('.png', img)
+    b64 = base64.b64encode(buf).decode('utf-8')
+    return JsonResponse({'image': f'data:image/png;base64,{b64}', 'index': idx, 'total': len(slices)})
 
 
 @api_view(['GET'])

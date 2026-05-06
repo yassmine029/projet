@@ -57,90 +57,233 @@ function FileActionRow({ file, sessionColor, onOpen }) {
   );
 }
 
-function SessionCard({ session, isLast }) {
-  const [isOpen, setIsOpen] = useState(true);
-  const totalFiles = (session.groups || []).reduce((acc, g) => acc + (g.files?.length || 0), 0);
+function ResultsSection({ sessions, analysisFiles, resolveFileUrl, formatDate, formatSize }) {
+  const [filter, setFilter] = React.useState('all');
+
+  const serieFiles = analysisFiles.filter(f =>
+    /^reg_serie_/i.test(String(f.original_filename || '')) && String(f.original_filename || '').endsWith('.zip')
+  );
+  const otherAnalysis = analysisFiles.filter(f =>
+    !(/^reg_serie_/i.test(String(f.original_filename || '')) && String(f.original_filename || '').endsWith('.zip'))
+  );
+  const recalageAll = [...serieFiles, ...otherAnalysis];
+  const totalCount  = sessions.length + recalageAll.length;
+  const showSeg = filter === 'all' || filter === 'segmentation';
+  const showRec = filter === 'all' || filter === 'recalage';
 
   return (
-    <div className="relative flex gap-4">
+    <div id="analyses-start" className="relative pl-12 pb-4">
       {/* Timeline dot */}
-      <div className="flex flex-col items-center pt-1 shrink-0">
-        <div className={`w-10 h-10 rounded-full flex items-center justify-center shadow-md border-4 border-white z-10
-          ${session.is_new ? 'bg-emerald-500' : 'bg-emerald-600'}`}>
+      <div className="absolute left-[20px] top-4 -translate-x-1/2 z-10">
+        <div className="w-10 h-10 rounded-full bg-emerald-700 text-white flex items-center justify-center shadow-lg border-4 border-white">
+          <Activity className="w-4 h-4" />
+        </div>
+      </div>
+
+      {/* Container — même style que baseline */}
+      <div className="bg-[#f0fdf4]/60 rounded-3xl border border-emerald-200/60 shadow-sm overflow-hidden">
+        <div className="p-6">
+
+          {/* Header */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+            <div className="flex items-start gap-4">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-700 flex items-center justify-center text-white shadow-xl shrink-0">
+                <Activity className="w-7 h-7" />
+              </div>
+              <div>
+                <div className="flex items-center gap-3 mb-1">
+                  <h3 className="text-lg font-black text-emerald-900">Résultats cliniques</h3>
+                  <span className="px-3 py-1 rounded-lg bg-emerald-100 border border-emerald-200 text-emerald-800 text-[10px] font-bold uppercase tracking-wider">
+                    {totalCount} résultat{totalCount > 1 ? 's' : ''}
+                  </span>
+                </div>
+                <p className="text-xs text-emerald-700/60 font-semibold uppercase tracking-wider">
+                  Segmentation volumétrique · Recalage IRM
+                </p>
+              </div>
+            </div>
+
+            {/* Filtres */}
+            {totalCount > 0 && sessions.length > 0 && recalageAll.length > 0 && (
+              <div className="flex items-center gap-1 p-1 bg-white/70 rounded-2xl border border-emerald-100 shadow-sm">
+                {[
+                  { key: 'all',          label: 'Tous',          count: totalCount },
+                  { key: 'segmentation', label: 'Segmentation',  count: sessions.length },
+                  { key: 'recalage',     label: 'Recalage',      count: recalageAll.length },
+                ].map(({ key, label, count }) => (
+                  <button key={key} onClick={() => setFilter(key)}
+                    className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${
+                      filter === key
+                        ? 'bg-emerald-700 text-white shadow-sm'
+                        : 'text-emerald-700 hover:bg-emerald-50'
+                    }`}>
+                    {label}
+                    <span className={`rounded-full px-1.5 text-[9px] font-black ${filter === key ? 'bg-white/25 text-white' : 'bg-emerald-100 text-emerald-600'}`}>
+                      {count}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {totalCount === 0 ? (
+            <div className="py-10 text-center bg-white/50 rounded-2xl border border-dashed border-emerald-200">
+              <Activity className="w-8 h-8 text-emerald-200 mx-auto mb-3" />
+              <p className="text-sm font-bold text-emerald-800/50">Aucune analyse disponible.</p>
+              <p className="text-xs text-emerald-700/40 mt-1">Lancez une segmentation ou un recalage pour commencer.</p>
+            </div>
+          ) : (
+            <div className="space-y-3 max-h-[480px] overflow-y-auto pr-1 scrollbar-thin">
+
+              {/* Segmentation */}
+              {showSeg && sessions.map((session, idx) => (
+                <SessionCard key={`seg-${idx}`} session={session} />
+              ))}
+
+              {/* Recalage : séries ZIP */}
+              {showRec && serieFiles.map(file => {
+                const fileUrl = resolveFileUrl(file.file_url || file.file);
+                return (
+                  <div key={file.id} className="group flex items-center gap-4 bg-white/80 px-5 py-4 rounded-2xl border border-white hover:border-violet-300 hover:shadow-sm transition-all">
+                    <div className="w-11 h-11 rounded-xl bg-violet-600 flex items-center justify-center shrink-0 shadow-sm">
+                      <ArrowLeftRight className="w-5 h-5 text-white" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-violet-100 text-violet-700">Recalage</span>
+                        <span className="text-sm font-bold text-slate-800">Série IRM recalée</span>
+                      </div>
+                      <div className="flex items-center gap-3 text-[11px] text-slate-500">
+                        <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{formatDate(file.uploaded_at)}</span>
+                        <span className="w-px h-3 bg-slate-200" />
+                        <span className="font-mono font-semibold">{formatSize(file.file_size)} · ZIP</span>
+                      </div>
+                    </div>
+                    <a href={fileUrl} download
+                      className="opacity-0 group-hover:opacity-100 flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-600 text-white text-[11px] font-bold hover:bg-violet-700 transition-all shadow-sm shrink-0">
+                      <Download className="w-3.5 h-3.5" /> Télécharger
+                    </a>
+                  </div>
+                );
+              })}
+
+              {/* Recalage : fichiers individuels */}
+              {showRec && otherAnalysis.map(file => {
+                const fname   = file.original_filename || '';
+                const miMatch = fname.match(/MI([\d.]+)/);
+                const miVal   = miMatch ? parseFloat(miMatch[1]) : null;
+                const modeM   = fname.match(/_(2d|3d|advanced)_/i);
+                const mode    = modeM ? ({ '2d':'2D','3d':'3D','advanced':'Avancé' }[modeM[1].toLowerCase()] || '2D') : '2D';
+                const fileUrl = resolveFileUrl(file.file_url || file.file);
+                return (
+                  <div key={file.id} className="group flex items-center gap-4 bg-white/80 px-5 py-4 rounded-2xl border border-white hover:border-violet-300 hover:shadow-sm transition-all">
+                    <div className="w-11 h-11 rounded-xl bg-violet-500 flex items-center justify-center shrink-0">
+                      <Boxes className="w-5 h-5 text-white" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-violet-100 text-violet-700">Recalage {mode}</span>
+                        {miVal !== null && (
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${miVal>=0.5?'bg-emerald-100 text-emerald-700':miVal>=0.3?'bg-amber-100 text-amber-700':'bg-red-100 text-red-600'}`}>
+                            MI {miVal.toFixed(3)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 text-[11px] text-slate-500">
+                        <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{formatDate(file.uploaded_at)}</span>
+                        <span className="w-px h-3 bg-slate-200" />
+                        <span>{formatSize(file.file_size)}</span>
+                      </div>
+                    </div>
+                    <a href={fileUrl} download className="opacity-0 group-hover:opacity-100 flex items-center gap-1.5 px-4 py-2 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-[11px] font-bold hover:bg-violet-600 hover:text-white transition-all shrink-0">
+                      <Download className="w-3.5 h-3.5" /> Télécharger
+                    </a>
+                  </div>
+                );
+              })}
+
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SessionCard({ session }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const totalFiles = (session.groups || []).reduce((acc, g) => acc + (g.files?.length || 0), 0);
+  const groupCount = (session.groups || []).length;
+
+  return (
+    <div className="bg-white/80 rounded-2xl border border-white hover:border-emerald-200 hover:shadow-sm transition-all overflow-hidden">
+      {/* Collapsed header — toujours visible */}
+      <div
+        className="flex items-center gap-4 px-5 py-4 cursor-pointer select-none group"
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <div className="w-11 h-11 rounded-xl bg-emerald-600 flex items-center justify-center shrink-0 shadow-sm">
           <Layers className="w-5 h-5 text-white" />
         </div>
-        {!isLast && <div className="w-0.5 flex-1 bg-slate-200 mt-2" />}
-      </div>
-
-      <div className="flex-1 bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden mb-4">
-        {/* Header */}
-        <div className="px-5 py-4 border-b border-slate-100 cursor-pointer select-none" onClick={() => setIsOpen(!isOpen)}>
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-700">
-              Segmentation
-            </span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-700">Segmentation</span>
+            <span className="text-sm font-bold text-slate-800">{session.session_num}</span>
             {session.is_new && (
-              <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-500 text-white animate-pulse">
-                Nouveau
-              </span>
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-emerald-500 text-white animate-pulse">Nouveau</span>
             )}
-            <span className="text-xs font-black text-slate-700">{session.session_num}</span>
-            <span className="flex items-center gap-1 text-[10px] text-slate-400 ml-auto">
-              <Calendar className="w-3 h-3" />
-              {session.date}{session.time && ` · ${session.time}`}
-            </span>
-            <div className={`p-1 rounded-lg transition-colors ml-1 ${isOpen ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-50 text-slate-400'}`}>
-              {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-            </div>
           </div>
-          <p className="mt-1 text-[10px] text-slate-400 font-medium">
-            {(session.groups || []).length} groupe{(session.groups || []).length > 1 ? 's' : ''} · {totalFiles} fichier{totalFiles > 1 ? 's' : ''}
-          </p>
+          <div className="flex items-center gap-3 text-[11px] text-slate-400">
+            <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{session.date}{session.time && ` · ${session.time}`}</span>
+            <span className="w-px h-3 bg-slate-200" />
+            <span>{groupCount} groupe{groupCount > 1 ? 's' : ''} · {totalFiles} fichier{totalFiles > 1 ? 's' : ''}</span>
+          </div>
         </div>
-
-        {/* Content */}
-        {isOpen && (
-          <div className="px-5 py-4 space-y-3">
-            {(session.groups || []).map((group, gIdx) => (
-              <div key={gIdx}>
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-6 h-6 rounded-lg bg-emerald-600 flex items-center justify-center">
-                    {ANALYSIS_COLORS[group.type]
-                      ? React.createElement(ANALYSIS_COLORS[group.type].icon, { className: 'w-3.5 h-3.5 text-white' })
-                      : <Layers className="w-3.5 h-3.5 text-white" />}
-                  </div>
-                  <span className="text-xs font-black text-emerald-700">{group.label}</span>
-                  <span className="text-[10px] text-slate-400">({group.count})</span>
-                </div>
-                <div className="space-y-2">
-                  {(group.files || []).map((file, fIdx) => (
-                    <div key={fIdx} className="group flex items-center gap-3 bg-slate-50 px-4 py-3 rounded-2xl border border-slate-100 hover:border-emerald-200 transition-all">
-                      <div className="w-9 h-9 rounded-xl bg-emerald-600 flex items-center justify-center shrink-0">
-                        <FileText className="w-4 h-4 text-white" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-bold text-slate-800 truncate">{file.name || 'Fichier segmentation'}</div>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-[10px] font-black text-emerald-500 uppercase">{file.type || 'Mask'}</span>
-                          {file.size && file.size !== 'N/A' && (
-                            <span className="text-[10px] text-slate-400">{file.size}</span>
-                          )}
-                        </div>
-                      </div>
-                      {file.url && (
-                        <a href={file.url} target="_blank" rel="noreferrer"
-                          className="opacity-0 group-hover:opacity-100 flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-xl text-[10px] font-bold hover:bg-emerald-600 hover:text-white transition-all border border-emerald-200">
-                          <Download className="w-3 h-3" /> Télécharger
-                        </a>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        <button className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-bold border transition-all shrink-0
+          ${isOpen ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-emerald-50 text-emerald-700 border-emerald-200 group-hover:bg-emerald-100'}`}>
+          {isOpen ? <><ChevronDown className="w-3.5 h-3.5" /> Masquer</> : <><ChevronRight className="w-3.5 h-3.5" /> Voir les fichiers</>}
+        </button>
       </div>
+
+      {/* Détails dépliés */}
+      {isOpen && (
+        <div className="border-t border-slate-100 px-5 py-4 space-y-4 bg-slate-50/50">
+          {(session.groups || []).map((group, gIdx) => (
+            <div key={gIdx}>
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-6 h-6 rounded-lg bg-emerald-600 flex items-center justify-center">
+                  {ANALYSIS_COLORS[group.type]
+                    ? React.createElement(ANALYSIS_COLORS[group.type].icon, { className: 'w-3.5 h-3.5 text-white' })
+                    : <Layers className="w-3.5 h-3.5 text-white" />}
+                </div>
+                <span className="text-xs font-black text-emerald-700">{group.label}</span>
+                <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">{group.count}</span>
+              </div>
+              <div className="space-y-1.5">
+                {(group.files || []).map((file, fIdx) => (
+                  <div key={fIdx} className="group flex items-center gap-3 bg-white px-4 py-2.5 rounded-xl border border-slate-100 hover:border-emerald-200 transition-all">
+                    <FileText className="w-4 h-4 text-emerald-500 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold text-slate-700 truncate">{file.name || 'Fichier segmentation'}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-black text-emerald-500 uppercase">{file.type || 'Mask'}</span>
+                        {file.size && file.size !== 'N/A' && <span className="text-[10px] text-slate-400">{file.size}</span>}
+                      </div>
+                    </div>
+                    {file.url && (
+                      <a href={file.url} target="_blank" rel="noreferrer"
+                        className="opacity-0 group-hover:opacity-100 flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-[10px] font-bold hover:bg-emerald-600 hover:text-white transition-all border border-emerald-200">
+                        <Eye className="w-3 h-3" /> Voir
+                      </a>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -711,168 +854,111 @@ export default function PatientDetail() {
                     </div>
                 </div>
 
-                {/* ── Rapports archivés ── */}
+                {/* ── Rapports archivés ── même structure timeline que baseline ── */}
                 {(reports.length > 0 || reportsLoading) && (
-                  <div className="mb-6">
-                    <div className="flex items-center gap-2 mb-3">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                      <p className="text-xs font-black uppercase tracking-widest text-slate-500">
-                        Rapports cliniques archivés
-                      </p>
-                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">
-                        {reports.length}
-                      </span>
+                  <div className="relative pl-12 pb-6">
+                    {/* Timeline dot */}
+                    <div className="absolute left-[20px] top-4 -translate-x-1/2 z-10">
+                      <div className="w-10 h-10 rounded-full bg-blue-700 text-white flex items-center justify-center shadow-lg border-4 border-white">
+                        <CheckCircle2 className="w-4 h-4" />
+                      </div>
                     </div>
-                    {reportsLoading ? (
-                      <div className="flex items-center gap-2 py-3 text-sm text-slate-400">
-                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
-                        Chargement des rapports…
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        {reports.map((report) => (
-                          <div key={report.id}
-                            className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm hover:border-blue-200 hover:shadow-md transition-all">
-                            {/* Icône */}
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-600 shadow-sm shadow-blue-200">
-                              <FileText className="h-5 w-5 text-white" />
-                            </div>
-                            {/* Infos — compactes, sans redondance */}
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <p className="text-sm font-bold text-slate-800">Rapport de volumétrie</p>
-                                {report.run_id && (
-                                  <span className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-600">
-                                    Segmentation #{report.run_id}
-                                  </span>
-                                )}
-                              </div>
-                              <p className="mt-0.5 text-[11px] text-slate-400">
-                                <Calendar className="inline h-3 w-3 mr-1" />
-                                {report.created_at} · Dr. {report.doctor_name}
-                              </p>
-                            </div>
-                            {/* Actions */}
-                            <div className="flex items-center gap-2 shrink-0">
-                              {report.file_url && (
-                                <>
-                                  <a href={report.file_url} target="_blank" rel="noreferrer"
-                                    className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-all">
-                                    <Eye className="h-3.5 w-3.5" /> Voir
-                                  </a>
-                                  <a href={report.file_url} target="_blank" rel="noreferrer" download
-                                    className="flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-[11px] font-bold text-blue-700 hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-all">
-                                    <Download className="h-3.5 w-3.5" /> PDF
-                                  </a>
-                                </>
-                              )}
-                            </div>
+
+                    {/* Container — même style que baseline (teinte bleue) */}
+                    <div className="bg-[#eff6ff]/60 rounded-3xl border border-blue-200/60 shadow-sm overflow-hidden">
+                      <div className="p-6">
+
+                        {/* Header */}
+                        <div className="flex items-start gap-4 mb-5">
+                          <div className="w-14 h-14 rounded-2xl bg-blue-700 flex items-center justify-center text-white shadow-xl shrink-0">
+                            <FileText className="w-7 h-7" />
                           </div>
-                        ))}
+                          <div>
+                            <div className="flex items-center gap-3 mb-1">
+                              <h3 className="text-lg font-black text-blue-900">Rapports cliniques archivés</h3>
+                              <span className="px-3 py-1 rounded-lg bg-blue-100 border border-blue-200 text-blue-800 text-[10px] font-bold uppercase tracking-wider">
+                                {reports.length} rapport{reports.length > 1 ? 's' : ''}
+                              </span>
+                            </div>
+                            <p className="text-xs text-blue-700/60 font-semibold uppercase tracking-wider">
+                              Volumétrie · Recalage · PDF exportables
+                            </p>
+                          </div>
+                        </div>
+
+                        {reportsLoading ? (
+                          <div className="flex items-center gap-2 py-4 text-sm text-blue-400">
+                            <div className="h-4 w-4 animate-spin rounded-full border-2 border-blue-400 border-t-transparent" />
+                            Chargement des rapports…
+                          </div>
+                        ) : (
+                          <div className="space-y-2 max-h-80 overflow-y-auto pr-1 scrollbar-thin">
+                            {reports.map((report) => {
+                              let reportMeta = null;
+                              try { reportMeta = JSON.parse(report.doctor_conclusion); } catch {}
+                              const isRecalage = reportMeta?.type === 'recalage';
+                              const iconBg  = isRecalage ? 'bg-emerald-600' : 'bg-blue-600';
+                              const badgeCls = isRecalage
+                                ? 'bg-emerald-50 border-emerald-100 text-emerald-700'
+                                : 'bg-blue-50 border-blue-100 text-blue-600';
+
+                              return (
+                                <div key={report.id}
+                                  className="group flex items-center gap-4 bg-white/80 px-5 py-4 rounded-2xl border border-white hover:border-blue-300 hover:shadow-sm transition-all">
+                                  <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${iconBg} shadow-sm`}>
+                                    <FileText className="h-5 w-5 text-white" />
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                                      <p className="text-sm font-bold text-slate-800">
+                                        {isRecalage ? 'Rapport de recalage' : 'Rapport de volumétrie'}
+                                      </p>
+                                      {isRecalage && reportMeta?.mode && (
+                                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${badgeCls}`}>
+                                          Recalage {reportMeta.mode}{reportMeta.mi_quality ? ` · ${reportMeta.mi_quality}` : ''}
+                                        </span>
+                                      )}
+                                      {!isRecalage && report.run_id && (
+                                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${badgeCls}`}>
+                                          Segmentation #{report.run_id}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-[11px] text-slate-500">
+                                      <Calendar className="inline h-3 w-3 mr-1" />
+                                      {report.created_at} · Dr. {report.doctor_name}
+                                    </p>
+                                  </div>
+                                  {report.file_url && (
+                                    <div className="flex items-center gap-2 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <a href={report.file_url} target="_blank" rel="noreferrer"
+                                        className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-all">
+                                        <Eye className="h-3.5 w-3.5" /> Voir
+                                      </a>
+                                      <a href={report.file_url} target="_blank" rel="noreferrer" download
+                                        className="flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-[11px] font-bold text-blue-700 hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-all">
+                                        <Download className="h-3.5 w-3.5" /> PDF
+                                      </a>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
-                    )}
+                    </div>
                   </div>
                 )}
 
-                {/* Sessions (segmentation) + analyses (recalage) */}
-                <div id="analyses-start" className="pt-4 space-y-4">
-                    {sessions.map((session, idx) => (
-                        <SessionCard key={idx} session={session} isLast={idx === sessions.length - 1 && analysisFiles.length === 0} />
-                    ))}
-
-                    {analysisFiles.length > 0 && analysisFiles.map((file, idx) => {
-                        // Extraire les métadonnées depuis le nom de fichier
-                        // ex: reg_20260424_2014_3d_MI0.702_i250.nii.gz
-                        const fname = file.original_filename || '';
-                        const modeMatch = fname.match(/_(2d|3d|advanced)_/i);
-                        const miMatch   = fname.match(/MI([\d.]+)/);
-                        const itersMatch = fname.match(/_i(\d+)\./);
-                        const modeLabel = modeMatch
-                            ? { '2d': '2D', '3d': '3D', 'advanced': 'Avancé' }[modeMatch[1].toLowerCase()] || modeMatch[1].toUpperCase()
-                            : '3D';
-                        const miVal  = miMatch   ? parseFloat(miMatch[1])   : null;
-                        const iters  = itersMatch ? parseInt(itersMatch[1]) : null;
-                        const isNifti = fname.endsWith('.nii.gz') || fname.endsWith('.nii');
-
-                        return (
-                            <div key={file.id} className="relative flex gap-4">
-                                <div className="flex flex-col items-center pt-1 shrink-0">
-                                    <div className="w-10 h-10 rounded-full bg-violet-600 flex items-center justify-center shadow-md border-4 border-white z-10">
-                                        <Boxes className="w-5 h-5 text-white" />
-                                    </div>
-                                    {idx < analysisFiles.length - 1 && (
-                                        <div className="w-0.5 flex-1 bg-slate-200 mt-2" />
-                                    )}
-                                </div>
-                                <div className="flex-1 bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden mb-4">
-                                    {/* Header avec date propre à CETTE analyse */}
-                                    <div className="px-5 py-4 border-b border-slate-100">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                            <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-violet-100 text-violet-700">
-                                                Recalage {modeLabel}
-                                            </span>
-                                            <span className="text-xs font-black text-slate-700">Analyse de recalage</span>
-                                            <span className="flex items-center gap-1 text-[10px] text-slate-400 ml-auto">
-                                                <Calendar className="w-3 h-3" />
-                                                {formatDate(file.uploaded_at)}
-                                            </span>
-                                        </div>
-                                        {/* Métriques extraites du nom de fichier */}
-                                        <div className="mt-2 flex items-center gap-3 flex-wrap">
-                                            {miVal !== null && (
-                                                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full
-                                                    ${miVal >= 0.5 ? 'bg-emerald-100 text-emerald-700' :
-                                                      miVal >= 0.3 ? 'bg-amber-100 text-amber-700' :
-                                                      'bg-red-100 text-red-600'}`}>
-                                                    MI {miVal.toFixed(3)} · {miVal >= 0.5 ? 'Excellent' : miVal >= 0.3 ? 'Bon' : 'Faible'}
-                                                </span>
-                                            )}
-                                            {iters !== null && (
-                                                <span className="text-[10px] text-slate-400 font-medium">
-                                                    {iters} itérations
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    {/* Fichier */}
-                                    <div className="px-5 py-4">
-                                        <div className="group flex items-center gap-3 bg-slate-50 px-4 py-3 rounded-2xl border border-slate-100 hover:border-violet-200 transition-all">
-                                            <div className="w-9 h-9 rounded-xl bg-violet-600 flex items-center justify-center shrink-0">
-                                                <Boxes className="w-4 h-4 text-white" />
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <div className="text-sm font-bold text-slate-800 truncate">
-                                                    {fname || 'Volume recalé'}
-                                                </div>
-                                                <div className="flex items-center gap-2 mt-0.5">
-                                                    <span className="text-[10px] font-black text-violet-500 uppercase">
-                                                        {isNifti ? 'NIfTI' : 'PNG'}
-                                                    </span>
-                                                    <span className="text-[10px] text-slate-400">{formatSize(file.file_size)}</span>
-                                                </div>
-                                            </div>
-                                            <a href={resolveFileUrl(file.file_url || file.file)} target="_blank" rel="noreferrer"
-                                                className="opacity-0 group-hover:opacity-100 flex items-center gap-1.5 px-3 py-1.5 bg-violet-50 text-violet-700 rounded-xl text-[10px] font-bold hover:bg-violet-600 hover:text-white transition-all border border-violet-200">
-                                                <Download className="w-3 h-3" /> Télécharger
-                                            </a>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        );
-                    })}
-
-                    {sessions.length === 0 && analysisFiles.length === 0 && (
-                        <div className="bg-white rounded-3xl border border-slate-100 p-12 text-center shadow-sm">
-                            <div className="w-16 h-16 rounded-2xl bg-slate-50 flex items-center justify-center text-slate-300 mx-auto mb-4">
-                                <Activity className="w-8 h-8" />
-                            </div>
-                            <p className="text-slate-500 font-bold tracking-tight">Il n'y a pas encore d'analyses disponibles pour ce patient.</p>
-                            <p className="text-xs text-slate-400 mt-2 font-medium">Lancez une nouvelle segmentation ou un recalage pour commencer.</p>
-                        </div>
-                    )}
-                </div>
+                {/* ══ RÉSULTATS CLINIQUES — section unifiée ══ */}
+                <ResultsSection
+                  sessions={sessions}
+                  analysisFiles={analysisFiles}
+                  resolveFileUrl={resolveFileUrl}
+                  formatDate={formatDate}
+                  formatSize={formatSize}
+                />
             </div>
         </div>
 

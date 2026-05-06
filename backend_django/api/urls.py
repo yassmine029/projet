@@ -52,13 +52,20 @@ urlpatterns = [
     path('volume/validate-registration', volume_api.validate_volume_registration, name='validate_volume_registration'),
     path('volume/reject-registration', volume_api.reject_volume_registration, name='reject_volume_registration'),
     path('volume/save-registered-to-patient', volume_api.save_registered_to_patient, name='save_registered_to_patient'),
+    path('volume/save-registration-report', volume_api.save_registration_report, name='save_registration_report'),
+    path('volume/download-nifti', volume_api.download_volume_nifti, name='download_volume_nifti'),
     path('volume/viewer', volume_api.slice_viewer_page, name='slice_viewer_page'),
 
     # Preprocessing route
     path('preprocess', views.preprocess_image, name='preprocess'),
 
-    # Apply transformation route
+    # Apply transformation routes
     path('apply_tform', views.apply_tform_to_series, name='apply_tform'),
+    path('apply_to_patient_series', views.apply_to_patient_series, name='apply_to_patient_series'),
+    path('save_registered_series_to_patient', views.save_registered_series_to_patient, name='save_registered_series_to_patient'),
+    path('download_registered_series', views.download_registered_series, name='download_registered_series'),
+    path('series_all_thumbnails', views.series_all_thumbnails, name='series_all_thumbnails'),
+    path('series_comparison_slice', views.series_comparison_slice, name='series_comparison_slice'),
 
     # History routes
     path('history', views.history, name='history'),

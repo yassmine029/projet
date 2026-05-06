@@ -1,6 +1,7 @@
 import os
 import math
 import time
+from typing import Optional, Callable
 import numpy as np
 import cv2
 import torch
@@ -216,11 +217,15 @@ def run_mine_registration(
     L: int = 4,
     max_samples: int = 32768,
     lambda_reg: float = 1e-4,
-    device_name: str = "cuda"
+    device_name: str = "cuda",
+    progress_callback: Optional[Callable[[int, str], None]] = None
 ) -> dict:
     """
     Complete registration pipeline.
     FIX: Load images as GRAYSCALE (same as Colab notebook).
+    
+    Args:
+        progress_callback: Optional callback to report progress as (percentage: int, message: str)
     """
     name = (device_name or "cuda").strip().lower()
     if name in ("auto", "cuda", ""):
@@ -263,6 +268,10 @@ def run_mine_registration(
     L = min(L, len(pyramid_I), len(pyramid_J))
 
     print(f"nChannel: {nChannel}, Pyramid levels used: {L}")
+    
+    # Notify progress callback that preparation is done
+    if progress_callback:
+        progress_callback(5, "Préparation des pyramides — lancement de l'optimisation...")
 
     # Prepare tensors for each level
     I_lst, J_lst = [], []
@@ -344,6 +353,11 @@ def run_mine_registration(
 
         if (itr + 1) % 50 == 0:
             print(f"  iter {itr+1}/{n_iters} | MI proxy: {(-loss).item():.4f}")
+        
+        # Send progress updates every 10 iterations
+        if progress_callback and (itr + 1) % 10 == 0:
+            pct = int((itr + 1) / n_iters * 100)
+            progress_callback(pct, f"Optimisation MINE — itération {itr+1}/{n_iters}")
 
     # Final warp at full resolution
     I_aligned, J_warped, H_final = warp_full_resolution(I0, J0, homography_net, device)

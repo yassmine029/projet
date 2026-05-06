@@ -82,7 +82,6 @@ class MRIFileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = MRIFile
-        fields = ('id', 'patient', 'file', 'file_url', 'preview_url', 'original_filename', 'relative_path', 'file_size', 'file_type', 'uploaded_at')
         fields = (
             'id',
             'patient',
@@ -92,6 +91,7 @@ class MRIFileSerializer(serializers.ModelSerializer):
             'original_filename',
             'relative_path',
             'file_size',
+            'file_type',
             'image_width',
             'image_height',
             'uploaded_at',

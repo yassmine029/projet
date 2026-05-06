@@ -26,6 +26,7 @@ interface AutoAlignOverlayProps {
   errorMessage?: string;
   onClose?: () => void;
   algorithm?: 'ANTs' | 'MINE';
+  mode?: 'registration' | 'apply_series'; // Mode d'affichage
 }
 
 const AutoAlignOverlay: React.FC<AutoAlignOverlayProps> = ({
@@ -37,6 +38,7 @@ const AutoAlignOverlay: React.FC<AutoAlignOverlayProps> = ({
   errorMessage,
   onClose,
   algorithm = 'MINE',
+  mode = 'registration',
 }) => {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [indeterminate, setIndeterminate] = useState(true);
@@ -144,77 +146,105 @@ const AutoAlignOverlay: React.FC<AutoAlignOverlayProps> = ({
               </div>
             </div>
 
-            <h2 className="overlay-title">Recalage Terminé</h2>
-            <p className="overlay-subtitle">Alignement optimal atteint avec succès</p>
+            {mode === 'registration' ? (
+              <>
+                <h2 className="overlay-title">Recalage Terminé</h2>
+                <p className="overlay-subtitle">Alignement optimal atteint avec succès</p>
 
-            <div className="metrics-container">
-              {/* Main Metric: Mutual Information */}
-              <div className="main-metric-card" style={{ '--accent-color': miColor } as any}>
-                <div className="main-metric-header">
-                  <span className="metric-tag">Score Global</span>
-                  <div className={`quality-badge ${miQuality.toLowerCase()}`}>
-                    {miQuality}
-                  </div>
-                </div>
-                <div className="main-metric-body">
-                  <div className="metric-label">Information Mutuelle</div>
-                  <div className="metric-value-wrapper">
-                    <span className="metric-value">{mi !== undefined ? mi.toFixed(4) : 'N/A'}</span>
-                  </div>
-                </div>
-                <div className="visual-gauge">
-                  <div className="gauge-track">
-                    <div className="gauge-fill" style={{ width: `${miPercent}%`, background: miColor }} />
-                  </div>
-                  <div className="gauge-labels">
-                    <span>Faible</span>
-                    <span>Excellent</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Secondary Metrics Row */}
-              <div className="secondary-metrics-row">
-                {metrics?.processing_time_ms !== undefined && metrics.processing_time_ms > 0 && (
-                  <div className="secondary-card">
-                    <div className="card-icon">⚡</div>
-                    <div className="card-content">
-                      <span className="card-label">Temps total (serveur)</span>
-                      <span className="card-value">{(metrics.processing_time_ms / 1000).toFixed(1)}s</span>
-                      {metrics.device !== undefined && (
-                        <span className="card-device">
-                          Appareil :{' '}
-                          <strong>
-                            {String(metrics.device).toLowerCase().includes('cuda')
-                              ? 'GPU (CUDA)'
-                              : String(metrics.device).toLowerCase().includes('mps')
-                                ? 'GPU (Apple MPS)'
-                                : 'CPU'}
-                          </strong>
-                          {` (${metrics.device})`}
-                        </span>
-                      )}
+                <div className="metrics-container">
+                  {/* Main Metric: Mutual Information */}
+                  <div className="main-metric-card" style={{ '--accent-color': miColor } as any}>
+                    <div className="main-metric-header">
+                      <span className="metric-tag">Score Global</span>
+                      <div className={`quality-badge ${miQuality.toLowerCase()}`}>
+                        {miQuality}
+                      </div>
+                    </div>
+                    <div className="main-metric-body">
+                      <div className="metric-label">Information Mutuelle</div>
+                      <div className="metric-value-wrapper">
+                        <span className="metric-value">{mi !== undefined ? mi.toFixed(4) : 'N/A'}</span>
+                      </div>
+                    </div>
+                    <div className="visual-gauge">
+                      <div className="gauge-track">
+                        <div className="gauge-fill" style={{ width: `${miPercent}%`, background: miColor }} />
+                      </div>
+                      <div className="gauge-labels">
+                        <span>Faible</span>
+                        <span>Excellent</span>
+                      </div>
                     </div>
                   </div>
-                )}
-                {metrics?.rmse !== undefined && (
-                  <div className="secondary-card">
-                    <div className="card-icon">🎯</div>
-                    <div className="card-content">
-                      <span className="card-label">RMSE</span>
-                      <span className="card-value">{metrics.rmse.toFixed(3)}</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
 
-            <div className="actions-wrapper">
-              <button className="primary-button" onClick={onClose}>
-                Terminer la session
-                <div className="btn-effect" />
-              </button>
-            </div>
+                  {/* Secondary Metrics Row */}
+                  <div className="secondary-metrics-row">
+                    {metrics?.processing_time_ms !== undefined && metrics.processing_time_ms > 0 && (
+                      <div className="secondary-card">
+                        <div className="card-icon">⚡</div>
+                        <div className="card-content">
+                          <span className="card-label">Temps total (serveur)</span>
+                          <span className="card-value">{(metrics.processing_time_ms / 1000).toFixed(1)}s</span>
+                          {metrics.device !== undefined && (
+                            <span className="card-device">
+                              Appareil :{' '}
+                              <strong>
+                                {String(metrics.device).toLowerCase().includes('cuda')
+                                  ? 'GPU (CUDA)'
+                                  : String(metrics.device).toLowerCase().includes('mps')
+                                    ? 'GPU (Apple MPS)'
+                                    : 'CPU'}
+                              </strong>
+                              {` (${metrics.device})`}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    {metrics?.rmse !== undefined && (
+                      <div className="secondary-card">
+                        <div className="card-icon">🎯</div>
+                        <div className="card-content">
+                          <span className="card-label">RMSE</span>
+                          <span className="card-value">{metrics.rmse.toFixed(3)}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="actions-wrapper">
+                  <button className="primary-button" onClick={onClose}>
+                    Terminer la session
+                    <div className="btn-effect" />
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h2 className="overlay-title">Application Réussie</h2>
+                <p className="overlay-subtitle">Série recaléée et prête pour examen</p>
+
+                <div className="success-details">
+                  <p style={{
+                    textAlign: 'center',
+                    fontSize: '0.9rem',
+                    color: '#64748b',
+                    marginBottom: '1.5rem',
+                  }}>
+                    La transformation a été appliquée à toutes les coupes du patient.<br />
+                    Les images recaléées sont maintenant disponibles pour consultation.
+                  </p>
+                </div>
+
+                <div className="actions-wrapper">
+                  <button className="primary-button" onClick={onClose}>
+                    Afficher la série recaléée
+                    <div className="btn-effect" />
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )}
 

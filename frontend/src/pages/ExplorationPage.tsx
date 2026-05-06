@@ -75,7 +75,7 @@ const GROUP_COLORS: Record<string, string> = {
 // ── Right panel tab type ───────────────────────────────────────────────────────
 type RightTab = 'zones' | '3d';
 
-export default function ExplorationPage() {
+export default function ExplorationPage({ onBack }: { onBack?: () => void } = {}) {
   const [jobId, setJobId]           = useState('');
   const [axis, setAxis]             = useState('axial');
   const [index, setIndex]           = useState(0);
@@ -308,7 +308,7 @@ export default function ExplorationPage() {
       {/* ── Header ── */}
       <header className="shrink-0 flex items-center gap-4 border-b border-slate-200 bg-white px-5 py-3 shadow-sm z-20">
         <button
-          onClick={() => window.history.back()}
+          onClick={onBack ?? (() => window.history.back())}
           className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 shadow-sm transition hover:bg-slate-50"
         >
           <ArrowLeft className="h-3.5 w-3.5" /> Retour
@@ -615,12 +615,6 @@ export default function ExplorationPage() {
             </div>
           )}
 
-          {/* Validate button */}
-          <div className="shrink-0 p-3 border-t border-slate-100 bg-white">
-            <button className="w-full py-2.5 rounded-xl bg-blue-600 text-[11px] font-black uppercase tracking-widest text-white shadow-md shadow-blue-200 hover:bg-blue-700 transition-all">
-              Valider Aire
-            </button>
-          </div>
         </aside>
 
       </div>

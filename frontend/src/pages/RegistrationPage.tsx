@@ -7,7 +7,8 @@ import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, ArrowDown, Upload, X, Eye, Download, Trash2, Check,
   MousePointer2, ZoomIn, ZoomOut, RotateCcw, Keyboard, BrainCircuit, Brain, Undo2,
-  Box, Loader2, FileText, Users, ChevronRight, Search, ScanSearch, Zap, ChevronLeft, Columns2
+  Box, Loader2, FileText, Users, ChevronRight, Search, ScanSearch, Zap, ChevronLeft, Columns2,
+  Lightbulb, Microscope, Map as MapIcon, Target
 } from 'lucide-react';
 import api, { getBrodmannIntensity } from '../api';
 import RegistrationModeSelector from '../components/RegistrationModeSelector';
@@ -163,6 +164,9 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const [showAutoGuide, setShowAutoGuide] = useState(false);
   const [showAutoGuide3D, setShowAutoGuide3D] = useState(false);
   const [showHybridGuide, setShowHybridGuide] = useState(false);
+  const [showThreeDSubModal, setShowThreeDSubModal] = useState(false);
+  const [showModeAssistant, setShowModeAssistant] = useState(false);
+  const [assistantObjective, setAssistantObjective] = useState<'fast' | 'precise' | 'cortical' | 'manual' | null>(null);
   // Normalized versions (all drawn on same canvas size) used for display
   const [, setNormalizedResult]     = useState<{ ref: string; pat: string } | null>(null);
   const [, setNormalizedOriginal] = useState<{ ref: string; pat: string } | null>(null);
@@ -3314,7 +3318,13 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
             {FLOWS.map((flow) => (
               <button
                 key={flow.id}
-                onClick={() => void handleChooseRegistrationDimension(flow.id)}
+                onClick={() => {
+                  if (flow.id === '3d') {
+                    setShowThreeDSubModal(true);
+                    return;
+                  }
+                  void handleChooseRegistrationDimension(flow.id);
+                }}
                 className={`group relative text-left rounded-2xl ${flow.accent.card} p-6 transition-all duration-300 hover:-translate-y-2 hover:shadow-2xl ${flow.accent.hover} shadow-lg`}
               >
                 {/* Icon */}
@@ -3624,8 +3634,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                 <RotateCcw className="w-3.5 h-3.5"/> Nouveau recalage
               </button>
 
-              {is3D && (
-              {registrationDimension === 'advanced' && (
+              {is3D && registrationDimension === 'advanced' && (
               <div className="mt-2 rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-slate-50 p-3 shadow-[0_10px_22px_rgba(37,99,235,0.12)]">
                 <div className="mb-2 flex items-center justify-between">
                   <p className="text-[11px] font-black text-blue-800 uppercase tracking-[0.12em]">Zones corticales</p>
@@ -4313,127 +4322,6 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
             </div>
           )}
 
-          {/* Identification View (Phase 3) */}
-           {phase === 3 && (
-            <div className="flex-1 min-h-0 flex gap-6 animate-in slide-in-from-right-12 duration-700">
-              <div className="flex-[2] min-h-0 flex flex-col gap-4">
-                <div className="flex-1 min-h-0 grid grid-cols-2 gap-4">
-                    <div className="rounded-[2.5rem] overflow-hidden border border-slate-200 bg-white relative shadow-xl group">
-                      <div className="absolute top-4 left-5 z-10 px-3 py-1 rounded-full bg-blue-600/80 text-[10px] font-black uppercase text-white shadow-xl backdrop-blur-md">Atlas de référence</div>
-                      <canvas ref={refCanvasRef} onClick={e=>handleBrodmannClick(e,'reference')} onWheel={e=>handleWheel(e,'reference')} onMouseDown={e=>handleMouseDown(e,'reference')} onMouseMove={e=>handleMouseMove(e,'reference')} className="w-full h-full cursor-crosshair"/>
-                      {brodmannTooltip?.panel === 'reference' && (
-                        <div
-                          className="pointer-events-none absolute z-20 w-[250px] rounded-xl border border-blue-200 bg-white/95 px-3 py-2 shadow-[0_10px_26px_rgba(15,23,42,0.18)] backdrop-blur-sm"
-                          style={{ left: brodmannTooltip.x, top: brodmannTooltip.y }}
-                        >
-                          {brodmannTooltip.insideBrain ? (
-                            <>
-                              <p className="text-[9px] font-black uppercase tracking-[0.12em] text-blue-700">Zone détectée</p>
-                              <p className="mt-0.5 text-[11px] font-black leading-snug text-slate-900">
-                                BA {brodmannTooltip.zoneId ?? '--'} - {brodmannTooltip.zoneName || 'Zone corticale'}
-                              </p>
-                            </>
-                          ) : (
-                            <>
-                              <p className="text-[9px] font-black uppercase tracking-[0.12em] text-amber-700">Hors cerveau</p>
-                              <p className="mt-0.5 text-[11px] font-semibold text-slate-600">Aucune aire Brodmann à cet endroit</p>
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    <div className="rounded-[2.5rem] overflow-hidden border border-slate-200 bg-white relative shadow-xl group">
-                      <div className="absolute top-4 left-5 z-10 px-3 py-1 rounded-full bg-slate-700/90 text-[10px] font-black uppercase text-white shadow-xl backdrop-blur-md">Patient recalé</div>
-                      <canvas ref={patCanvasRef} onClick={e=>handleBrodmannClick(e,'patient')} onWheel={e=>handleWheel(e,'patient')} onMouseDown={e=>handleMouseDown(e,'patient')} onMouseMove={e=>handleMouseMove(e,'patient')} className="w-full h-full cursor-crosshair"/>
-                      {brodmannTooltip?.panel === 'patient' && (
-                        <div
-                          className="pointer-events-none absolute z-20 w-[250px] rounded-xl border border-blue-200 bg-white/95 px-3 py-2 shadow-[0_10px_26px_rgba(15,23,42,0.18)] backdrop-blur-sm"
-                          style={{ left: brodmannTooltip.x, top: brodmannTooltip.y }}
-                        >
-                          {brodmannTooltip.insideBrain ? (
-                            <>
-                              <p className="text-[9px] font-black uppercase tracking-[0.12em] text-blue-700">Zone détectée</p>
-                              <p className="mt-0.5 text-[11px] font-black leading-snug text-slate-900">
-                                BA {brodmannTooltip.zoneId ?? '--'} - {brodmannTooltip.zoneName || 'Zone corticale'}
-                              </p>
-                            </>
-                          ) : (
-                            <>
-                              <p className="text-[9px] font-black uppercase tracking-[0.12em] text-amber-700">Hors cerveau</p>
-                              <p className="mt-0.5 text-[11px] font-semibold text-slate-600">Aucune aire Brodmann à cet endroit</p>
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  {/* Axis Switch + Slider */}
-                  <div className="shrink-0 sticky bottom-0 z-20 rounded-[2rem] border border-slate-200 bg-white/95 px-5 py-4 backdrop-blur-xl shadow-lg">
-                    <div className="mb-3 space-y-3">
-                      <div className="grid grid-cols-3 gap-2">
-                        {axisOptions.map(({ key, label }) => (
-                          <button
-                            key={key}
-                            onClick={() => {
-                              const axisMax = getAxisMax(key);
-                              const mid = Math.floor(axisMax / 2);
-                              setAxis(key);
-                              setIndex(mid);
-                              void sync3DViews(key, mid);
-                            }}
-                            className={`w-full rounded-xl border px-3 py-2.5 text-center text-[11px] font-bold uppercase tracking-[0.12em] transition-all ${axis===key ? 'border-blue-400 bg-blue-600 text-white shadow-lg shadow-blue-200' : 'border-slate-300 bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-50 hover:text-slate-900'}`}
-                            aria-label={`Changer vers le plan ${label}`}
-                            title={label}
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-
-
-                    {is3D && img.src && (jobId || referenceJobId || registrationDimension === 'advanced') && (
-                      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 pt-0 pb-3 space-y-2">
-                        <div className="rounded-b-xl bg-gradient-to-r from-emerald-600 to-teal-500 px-3 py-2.5 flex items-center gap-2.5 shadow-sm">
-                          <div className="shrink-0 w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
-                            <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-[10px] font-black text-white uppercase tracking-[0.1em] leading-none mb-0.5">Recalage 3D volumétrique</p>
-                            <p className="text-[9px] text-emerald-100 leading-snug font-medium">
-                              Le traitement porte sur le <span className="font-black text-white">volume entier</span> — cette vue n'influence pas le résultat.
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between px-0.5">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <p className="text-[9px] font-bold text-slate-600 uppercase tracking-[0.14em]">Exploration visuelle</p>
-                            <span className="text-[8px] font-semibold text-slate-400 normal-case tracking-normal">(n'affecte pas le recalage)</span>
-                          </div>
-                          <p className="text-[10px] font-black text-blue-800">{index + 1} / {maxIndex + 1}</p>
-                        </div>
-                        <div className="flex gap-1.5">
-                          {axisOptions.map(({ key, label }) => (
-                            <button key={key}
-                              onClick={() => { const t = Math.floor(getAxisMax(key) / 2); queuePhase2SliceFetch(key, t); }}
-                              className={`flex-1 rounded-full border px-2 py-1 text-[10px] font-semibold transition-all ${axis===key ? 'border-sky-400 bg-sky-50 text-sky-700 shadow-sm' : 'border-slate-200 bg-white text-slate-500 hover:border-sky-200 hover:text-sky-600'}`}
-                            >{label}</button>
-                          ))}
-                        </div>
-                        <input type="range" min={0} max={Math.max(0, maxIndex)} value={index}
-                          onChange={e => queuePhase2SliceFetch(axis, Number(e.target.value))}
-                          className="w-full h-2 rounded-full appearance-none bg-slate-200 accent-blue-500"
-                        />
-                        {type === 'patient' && sliceError && <p className="text-[10px] text-rose-600">{sliceError}</p>}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
           {/* Identification Brodmann + intensités (mode avancé uniquement) */}
            {phase === 3 && registrationDimension === 'advanced' && (
             <div className="flex-1 min-h-0 flex gap-6 animate-in slide-in-from-right-12 duration-700">
@@ -4569,9 +4457,6 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                     zone={zone}
                     insideBrain={insideBrain}
                     hasAttempt={hasBrodmannAttempt}
-                    axis={axis}
-                    index={index}
-                    maxIndex={maxIndex}
                   />
                   <BrodmannIntensityPanel
                     zoneName={zone?.name}
@@ -5814,7 +5699,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
           },
           {
             id: 'cortical' as const,
-            icon: <Map className="w-5 h-5" />,
+            icon: <MapIcon className="w-5 h-5" />,
             label: 'Projection atlas cérébral',
             desc: 'Je veux identifier les zones de Brodmann sur le volume recalé',
             color: is3D ? 'text-emerald-600' : 'text-slate-400', bg: is3D ? 'bg-emerald-50' : 'bg-slate-50', border: is3D ? 'border-emerald-200' : 'border-slate-200', borderHover: is3D ? 'hover:border-emerald-400' : '',

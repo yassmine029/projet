@@ -58,5 +58,8 @@ dist/
 
 # MAIS garder le README.md
 !README.md
-# Modeles ONNX
+
+# Modeles ONNX (ne jamais versionner — trop lourds pour GitHub)
 *.onnx
+backend_django/models/*.onnx
+**/*.onnx

@@ -9,6 +9,10 @@ if sys.platform == 'win32':
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+# En dev, réutiliser frontend/.env pour VITE_ADMIN_DASHBOARD_* (portail admin SPA)
+_frontend_env = BASE_DIR.parent / 'frontend' / '.env'
+if _frontend_env.is_file():
+    load_dotenv(_frontend_env)
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'change-me')
 DEBUG = os.getenv('DEBUG', '1') == '1'
@@ -16,6 +20,8 @@ DEBUG = os.getenv('DEBUG', '1') == '1'
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost 127.0.0.1 testserver *').split()
 
 INSTALLED_APPS = [
+    # ASGI / WebSockets (recalage progression temps réel) — doit précéder staticfiles pour runserver
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -24,6 +30,8 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'corsheaders',
+    'channels',
+    'django_extensions',
     'api',
     'django.contrib.postgres',
 ]
@@ -58,6 +66,13 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'backend_django.wsgi.application'
+# Requis pour WebSockets (/ws/registration/...) — sans cela, le proxy Vite coupe avec ECONNRESET
+ASGI_APPLICATION = 'backend_django.asgi.application'
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    },
+}
 
 DATABASES = {
     'default': {
@@ -89,6 +104,7 @@ MEDIA_ROOT = os.getenv('MEDIA_ROOT', str(Path.home() / 'recalage_uploads'))
 os.makedirs(MEDIA_ROOT, exist_ok=True)
 MEDIA_URL = '/media/'
 
+<<<<<<< HEAD
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',
@@ -96,8 +112,33 @@ CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
 ]
+=======
+# Ne pas combiner ALLOW_ALL_ORIGINS + CREDENTIALS : le navigateur refuse les cookies de session.
+CORS_ALLOW_ALL_ORIGINS = False
+
+
+def _local_frontend_origins():
+    """Vite prend 5174, 5175… si 5173 est pris ; preview souvent 4173."""
+    out = []
+    for host in ('localhost', '127.0.0.1'):
+        for port in (3000, 4173, 4174, 5173, 5174, 5175, 5176, 5177, 5178, 5179, 5180):
+            out.append(f'http://{host}:{port}')
+    return out
+
+
+CORS_ALLOWED_ORIGINS = _local_frontend_origins()
+>>>>>>> origin/nadine
 
 CORS_ALLOW_CREDENTIALS = True
+
+# Requis pour les POST avec session depuis le front (Django 4+)
+CSRF_TRUSTED_ORIGINS = list(CORS_ALLOWED_ORIGINS)
+
+# Session cookie : rester cohérent avec l’URL du front (préférer http://localhost:5173, pas 127.0.0.1 mélangé).
+SESSION_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SECURE = os.getenv('SESSION_COOKIE_SECURE', '0') == '1'
+SESSION_SAVE_EVERY_REQUEST = True
 
 CORS_ALLOW_METHODS = [
     'DELETE',
@@ -159,4 +200,20 @@ NNUNET_MODEL_PATH = (
     or (_nnunet_final_default if os.path.exists(_nnunet_final_default) else None)
     or (_nnunet_v2_default if os.path.exists(_nnunet_v2_default) else None)
     or _nnunet_legacy_default
+<<<<<<< HEAD
 )
+=======
+)
+
+# Recalage MINE (2D + 3D) : si True, aucun repli CPU — erreur explicite sans CUDA/MPS.
+# Défaut 1 (GPU obligatoire). Mettre MINE_FORCE_GPU=0 pour autoriser le CPU (dev sans GPU).
+MINE_FORCE_GPU = os.getenv('MINE_FORCE_GPU', '1').strip().lower() in ('1', 'true', 'yes')
+
+# Carte des régions pour l’identification et les intensités : api.official_atlas (Nilearn, Harvard–Oxford).
+# Sujet de référence d’intensité (une seule exécution du script runscript).
+REFERENCE_INTENSITY_NIFTI_SOURCE = os.getenv(
+    'REFERENCE_INTENSITY_NIFTI_SOURCE',
+    r'C:\Users\Asus\Desktop\reference_intensité\sujet1.nii',
+)
+REFERENCE_INTENSITY_NOM = os.getenv('REFERENCE_INTENSITY_NOM', 'sujet1')
+>>>>>>> origin/nadine

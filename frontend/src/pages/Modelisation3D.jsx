@@ -794,9 +794,10 @@ function ReportPreviewModal({
   );
 }
 
-export default function Modelisation3D() {
+export default function Modelisation3D({ user = null }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const isEmergencySession = Boolean(user?.is_emergency_session);
   const runId = Number(searchParams.get('run'));
   const reportPreviewRef = useRef(null);
 

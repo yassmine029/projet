@@ -100,6 +100,8 @@ export default function Dashboard() {
   const [isProcessingTestimonialDecision, setIsProcessingTestimonialDecision] = useState(false);
   const [testimonialDecisionMessage, setTestimonialDecisionMessage] = useState('');
   const [testimonialDecisionError, setTestimonialDecisionError] = useState('');
+  /** Si non vide, le GET témoignages a échoué (souvent 401/403 sans session staff). */
+  const [testimonialsFetchError, setTestimonialsFetchError] = useState('');
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createdPassword, setCreatedPassword] = useState('');
   const [activationNotice, setActivationNotice] = useState('');
@@ -249,6 +251,11 @@ export default function Dashboard() {
     };
     load();
   }, []);
+
+  useEffect(() => {
+    if (!isTestimonials) return;
+    void reloadTestimonials();
+  }, [isTestimonials, reloadTestimonials]);
 
   useEffect(() => {
     if (!settingsData) return;
@@ -1255,6 +1262,18 @@ export default function Dashboard() {
       )}
       {testimonialDecisionError && (
         <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{testimonialDecisionError}</div>
+      )}
+      {testimonialsFetchError && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">
+          {testimonialsFetchError}
+          <button
+            type="button"
+            onClick={() => void reloadTestimonials()}
+            className="ml-3 text-blue-600 underline"
+          >
+            Réessayer
+          </button>
+        </div>
       )}
 
       <div className="mb-5 overflow-x-auto rounded-2xl border border-amber-100">

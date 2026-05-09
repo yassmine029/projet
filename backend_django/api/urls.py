@@ -9,8 +9,10 @@ urlpatterns = [
     path('login', views.login_view, name='login'),
     path('emergency_login', views.emergency_login, name='emergency_login'),
     path('emergency_check', views.check_emergency_limit, name='emergency_check'),
+    path('emergency/stage-patient/', views.emergency_stage_patient, name='emergency_stage_patient'),
     path('logout', views.logout_view, name='logout'),
     path('check_session', views.check_session, name='check_session'),
+    path('admin/portal_login', views.admin_portal_login, name='admin_portal_login'),
     path('forgot_password', views.forgot_password, name='forgot_password'),
     path('validate_reset_token', views.validate_reset_token, name='validate_reset_token'),
     path('reset_password', views.reset_password, name='reset_password'),
@@ -93,6 +95,11 @@ urlpatterns = [
     path('patients/', views.patients_list_create, name='patients_list_create'),
     path('patients/next-dossier/', views.next_dossier_number, name='next_dossier_number'),
     path('patients/<int:patient_id>/', views.patient_detail_update_delete, name='patient_detail_update_delete'),
+    path(
+        'patients/<int:patient_id>/latest-brodmann-analyse/',
+        views.patient_latest_brodmann_analyse,
+        name='patient_latest_brodmann_analyse',
+    ),
     path('patients/<int:patient_id>/mri-files/', views.mri_files_list_upload, name='mri_files_list_upload'),
     path('mri-files/<int:file_id>/preview/', views.mri_file_preview, name='mri_file_preview'),
     path('patients/<int:patient_id>/segment/', views.launch_patient_segmentation, name='launch_patient_segmentation'),
@@ -138,4 +145,6 @@ urlpatterns = [
 
     # Brodmann projection route
     path('project_brodmann', views.project_brodmann, name='project_brodmann'),
+    # Intensités Brodmann (patient MNI vs référence sujet1 en BDD)
+    path('brodmann/intensity/', views.brodmann_intensity, name='brodmann_intensity'),
 ]

@@ -48,13 +48,41 @@ import Modelisation3D from './pages/Modelisation3D'
 import AppLayout from './components/AppLayout'
 import './index.css'
 import { checkSession, logout } from './api'
+import { clearAdminDashboardSession } from './adminSession'
+
+/** Reprise utilisateur après F5 ou ouverture directe /segmentation/… avant check_session */
+function readStoredUser() {
+  try {
+    const raw = localStorage.getItem('user')
+    if (!raw) return null
+    const u = JSON.parse(raw)
+    return u && typeof u === 'object' ? u : null
+  } catch {
+    return null
+  }
+}
+
+/** Navigation complète sans garder ?token=… (sinon /login?token= est renvoyé vers /reset-password). */
+function goToPath(path) {
+  const normalized = path.startsWith('/') ? path : `/${path}`
+  window.location.replace(`${window.location.origin}${normalized}`)
+}
+
+function isPortalAdminUser(user) {
+  return Boolean(user?.is_admin_dashboard || user?.username === '__neuroscan_portal_admin__')
+}
 
 function Protected({ user, children }) {
-  return user ? children : <Navigate to="/login" replace />
+  if (!user) return <Navigate to="/login" replace />
+  if (isPortalAdminUser(user)) return <Navigate to="/admin" replace />
+  return children
 }
 
 function ProtectedLayout({ user }) {
-  return user ? <AppLayout><Outlet /></AppLayout> : <Navigate to="/login" replace />
+  if (!user) return <Navigate to="/login" replace />
+  if (isPortalAdminUser(user)) return <Navigate to="/admin" replace />
+  if (user.is_emergency_session) return <Navigate to="/" replace />
+  return <AppLayout><Outlet /></AppLayout>
 }
 
 function ThemeToggle() {
@@ -87,7 +115,8 @@ function ThemeToggle() {
 }
 
 export default function App() {
-  const [user, setUser] = useState(null)
+  const navigate = useNavigate()
+  const [user, setUser] = useState(readStoredUser)
   const [checking, setChecking] = useState(true)
   const [routeNormalized, setRouteNormalized] = useState(false)
   const devBypassAdmin = import.meta.env.DEV && new URLSearchParams(window.location.search).has('adminBypass')
@@ -102,14 +131,33 @@ export default function App() {
     checkSession()
       .then(r => {
         if (r.data.logged_in) {
+          clearAdminDashboardSession()
           const u =
             (r.data.user && typeof r.data.user === 'object')
               ? r.data.user
               : { username: r.data.user, fullName: r.data.user, is_staff: r.data.is_staff }
-          setUser(u)
+          const merged = {
+            ...u,
+            is_emergency_session: Boolean(r.data.is_emergency_session),
+          }
+          setUser(merged)
+          try {
+            localStorage.setItem('user', JSON.stringify(merged))
+          } catch {
+            /* ignore */
+          }
+        } else {
+          setUser(null)
+          try {
+            localStorage.removeItem('user')
+          } catch {
+            /* ignore */
+          }
         }
       })
-      .catch(() => { })
+      .catch(() => {
+        /* en cas d’erreur réseau, on garde l’optimistic user du localStorage si présent */
+      })
       .finally(() => setChecking(false))
   }, [])
 
@@ -146,6 +194,88 @@ export default function App() {
 
     setRouteNormalized(true)
   }, [])
+
+  /** Exposé aux écrans de login qui font setUser après succès — persiste aussi le localStorage */
+  const persistUserAndSet = useCallback((u) => {
+    setUser(u)
+    try {
+      if (u && typeof u === 'object') {
+        localStorage.setItem('user', JSON.stringify(u))
+      } else {
+        localStorage.removeItem('user')
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  /** Navigation SPA : évite window.location.replace qui recharge la page, perd user React et peut envoyer vers /login */
+  const handleNavigate = useCallback(
+    (page) => {
+      if (page.startsWith('/')) {
+        if (!user) {
+          navigate('/login', { replace: true })
+          return
+        }
+        navigate(page)
+        return
+      }
+      if (page === 'dashboard') {
+        navigate(user?.is_emergency_session ? '/' : '/dashboard')
+        return
+      }
+      if (page === 'login') {
+        navigate('/login')
+        return
+      }
+      if (page === 'registration') {
+        navigate(user ? '/registration' : '/login')
+        return
+      }
+      navigate('/')
+    },
+    [user, navigate]
+  )
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await logout()
+    } catch (e) {
+      console.error(e)
+    } finally {
+      clearAdminDashboardSession()
+      setUser(null)
+      try {
+        localStorage.removeItem('user')
+      } catch {
+        /* ignore */
+      }
+      navigate('/', { replace: true })
+    }
+  }, [navigate])
+
+  const handleAuthNavigate = useCallback(
+    (page) => {
+      if (page === 'login') {
+        navigate('/login')
+        return
+      }
+      if (page === 'forgot-password') {
+        navigate('/forgot-password')
+        return
+      }
+      if (page === 'reset-password') {
+        navigate('/reset-password')
+        return
+      }
+      if (page === 'activate-account') {
+        navigate('/activate-account')
+        return
+      }
+      navigate('/login')
+    },
+    [navigate]
+  )
 
   if (checking || !routeNormalized) {
     return <div style={{ padding: 40 }}>Vérification session...</div>

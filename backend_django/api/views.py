@@ -38,6 +38,9 @@ from rest_framework.authentication import SessionAuthentication
 from rest_framework.permissions import AllowAny, IsAuthenticated
 
 import numpy as np
+import nibabel as nib
+from nilearn.image import resample_to_img
+from pathlib import Path
 import cv2
 from PIL import Image, ImageOps
 from PIL import ImageDraw
@@ -78,6 +81,8 @@ from .models import (
     SegmentationRun,
     SegmentationMaskResult,
     PatientReport,
+    ReferenceIntensity,
+    Analyse,
 )
 from .serializers import (
     ReclamationSerializer, PatientSerializer, MRIFileSerializer, SegmentationRunSerializer,
@@ -103,6 +108,9 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 ORDER_NUMBER_PATTERN = re.compile(r'^(?:\d{4,6}|T-\d{4,6})$')
 PHONE_NUMBER_PATTERN = re.compile(r'^[24579]\d{7}$')
+
+# Compte technique Django pour la session du dashboard admin SPA (voir admin_portal_login).
+PORTAL_ADMIN_USERNAME = '__neuroscan_portal_admin__'
 
 
 def _emit_registration_progress(job_id: str, progress: int, stage: str, message: str, status: str = 'processing'):
@@ -1051,10 +1059,92 @@ def login_view(request):
 @require_http_methods(["POST"])
 def logout_view(request):
     print(f"Yassmine now the logout endpoint works")
+    user = getattr(request, 'user', None)
+    if getattr(user, 'is_authenticated', False) and is_emergency_session(request):
+        try:
+            Patient.objects.filter(doctor=user, emergency_temp=True).delete()
+        except Exception as e:
+            print(f"Yassmine logout - purge emergency patients warning: {e}")
     logout(request)
     request.session.flush()
     print(f"Yassmine now the logout SUCCESS")
     return JsonResponse({'message': 'Déconnecté avec succès'})
+
+
+def _portal_dashboard_credentials():
+    email = (
+        os.getenv('ADMIN_PORTAL_EMAIL')
+        or os.getenv('VITE_ADMIN_DASHBOARD_EMAIL')
+        or ''
+    ).strip().lower()
+    password = os.getenv('ADMIN_PORTAL_PASSWORD') or os.getenv('VITE_ADMIN_DASHBOARD_PASSWORD') or ''
+    return email, password
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def admin_portal_login(request):
+    """
+    Authentifie le portail admin du frontend : identifiants ADMIN_PORTAL_* ou VITE_ADMIN_DASHBOARD_*.
+    """
+    try:
+        data = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'JSON invalide'}, status=400)
+
+    email = (data.get('email') or data.get('username') or '').strip().lower()
+    password = data.get('password') or ''
+    expected_email, expected_password = _portal_dashboard_credentials()
+
+    if not expected_email or not expected_password:
+        return JsonResponse(
+            {
+                'ok': False,
+                'error': 'Portail admin non configuré (ADMIN_PORTAL_* ou VITE_ADMIN_DASHBOARD_* dans .env).',
+            },
+            status=503,
+        )
+
+    if email != expected_email or password != expected_password:
+        return JsonResponse({'ok': False, 'error': 'Identifiants administrateur invalides.'}, status=401)
+
+    user, _created = User.objects.get_or_create(
+        username=PORTAL_ADMIN_USERNAME,
+        defaults={
+            'email': expected_email,
+            'is_staff': True,
+            'is_superuser': True,
+            'is_active': True,
+            'first_name': 'Administrateur',
+            'last_name': 'portail',
+        },
+    )
+    if not user.is_staff or not user.is_superuser or not user.is_active:
+        user.is_staff = True
+        user.is_superuser = True
+        user.is_active = True
+        user.save(update_fields=['is_staff', 'is_superuser', 'is_active'])
+
+    user.set_unusable_password()
+    user.save(update_fields=['password'])
+
+    login(request, user, backend='django.contrib.auth.backends.ModelBackend')
+    request.session.pop('emergency_access', None)
+
+    full_name = (user.get_full_name() or 'Administrateur').strip()
+    return JsonResponse({
+        'ok': True,
+        'user': {
+            'username': user.username,
+            'fullName': full_name,
+            'full_name': full_name,
+            'first_name': (user.first_name or '').strip(),
+            'last_name': (user.last_name or '').strip(),
+            'specialty': '',
+            'is_staff': True,
+            'is_admin_dashboard': True,
+        },
+    })
 
 
 @api_view(['GET'])
@@ -1071,8 +1161,11 @@ def check_session(request):
             username_prefix = (request.user.username or '').split('@')[0].replace('.', ' ').replace('_', ' ').strip()
             full_name = username_prefix.title() if username_prefix else 'Medecin'
 
+        is_portal = request.user.username == PORTAL_ADMIN_USERNAME
+        em = is_emergency_session(request)
         return JsonResponse({
-            'logged_in': True, 
+            'logged_in': True,
+            'is_emergency_session': em,
             'user': {
                 'username': request.user.username,
                 'fullName': full_name,
@@ -1081,6 +1174,8 @@ def check_session(request):
                 'last_name': (request.user.last_name or '').strip(),
                 'specialty': (profile.specialty if profile else ''),
                 'is_staff': request.user.is_staff,
+                'is_admin_dashboard': is_portal,
+                'is_emergency_session': em,
             },
             'is_staff': request.user.is_staff
         })
@@ -2103,6 +2198,263 @@ def project_brodmann(request):
     if not ok:
         return JsonResponse({'error': 'encode failed'}, status=500)
     return HttpResponse(buf.tobytes(), content_type='image/png')
+
+
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def brodmann_intensity(request):
+    """
+    Compare la somme d'intensités (masque de zone) entre le volume patient recalé MNI152
+    et les sommes précalculées (ReferenceIntensity).
+
+    Query params :
+      zone_number (int) : indice Harvard–Oxford (identification).
+      analyse_id (int, optionnel) : volume archivé (modèle Analyse).
+      job_id (str, optionnel) : session de recalage (même volume que les coupes affichées).
+
+    Fournir analyse_id ou job_id ; si les deux sont présents, analyse_id est utilisé.
+
+    Réponse : sommes brutes, ratio brut (souvent non interprétable), et champs
+    ratio_relative_percent / moyennes par zone lorsque le fichier IRM du sujet de référence est lisible.
+    """
+    qp = request.query_params
+    analyse_raw = qp.get('analyse_id')
+    job_raw = (qp.get('job_id') or '').strip()
+
+    try:
+        zone_number = int(qp.get('zone_number', ''))
+    except (TypeError, ValueError):
+        return Response(
+            {'detail': 'Paramètre zone_number (entier) requis.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    use_analyse = analyse_raw not in (None, '')
+    if use_analyse:
+        try:
+            analyse_id = int(analyse_raw)
+        except (TypeError, ValueError):
+            return Response(
+                {'detail': 'analyse_id invalide.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+    elif job_raw:
+        analyse_id = None
+    else:
+        return Response(
+            {'detail': 'Fournir analyse_id ou job_id avec zone_number.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # ── Référence d'intensité : lecture BDD uniquement (pas de NIfTI) ───────
+    ref_row = ReferenceIntensity.objects.order_by('-date_creation').first()
+    if ref_row is None:
+        return Response(
+            {
+                'detail': 'Aucune ReferenceIntensity en base. Exécuter : '
+                'python manage.py runscript setup_reference_intensity',
+            },
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    key = str(zone_number)
+    if key not in (ref_row.brodmann_intensities or {}):
+        return Response(
+            {'detail': f'Zone {zone_number} absente du JSON de référence (relancer runscript setup_reference_intensity si besoin).'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    somme_reference = float(ref_row.brodmann_intensities[key])
+
+    # ── Carte des régions = même bundle Nilearn que volume_api (Harvard–Oxford sur MNI152) ───
+    try:
+        from api.official_atlas import load_official_mni_atlas_bundle
+
+        template_img, labels_img, _lut = load_official_mni_atlas_bundle()
+    except Exception as exc:
+        return Response(
+            {'detail': f'Impossible de charger la carte des régions Nilearn : {exc}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+    if use_analyse:
+        analyse = get_object_or_404(
+            Analyse.objects.select_related('patient'),
+            pk=analyse_id,
+            patient__doctor=request.user,
+        )
+        try:
+            patient_path = analyse.mri_registered.path
+        except Exception:
+            patient_path = ''
+        if not patient_path or not os.path.isfile(patient_path):
+            return Response(
+                {'detail': 'Fichier IRM recalée (Analyse.mri_registered) introuvable sur le disque.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            patient_img = nib.load(patient_path)
+            patient_data = np.asanyarray(patient_img.dataobj).astype(np.float64, copy=False)
+            atlas_on_patient = resample_to_img(
+                labels_img,
+                patient_img,
+                interpolation='nearest',
+                force_resample=True,
+            )
+            labels = np.rint(np.asanyarray(atlas_on_patient.dataobj)).astype(np.int32)
+        except Exception as exc:
+            return Response(
+                {'detail': f'Erreur lecture NIfTI / atlas : {exc}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+    else:
+        from api.volume_api import _get_job_entry
+
+        entry = _get_job_entry(job_raw)
+        if entry is None:
+            return Response(
+                {
+                    'detail': 'Session de recalage introuvable ou expirée. Relancez un recalage ou '
+                    'enregistrez le volume dans le dossier patient.',
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        vol = entry.get('registered_data')
+        if vol is None:
+            vol = entry.get('pending_registered_data')
+        if vol is None:
+            return Response(
+                {'detail': "Pas encore de volume recalé dans cette session — validez d'abord le recalage."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            patient_data = np.asarray(vol, dtype=np.float64)
+            patient_img = nib.Nifti1Image(
+                patient_data.astype(np.float64),
+                template_img.affine,
+                template_img.header,
+            )
+            atlas_on_patient = resample_to_img(
+                labels_img,
+                patient_img,
+                interpolation='nearest',
+                force_resample=True,
+            )
+            labels = np.rint(np.asanyarray(atlas_on_patient.dataobj)).astype(np.int32)
+        except Exception as exc:
+            return Response(
+                {'detail': f'Erreur volume session / atlas : {exc}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    if labels.shape != patient_data.shape:
+        return Response(
+            {
+                'detail': 'Forme atlas != forme volume patient après rééchantillonnage '
+                '(vérifier que le NIfTI est bien en espace MNI152 aligné atlas).',
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    mask = labels == zone_number
+    if not np.any(mask):
+        return Response(
+            {'detail': f'Masque vide pour la zone {zone_number} (volume ou atlas).'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    brain_mask = labels > 0
+    if not np.any(brain_mask):
+        return Response(
+            {'detail': 'Aucun voxel cortical (atlas) ne recouvre ce volume — vérifier le recalage MNI.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    somme_patient = float(np.sum(patient_data[mask]))
+    n_vox = int(np.sum(mask))
+    patient_zone_mean = somme_patient / max(n_vox, 1)
+    patient_brain_mean = float(np.mean(patient_data[brain_mask]))
+    patient_rel_index = patient_zone_mean / max(patient_brain_mean, 1e-12)
+
+    # Somme JSON (ancienne) ; recalcul préféré depuis le fichier référence pour aligner les échelles.
+    somme_reference = float(ref_row.brodmann_intensities[key])
+    reference_zone_mean = None
+    reference_brain_mean = None
+    reference_rel_index = None
+    ratio_relative_percent = None
+
+    rel_media = (ref_row.mri_registered_path or '').strip().replace('\\', '/')
+    ref_path = None
+    if rel_media:
+        ref_path = rel_media if os.path.isabs(rel_media) else os.path.join(str(settings.MEDIA_ROOT), rel_media)
+    if ref_path and os.path.isfile(ref_path):
+        try:
+            ref_img = nib.load(ref_path)
+            ref_data = np.asanyarray(ref_img.dataobj).astype(np.float64, copy=False)
+            atlas_on_ref = resample_to_img(
+                labels_img,
+                ref_img,
+                interpolation='nearest',
+                force_resample=True,
+            )
+            labels_ref = np.rint(np.asanyarray(atlas_on_ref.dataobj)).astype(np.int32)
+            if labels_ref.shape == ref_data.shape:
+                bm_ref = labels_ref > 0
+                if np.any(bm_ref):
+                    reference_brain_mean = float(np.mean(ref_data[bm_ref]))
+                    mask_ref = labels_ref == zone_number
+                    if np.any(mask_ref):
+                        somme_reference = float(np.sum(ref_data[mask_ref]))
+                        nv_ref = int(np.sum(mask_ref))
+                        reference_zone_mean = somme_reference / max(nv_ref, 1)
+                        reference_rel_index = reference_zone_mean / max(reference_brain_mean, 1e-12)
+        except Exception:
+            pass
+
+    if reference_rel_index is not None and reference_rel_index > 0:
+        ratio_relative_percent = float((patient_rel_index / reference_rel_index) * 100.0)
+
+    difference = somme_patient - somme_reference
+    if somme_reference == 0.0:
+        ratio_percent = None
+    else:
+        ratio_percent = (somme_patient / somme_reference) * 100.0
+
+    return Response({
+        'zone_number': zone_number,
+        'somme_patient': somme_patient,
+        'somme_reference': somme_reference,
+        'difference': difference,
+        'ratio_percent': ratio_percent,
+        'ratio_relative_percent': ratio_relative_percent,
+        'n_voxels': n_vox,
+        'patient_zone_mean': patient_zone_mean,
+        'patient_brain_mean': patient_brain_mean,
+        'reference_zone_mean': reference_zone_mean,
+        'reference_brain_mean': reference_brain_mean,
+        'patient_relative_index': patient_rel_index,
+        'reference_relative_index': reference_rel_index,
+    })
+
+
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def patient_latest_brodmann_analyse(request, patient_id):
+    """
+    Dernière fiche « analyse » (volume IRM recalé MNI) pour un patient du médecin connecté.
+    Utilisé par l’écran Brodmann pour retrouver l’id sans paramètre d’URL.
+    """
+    get_object_or_404(Patient, id=patient_id, doctor=request.user)
+    analyse = (
+        Analyse.objects.filter(patient_id=patient_id, doctor=request.user)
+        .order_by('-created_at')
+        .only('id')
+        .first()
+    )
+    if analyse is None:
+        return Response({'analyse_id': None})
+    return Response({'analyse_id': analyse.pk})
 
 
 @require_http_methods(["POST"])
@@ -4024,6 +4376,92 @@ def delete_patient(request, patient_id):
 
     print(f"Nadine Yassmine - delete_patient SUCCESS - patient_id: {patient_id}, deleted {deleted_count} series")
     return JsonResponse({'message': f'patient deleted successfully ({deleted_count} series)'})
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def emergency_stage_patient(request):
+    """
+    Crée un Patient jetable (emergency_temp) avec fichiers — réservé aux sessions urgence.
+    """
+    if not request.user.is_authenticated:
+        return JsonResponse(
+            {'ok': False, 'error': 'Session expirée ou non authentifié. Reconnectez-vous en mode urgence.'},
+            status=401,
+        )
+    if not is_emergency_session(request):
+        return JsonResponse({'ok': False, 'error': 'Réservé au mode urgence.'}, status=403)
+
+    files = request.FILES.getlist('files')
+    relative_paths = request.POST.getlist('relative_paths')
+    if not files:
+        return JsonResponse({'ok': False, 'error': 'Au moins un fichier est requis.'}, status=400)
+
+    dossier_number = _next_dossier_number()
+    from datetime import date as _date
+
+    try:
+        with transaction.atomic():
+            patient = Patient.objects.create(
+                dossier_number=dossier_number,
+                nom='Urgence',
+                prenom='Import',
+                date_naissance=_date(1990, 1, 1),
+                sexe='M',
+                doctor=request.user,
+                emergency_temp=True,
+                pathologie='',
+                notes='Session urgence — dossier non conservé après déconnexion.',
+            )
+
+            ALLOWED_EXTENSIONS = {
+                '.nii', '.gz', '.dcm', '.dicom',
+                '.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp',
+            }
+            MAX_FILE_SIZE_MB = 500
+            MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
+            for index, uploaded_file in enumerate(files):
+                fname_lower = uploaded_file.name.lower()
+                ext = os.path.splitext(fname_lower)[1]
+                if fname_lower.endswith('.nii.gz'):
+                    ext = '.gz'
+                if ext not in ALLOWED_EXTENSIONS:
+                    transaction.set_rollback(True)
+                    return JsonResponse({
+                        'ok': False,
+                        'error': f'Extension « {ext} » non autorisée pour le fichier « {uploaded_file.name} ».',
+                    }, status=400)
+                file_size = getattr(uploaded_file, 'size', 0) or 0
+                if file_size > MAX_FILE_SIZE_BYTES:
+                    transaction.set_rollback(True)
+                    return JsonResponse({
+                        'ok': False,
+                        'error': f'Le fichier « {uploaded_file.name} » dépasse la limite de {MAX_FILE_SIZE_MB} Mo.',
+                    }, status=400)
+
+                rel_from_client = relative_paths[index] if index < len(relative_paths) else ''
+                safe_rel = _safe_relative_path(rel_from_client, uploaded_file.name)
+                storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
+                saved_path = default_storage.save(storage_path, uploaded_file)
+
+                MRIFile.objects.create(
+                    patient=patient,
+                    file=saved_path,
+                    original_filename=uploaded_file.name,
+                    relative_path=safe_rel,
+                    file_size=int(getattr(uploaded_file, 'size', 0) or 0),
+                )
+
+            out_serializer = PatientSerializer(patient, context={'request': request})
+            return JsonResponse(
+                {'ok': True, 'message': 'Dossier urgence créé', 'patient': out_serializer.data},
+                status=201,
+            )
+    except IntegrityError:
+        return JsonResponse({'ok': False, 'error': 'Impossible de créer le dossier (conflit). Réessayez.'}, status=409)
+    except Exception as e:
+        return JsonResponse({'ok': False, 'error': f'Erreur serveur: {str(e)}'}, status=500)
 
 
 @csrf_exempt

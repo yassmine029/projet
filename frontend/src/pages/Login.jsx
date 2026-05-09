@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Brain, ShieldCheck, Mail, Lock, User, Briefcase, AlertCircle, CheckCircle, ArrowRight, Building2, Phone, RefreshCw, Eye, EyeOff, Zap } from 'lucide-react'
-import { login, register } from '../api'
+import { login, register, logout, adminPortalLogin } from '../api'
+import {
+  tryMatchAdminPortalLogin,
+  clearAdminDashboardSession,
+} from '../adminSession'
 import TermsPage from './TermsPage'
 import PrivacyPage from './PrivacyPage'
 import ForgotPasswordPage from './ForgotPasswordPage'
@@ -37,6 +42,7 @@ const ORDER_NUMBER_REGEX = /^(?:\d{4,6}|T-\d{4,6})$/
 const PHONE_REGEX = /^[24579]\d{7}$/
 
 export default function Login({ onLogin }) {
+  const navigate = useNavigate()
   const [currentPage, setCurrentPage] = useState('login')
   const [isSignUp, setIsSignUp] = useState(false)
   const [resetToken, setResetToken] = useState(null)
@@ -219,16 +225,27 @@ export default function Login({ onLogin }) {
     const errMsg = String(rawMessage || 'Erreur lors de la création du compte')
     const low = errMsg.toLowerCase()
 
-    if (low.includes('username') || low.includes('email') || low.includes('exist')) {
-      setEmailError('Email déjà utilisé')
-      setSignUpFieldErrors(prev => ({ ...prev, email: 'Email déjà utilisé' }))
-      focusSignUpField('email')
+    // Important : placer avant le contrôle « email déjà utilisé » — sinon « … existe déjà »
+    // sur le numéro d’ordre (mot « existe » / sous-chaîne « exist ») est affiché à tort sur le mail.
+    if (
+      low.includes("numéro d'ordre") ||
+      low.includes('t-12345') ||
+      low.includes('format invalide')
+    ) {
+      setSignUpFieldErrors(prev => ({ ...prev, orderNumber: errMsg }))
+      focusSignUpField('orderNumber')
       return
     }
 
-    if (low.includes("numéro d'ordre") || low.includes('ordre') || low.includes('t-12345') || low.includes('format invalide')) {
-      setSignUpFieldErrors(prev => ({ ...prev, orderNumber: errMsg }))
-      focusSignUpField('orderNumber')
+    const emailAlreadyUsed =
+      (low.includes('username') && (low.includes('exist') || low.includes('already'))) ||
+      low.includes('username already exists') ||
+      low.includes('un compte avec cet email')
+
+    if (emailAlreadyUsed) {
+      setEmailError('Email déjà utilisé')
+      setSignUpFieldErrors(prev => ({ ...prev, email: 'Email déjà utilisé' }))
+      focusSignUpField('email')
       return
     }
 
@@ -358,8 +375,31 @@ export default function Login({ onLogin }) {
 
     setIsLoading(true)
     try {
+      if (tryMatchAdminPortalLogin(username, password)) {
+        try {
+          await logout()
+        } catch {
+          /* éviter session Django résiduelle */
+        }
+        clearAdminDashboardSession()
+        const pr = await adminPortalLogin(username.trim(), password)
+        if (!pr.data?.ok) {
+          setError(pr.data?.error || 'Connexion administrateur impossible.')
+          return
+        }
+        const portalUser = pr.data.user
+        setLoginAttempts(0)
+        localStorage.removeItem('login_attempts')
+        localStorage.removeItem('login_blocked_until')
+        setSuccessMessage('Connexion administrateur…')
+        onLogin(portalUser)
+        navigate('/admin', { replace: true })
+        return
+      }
+
       const r = await login(username, password)
       if (r.data && r.data.ok) {
+        clearAdminDashboardSession()
         setLoginAttempts(0)
         localStorage.removeItem('login_attempts')
         localStorage.removeItem('login_blocked_until')
@@ -429,7 +469,16 @@ export default function Login({ onLogin }) {
   if (currentPage === 'privacy') return <PrivacyPage onBack={() => { setCurrentPage('login'); setIsSignUp(true) }} />
   if (currentPage === 'forgot-password') return <ForgotPasswordPage onNavigate={setCurrentPage} />
   if (currentPage === 'reset-password') return <ResetPasswordPage onNavigate={setCurrentPage} token={resetToken} />
-  if (currentPage === 'emergency') return <EmergencyLoginPage onBack={() => setCurrentPage('login')} />
+  if (currentPage === 'emergency') {
+    return (
+      <EmergencyLoginPage
+        onBack={() => setCurrentPage('login')}
+        onLogin={(u) => {
+          onLogin(u)
+        }}
+      />
+    )
+  }
 
   return (
     <div className="min-h-screen flex bg-[#e9eef8] font-sans selection:bg-blue-100 selection:text-blue-900 overflow-hidden">

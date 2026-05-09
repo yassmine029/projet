@@ -383,6 +383,237 @@ const formatDateTime = (dateValue) => {
 
 // --- Main Component ---
 
+// --- UI Sub-components ---
+
+function Badge({ children, type = 'blue', pulse = false }) {
+  const colors = {
+    blue: 'bg-blue-100 text-blue-700',
+    green: 'bg-emerald-100 text-emerald-700',
+    violet: 'bg-violet-100 text-violet-700',
+    orange: 'bg-orange-100 text-orange-700',
+    gray: 'bg-slate-100 text-slate-600',
+    darkBlue: 'bg-[#1e3a8a] text-white',
+  };
+  return (
+    <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${colors[type] || colors.blue} ${pulse ? 'pulse-green' : ''}`}>
+      {children}
+    </span>
+  );
+}
+
+const ANALYSIS_COLORS = {
+  registration: { bg: 'bg-violet-50', text: 'text-violet-700', border: 'border-violet-100', icon: Boxes },
+  segmentation: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-100', icon: Layers },
+  reconstruction: { bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-100', icon: Activity },
+};
+
+function FileActionRow({ file, sessionColor, onOpen }) {
+  return (
+    <div className="group flex items-center justify-between p-3 mr-2 bg-white border border-slate-100/60 rounded-xl hover:border-blue-200 hover:shadow-sm transition-all duration-200">
+      <div className="flex items-center gap-3">
+        <div className={`p-2 rounded-lg ${sessionColor ? `bg-${sessionColor}-50` : 'bg-slate-50'}`}>
+          <FileText className={`w-4 h-4 ${sessionColor ? `text-${sessionColor}-600` : 'text-slate-400'}`} />
+        </div>
+        <div>
+          <div className="text-sm font-semibold text-slate-800 truncate max-w-[200px] md:max-w-md">{file.name || file.original_filename || 'Fichier'}</div>
+          <div className="flex items-center gap-2 text-[10px] text-slate-400 font-medium">
+            <span className="uppercase">{file.type || file.format || 'Fichier'}</span> • {file.size || 'N/A'}
+          </div>
+        </div>
+      </div>
+      
+      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <button onClick={onOpen} title="Voir" className="p-2 hover:bg-blue-50 text-slate-400 hover:text-blue-600 rounded-lg transition-colors"><Eye className="w-4 h-4" /></button>
+        <button title="Télécharger" className="p-2 hover:bg-blue-50 text-slate-400 hover:text-blue-600 rounded-lg transition-colors"><Download className="w-4 h-4" /></button>
+        <button title="Annoter" className="p-2 hover:bg-blue-50 text-slate-400 hover:text-blue-600 rounded-lg transition-colors"><Edit3 className="w-4 h-4" /></button>
+        <button title="Comparer" className="p-2 hover:bg-blue-50 text-slate-400 hover:text-blue-600 rounded-lg transition-colors"><ArrowLeftRight className="w-4 h-4" /></button>
+      </div>
+    </div>
+  );
+}
+
+function SessionCard({ session, isLast }) {
+  const [isOpen, setIsOpen] = useState(true);
+  const totalFiles = (session.groups || []).reduce((acc, g) => acc + (g.files?.length || 0), 0);
+
+  return (
+    <div className="relative flex gap-4">
+      {/* Timeline dot */}
+      <div className="flex flex-col items-center pt-1 shrink-0">
+        <div className={`w-10 h-10 rounded-full flex items-center justify-center shadow-md border-4 border-white z-10
+          ${session.is_new ? 'bg-emerald-500' : 'bg-emerald-600'}`}>
+          <Layers className="w-5 h-5 text-white" />
+        </div>
+        {!isLast && <div className="w-0.5 flex-1 bg-slate-200 mt-2" />}
+      </div>
+
+      <div className="flex-1 bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden mb-4">
+        {/* Header */}
+        <div className="px-5 py-4 border-b border-slate-100 cursor-pointer select-none" onClick={() => setIsOpen(!isOpen)}>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-700">
+              Segmentation
+            </span>
+            {session.is_new && (
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-500 text-white animate-pulse">
+                Nouveau
+              </span>
+            )}
+            <span className="text-xs font-black text-slate-700">{session.session_num}</span>
+            <span className="flex items-center gap-1 text-[10px] text-slate-400 ml-auto">
+              <Calendar className="w-3 h-3" />
+              {session.date}{session.time && ` · ${session.time}`}
+            </span>
+            <div className={`p-1 rounded-lg transition-colors ml-1 ${isOpen ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-50 text-slate-400'}`}>
+              {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+            </div>
+          </div>
+          <p className="mt-1 text-[10px] text-slate-400 font-medium">
+            {(session.groups || []).length} groupe{(session.groups || []).length > 1 ? 's' : ''} · {totalFiles} fichier{totalFiles > 1 ? 's' : ''}
+          </p>
+        </div>
+
+        {/* Content */}
+        {isOpen && (
+          <div className="px-5 py-4 space-y-3">
+            {(session.groups || []).map((group, gIdx) => (
+              <div key={gIdx}>
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-6 h-6 rounded-lg bg-emerald-600 flex items-center justify-center">
+                    {ANALYSIS_COLORS[group.type]
+                      ? React.createElement(ANALYSIS_COLORS[group.type].icon, { className: 'w-3.5 h-3.5 text-white' })
+                      : <Layers className="w-3.5 h-3.5 text-white" />}
+                  </div>
+                  <span className="text-xs font-black text-emerald-700">{group.label}</span>
+                  <span className="text-[10px] text-slate-400">({group.count})</span>
+                </div>
+                <div className="space-y-2">
+                  {(group.files || []).map((file, fIdx) => (
+                    <div key={fIdx} className="group flex items-center gap-3 bg-slate-50 px-4 py-3 rounded-2xl border border-slate-100 hover:border-emerald-200 transition-all">
+                      <div className="w-9 h-9 rounded-xl bg-emerald-600 flex items-center justify-center shrink-0">
+                        <FileText className="w-4 h-4 text-white" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-bold text-slate-800 truncate">{file.name || 'Fichier segmentation'}</div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-[10px] font-black text-emerald-500 uppercase">{file.type || 'Mask'}</span>
+                          {file.size && file.size !== 'N/A' && (
+                            <span className="text-[10px] text-slate-400">{file.size}</span>
+                          )}
+                        </div>
+                      </div>
+                      {file.url && (
+                        <a href={file.url} target="_blank" rel="noreferrer"
+                          className="opacity-0 group-hover:opacity-100 flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-xl text-[10px] font-bold hover:bg-emerald-600 hover:text-white transition-all border border-emerald-200">
+                          <Download className="w-3 h-3" /> Télécharger
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ChronologyNav({ patient, totalBytes, fileCount, onJump, onDelete }) {
+  return (
+    <div className="sticky top-[68px] z-30 bg-white/95 backdrop-blur-md border border-slate-200/60 rounded-3xl p-3 px-5 mb-8 shadow-2xl shadow-blue-900/5 flex items-center justify-between animate-slide-down">
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 pr-4 border-r border-slate-100">
+           <div className="w-9 h-9 rounded-xl bg-blue-900 flex items-center justify-center text-white text-xs font-black shadow-lg">
+              {patient.nom?.[0]}{patient.prenom?.[0]}
+           </div>
+           <div>
+              <p className="text-[9px] font-black uppercase text-slate-400 tracking-tighter leading-none mb-1">Dossier Clinique</p>
+              <p className="text-sm font-black text-slate-900 leading-none">{patient.nom} {patient.prenom}</p>
+           </div>
+        </div>
+        <div className="hidden md:flex items-center gap-6">
+            <div className="flex flex-col">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Baseline</span>
+                <span className="text-[11px] font-black text-blue-900">{fileCount} fichiers</span>
+            </div>
+            <div className="flex flex-col">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Taille</span>
+                <span className="text-[11px] font-black text-blue-900">{formatSize(totalBytes)}</span>
+            </div>
+        </div>
+      </div>
+      
+      <div className="flex items-center gap-2">
+        <button onClick={() => onJump('baseline-start')} className="px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-all flex items-center gap-2 group">
+           <Lock className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" /> Baseline
+        </button>
+        <button onClick={() => onJump('analyses-start')} className="px-6 py-2.5 rounded-2xl bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest shadow-xl shadow-blue-600/20 hover:bg-blue-500 transition-all flex items-center gap-2 active:scale-95">
+           <Activity className="w-3.5 h-3.5 animate-pulse" /> Voir les analyses du patient
+        </button>
+        <button 
+          onClick={onDelete} 
+          title="Supprimer ce dossier"
+          className="p-3 rounded-2xl bg-red-50 text-red-500 hover:bg-red-100 transition-all flex items-center justify-center active:scale-95 border border-red-100"
+        >
+           <Trash2 className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// --- Helpers ---
+
+const formatDate = (dateValue) => {
+  if (!dateValue) return '-';
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+};
+
+const formatSize = (bytes) => {
+  const value = Number(bytes || 0);
+  if (!Number.isFinite(value) || value <= 0) return '-';
+  const units = ['o', 'Ko', 'Mo', 'Go'];
+  let size = value;
+  let idx = 0;
+  while (size >= 1024 && idx < units.length - 1) {
+    size /= 1024;
+    idx += 1;
+  }
+  return `${size.toFixed(size >= 10 || idx === 0 ? 0 : 1)} ${units[idx]}`;
+};
+
+const resolveFileUrl = (rawUrl) => {
+  if (!rawUrl) return null;
+  try {
+    if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) return rawUrl;
+    const apiBase = api?.defaults?.baseURL || '';
+    const apiOrigin = apiBase.startsWith('http') ? new URL(apiBase).origin : window.location.origin;
+    if (rawUrl.startsWith('/')) return `${apiOrigin}${rawUrl}`;
+    return `${apiOrigin}/${rawUrl}`;
+  } catch (e) {
+    return rawUrl;
+  }
+};
+
+const formatDateTime = (dateValue) => {
+  if (!dateValue) return '-';
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleString('fr-FR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+// --- Main Component ---
+
 export default function PatientDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -606,6 +837,113 @@ export default function PatientDetail() {
               );
             })}
             {renderTreeNode({ folders: folder.folders, files: [] }, depth + 1)}
+          </div>
+        </div>
+      ))}
+      {(node?.files || []).map((file) => {
+        const fileUrl = resolveFileUrl(file.file_url || file.file);
+        return (
+          <div key={file.id} className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-700 flex items-center justify-between gap-3">
+            <span className="truncate">{file.treeLabel}</span>
+            {fileUrl && <a href={fileUrl} target="_blank" rel="noreferrer" className="text-blue-600 font-semibold hover:underline shrink-0">Ouvrir</a>}
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  // Real sessions from backend
+  const sessions = useMemo(() => {
+    const list = patient?.segmentation_runs?.map(run => {
+      const runner = run.doctor || patient.doctor || {};
+      const fullName = runner.full_name || `${runner.prenom || ''} ${runner.nom || ''}`.trim() || runner.username || 'Médecin';
+      
+      return {
+        id: run.id,
+        session_num: `Rapport d'Analyse #${run.id}`,
+        date: formatDate(run.created_at),
+        time: new Date(run.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+        author: fullName,
+        role: runner.specialty || (runner.is_staff ? 'Administrateur' : 'Praticien'),
+        is_new: run.status === 'running' || (new Date() - new Date(run.created_at)) < 86400000,
+        groups: [
+          {
+            type: 'segmentation',
+            label: 'Segmentation volumétrique',
+            count: run.selected_count || 1,
+            color: 'emerald',
+            files: (run.results || []).map(res => ({
+              name: res.mask_file,
+              type: 'Mask',
+              size: 'N/A',
+              url: resolveFileUrl(res.mask_url)
+            }))
+          }
+        ]
+      };
+    }) || [];
+    return list;
+  }, [patient]);
+
+  if (loading) return (
+    <div className="flex items-center justify-center min-h-[400px]">
+      <div className="flex flex-col items-center gap-4">
+        <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+        <p className="text-slate-500 font-bold tracking-tight">Chargement du dossier clinique...</p>
+      </div>
+    </div>
+  );
+
+  if (error || !patient) return (
+    <div className="p-10 max-w-2xl mx-auto">
+      <button onClick={() => navigate('/dashboard/patients')} className="flex items-center gap-2 text-slate-500 font-bold mb-6 hover:text-blue-600"><ArrowLeft className="w-4 h-4" /> Retour aux patients</button>
+      <div className="p-6 bg-red-50 text-red-600 rounded-xl border border-red-100 flex items-center gap-4">
+        <AlertCircle className="w-6 h-6" /> {error || 'Patient introuvable.'}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="max-w-[1300px] mx-auto space-y-8 pb-12 font-['Inter']">
+      {/* 1. Header */}
+      <div className="relative group overflow-hidden">
+        <button onClick={() => navigate('/dashboard/patients')} className="flex items-center gap-2 text-slate-500 font-bold mb-6 hover:text-blue-600 transition-colors z-20 relative"><ArrowLeft className="w-4 h-4" /> Retour à la liste</button>
+        
+        <div className="relative rounded-[32px] overflow-hidden shadow-2xl">
+          <div className="h-48 bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 absolute top-0 left-0 right-0 z-0"></div>
+          
+          <div className="relative z-10 p-8 pt-12">
+            <div className="flex flex-col md:flex-row items-end justify-between gap-6">
+              <div className="flex items-center gap-6">
+                <div className="w-24 h-24 rounded-3xl bg-white/10 backdrop-blur-md border-[6px] border-white/20 flex items-center justify-center text-white text-4xl font-black shadow-2xl overflow-hidden relative group">
+                  <div className="absolute inset-0 bg-blue-600 opacity-0 group-hover:opacity-20 transition-opacity"></div>
+                  {(patient.nom?.[0]||'').toUpperCase()}{(patient.prenom?.[0]||'').toUpperCase()}
+                </div>
+                <div className="mb-2">
+                  <div className="flex items-center gap-3 mb-2.5">
+                    <h1 className="text-2xl font-bold text-white tracking-tight leading-tight">{patient.nom} {patient.prenom}</h1>
+                    <span className="px-3 py-1 rounded-lg bg-white/10 border border-white/10 backdrop-blur-md text-white text-[10px] font-bold uppercase tracking-wider leading-none">ID: {patient.num_dossier}</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 text-blue-100/70 text-[11px] font-semibold">
+                    <div className="flex items-center gap-1.5 bg-white/5 px-3 py-1.5 rounded-lg border border-white/5">
+                      <Calendar className="w-3.5 h-3.5" /> Né le {formatDate(patient.date_naissance)}
+                    </div>
+                    <div className="flex items-center gap-1.5 bg-white/5 px-3 py-1.5 rounded-lg border border-white/5">
+                      <User className="w-3.5 h-3.5" /> {patient.sexe === 'M' ? 'Homme' : 'Femme'}
+                    </div>
+                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-400/20 text-emerald-300 text-[10px] uppercase font-bold tracking-wide">
+                      <ShieldCheck className="w-3.5 h-3.5" /> Données Anonymisées
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-3 mb-2">
+                <button className="p-3.5 rounded-2xl bg-white/10 hover:bg-white/20 text-white border border-white/10 backdrop-blur-md transition-all"><Settings className="w-5 h-5" /></button>
+                <button onClick={downloadPatientZip} disabled={zipDownloading} className="flex items-center gap-2 px-6 py-3.5 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-black shadow-lg shadow-blue-900/20 transition-all active:scale-95 disabled:opacity-50">
+                  <Download className="w-4 h-4" /> {zipDownloading ? 'Preparation...' : 'Télécharger ZIP'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       ))}

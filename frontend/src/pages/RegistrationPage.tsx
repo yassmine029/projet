@@ -3,26 +3,26 @@
 // ================================================================
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, ArrowDown, Upload, X, Eye, Download, Trash2, Check,
   MousePointer2, ZoomIn, ZoomOut, RotateCcw, Keyboard, BrainCircuit, Brain, Undo2,
-  Box, Loader2, FileText, Users, ChevronRight, Search, ScanSearch, Zap, ChevronLeft, Columns2,
-  Lightbulb, Target, Microscope, Map
+  Box, Loader2, FileText, Users, ChevronRight, Search, ScanSearch, Zap, ChevronLeft, Columns2
 } from 'lucide-react';
-
-const GuideIcon = () => (
-  <img src="/assets/images/creative.png" alt="guide" className="h-6 w-6 object-contain" />
-);
-import api from '../api';
+import api, { getBrodmannIntensity } from '../api';
 import RegistrationModeSelector from '../components/RegistrationModeSelector';
 import AutoAlignOverlay from '../components/AutoAlignOverlay';
 import ExplorationPage from './ExplorationPage';
 import BrodmannIdentificationView from '../components/BrodmannIdentificationView';
 import BrodmannZone3D from '../components/BrodmannZone3D';
+import BrodmannIntensityPanel from '../components/BrodmannIntensityPanel';
 import BrainVolume3D from '../components/BrainVolume3D';
 import OrientationPanel from '../components/viewer/OrientationPanel';
 import PatientSelectionModal from '../components/PatientSelectionModal';
+
+const GuideIcon = () => (
+  <img src="/assets/images/creative.png" alt="guide" className="h-6 w-6 object-contain" />
+);
 
 type Page = string;
 interface User {
@@ -50,8 +50,39 @@ interface OrientationState { rotation: number; flipH: boolean; flipV: boolean; }
 const POINT_COLORS = ['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899','#06B6D4','#F97316'];
 const DEFAULT_VIEW: ViewTransform = { scale: 1, panX: 0, panY: 0 };
 
+interface BrodmannIntensityPayload {
+  zone_number: number;
+  somme_patient: number;
+  somme_reference: number;
+  difference: number;
+  ratio_percent: number | null;
+  ratio_relative_percent?: number | null;
+  n_voxels?: number;
+  patient_zone_mean?: number;
+  patient_brain_mean?: number;
+  reference_zone_mean?: number | null;
+  reference_brain_mean?: number | null;
+  patient_relative_index?: number;
+  reference_relative_index?: number | null;
+}
+
 export function RegistrationPage({ user, accessToken, onNavigate }: RegistrationPageProps) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const brodmannAnalyseIdFromNav = React.useMemo(() => {
+    const q = searchParams.get('brodmannAnalyseId');
+    if (q != null && q !== '') {
+      const n = parseInt(q, 10);
+      if (!Number.isNaN(n)) return n;
+    }
+    const s = location.state as { brodmannAnalyseId?: number } | null | undefined;
+    return typeof s?.brodmannAnalyseId === 'number' ? s.brodmannAnalyseId : null;
+  }, [searchParams, location.state]);
+
+  const [brodmannAnalyseIdAuto, setBrodmannAnalyseIdAuto] = useState<number | null>(null);
+  const brodmannAnalyseId = brodmannAnalyseIdFromNav ?? brodmannAnalyseIdAuto;
+
   const doctorDisplayName = React.useMemo(() => {
     const fromFullName = String(user?.fullName || user?.full_name || '').trim();
     if (fromFullName && !fromFullName.includes('@')) return fromFullName;
@@ -170,11 +201,11 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     zoneId?: number;
     zoneName?: string;
   } | null>(null);
+  const [brodmannIntensityStats, setBrodmannIntensityStats] = useState<BrodmannIntensityPayload | null>(null);
+  const [brodmannIntensityLoading, setBrodmannIntensityLoading] = useState(false);
+  const [brodmannIntensityError, setBrodmannIntensityError] = useState<string | null>(null);
 
   const [showPatientSelector, setShowPatientSelector] = useState(false);
-  const [showThreeDSubModal, setShowThreeDSubModal] = useState(false);
-  const [showModeAssistant, setShowModeAssistant] = useState(false);
-  const [assistantObjective, setAssistantObjective] = useState<'fast' | 'precise' | 'cortical' | 'manual' | null>(null);
   const [selectedPatient, setSelectedPatient] = useState<any>(null);
   const [patientFiles, setPatientFiles] = useState<any[]>([]);
   const [selectionPendingMode, setSelectionPendingMode] = useState<RegistrationDimension | null>(null);
@@ -199,6 +230,34 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const [pickerSearch, setPickerSearch] = useState('');
   // Tracks which patient was confirmed for each panel (to prevent duplicate selection)
   const [confirmedPanelPatients, setConfirmedPanelPatients] = useState<{ reference: any | null; patient: any | null }>({ reference: null, patient: null });
+
+  useEffect(() => {
+    if (brodmannAnalyseIdFromNav != null) {
+      setBrodmannAnalyseIdAuto(null);
+      return;
+    }
+    const pid = confirmedPanelPatients.patient?.id;
+    if (phase !== 3 || registrationDimension !== 'advanced' || typeof pid !== 'number') {
+      setBrodmannAnalyseIdAuto(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .get(`/patients/${pid}/latest-brodmann-analyse/`)
+      .then((res) => {
+        if (cancelled) return;
+        const aid = res.data?.analyse_id;
+        setBrodmannAnalyseIdAuto(
+          typeof aid === 'number' && !Number.isNaN(aid) ? aid : null
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setBrodmannAnalyseIdAuto(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [brodmannAnalyseIdFromNav, phase, registrationDimension, confirmedPanelPatients.patient?.id]);
 
   // Interactive confirmation dialog
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -226,6 +285,52 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const lastProgressUpdateRef = useRef<number>(0);
   const splitDragRef       = useRef(false);
   const superpositionPanelRef = useRef<HTMLDivElement>(null);
+
+  const loadBrodmannIntensity = useCallback(
+    async (zoneNumber: number) => {
+      const useJob = brodmannAnalyseId == null && jobId;
+      if (brodmannAnalyseId == null && !useJob) return;
+      setBrodmannIntensityLoading(true);
+      setBrodmannIntensityError(null);
+      try {
+        const { data } = await getBrodmannIntensity({
+          analyseId: brodmannAnalyseId ?? undefined,
+          jobId: useJob ? jobId : undefined,
+          zoneNumber,
+        });
+        setBrodmannIntensityStats(data as BrodmannIntensityPayload);
+      } catch (err: unknown) {
+        setBrodmannIntensityStats(null);
+        const ax = err as { response?: { data?: { detail?: string } } };
+        const detail = ax?.response?.data?.detail;
+        setBrodmannIntensityError(
+          typeof detail === 'string' ? detail : 'Impossible de charger les intensités Brodmann.'
+        );
+      } finally {
+        setBrodmannIntensityLoading(false);
+      }
+    },
+    [brodmannAnalyseId, jobId]
+  );
+
+  /** Recalcule les intensités quand la zone ou l’analyse MNI devient disponible (évite le clic « trop tôt » avant la fin du chargement auto de l’id). */
+  useEffect(() => {
+    if (phase !== 3 || registrationDimension !== 'advanced') return;
+    const canIntensity = brodmannAnalyseId != null || (jobId != null && jobId !== '');
+    if (!canIntensity) {
+      setBrodmannIntensityStats(null);
+      setBrodmannIntensityError(null);
+      setBrodmannIntensityLoading(false);
+      return;
+    }
+    if (zone?.id == null) {
+      setBrodmannIntensityStats(null);
+      setBrodmannIntensityError(null);
+      setBrodmannIntensityLoading(false);
+      return;
+    }
+    void loadBrodmannIntensity(zone.id);
+  }, [phase, brodmannAnalyseId, jobId, zone?.id, loadBrodmannIntensity, registrationDimension]);
 
   const applyPatientOrientationToScreen = useCallback((sx: number, sy: number, t: ImageTransform) => {
     const w = t.imageWidth * t.scale;
@@ -1732,6 +1837,13 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       const data = res.data;
       if (data.success) {
         setSaveToPatientResult({ ok: true, filename: data.original_filename, downloadUrl: data.file_url, uploadedAt: data.uploaded_at });
+        if (typeof data.brodmann_analyse_id === 'number') {
+          window.dispatchEvent(
+            new CustomEvent('brodmann-analyse-updated', {
+              detail: { analyseId: data.brodmann_analyse_id, patientId: dbPatient.id },
+            })
+          );
+        }
       } else {
         setSaveToPatientResult({ ok: false, error: data.error || 'Erreur inconnue' });
       }
@@ -1965,8 +2077,6 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const handleValidateAndExplore = async () => {
     if (!jobId) return;
     setShowValidationModal(false);
-
-    // 1. Validate registration on backend
     try {
       await fetch('/api/volume/validate-registration', {
         method: 'POST',
@@ -2116,7 +2226,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   };
 
   const handleCorticalZoneSelect = async (item: CorticalZoneItem) => {
-    if (phase !== 3 || !jobId) return;
+    if (phase !== 3 || registrationDimension !== 'advanced' || !jobId) return;
     setHasBrodmannAttempt(true);
 
     try {
@@ -2152,7 +2262,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   }, []);
 
   useEffect(() => {
-    if (phase !== 3) {
+    if (phase !== 3 || registrationDimension !== 'advanced') {
       setAvailableCorticalZones([]);
       setLoadingCorticalZones(false);
       return;
@@ -2198,7 +2308,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     return () => {
       alive = false;
     };
-  }, [phase]);
+  }, [phase, registrationDimension]);
 
   const sync3DViews = async (nextAxis = axis, nextIndex = index) => {
     if (!jobId) return;
@@ -3120,6 +3230,31 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         },
         levels: 2,
       },
+      {
+        id: 'advanced' as const,
+        step: '03',
+        icon: <BrainCircuit className="h-6 w-6" />,
+        title: 'Recalage Avancé',
+        subtitle: 'Flux clinique complet + Brodmann',
+        desc: "Recalage 3D patient→atlas MNI152 suivi d'une identification interactive des 47 aires de Brodmann avec coordonnées MNI et visualisation 3D des régions corticales.",
+        tags: ['Atlas MNI152', 'MINE 3D / Hybride', '47 zones Brodmann', 'Coordonnées MNI', 'Visualisation 3D'],
+        accent: {
+          card: 'border-2 border-violet-500 bg-gradient-to-br from-violet-600 to-purple-700',
+          iconWrap: 'bg-white/20 text-white border border-white/30',
+          tag: 'bg-white/20 text-white border border-white/25',
+          step: 'text-white/20',
+          title: 'text-white',
+          subtitle: 'text-violet-200',
+          desc: 'text-white/80',
+          footer: 'border-white/20',
+          dot: 'bg-white',
+          dotOff: 'bg-white/25',
+          badgeText: 'Expert',
+          cta: 'text-white',
+          hover: 'hover:shadow-violet-400/40',
+        },
+        levels: 3,
+      },
     ];
 
     return (
@@ -3175,11 +3310,11 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
           </p>
 
           {/* Cards */}
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 max-w-3xl mx-auto">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
             {FLOWS.map((flow) => (
               <button
                 key={flow.id}
-                onClick={() => flow.id === '3d' ? setShowThreeDSubModal(true) : void handleChooseRegistrationDimension(flow.id)}
+                onClick={() => void handleChooseRegistrationDimension(flow.id)}
                 className={`group relative text-left rounded-2xl ${flow.accent.card} p-6 transition-all duration-300 hover:-translate-y-2 hover:shadow-2xl ${flow.accent.hover} shadow-lg`}
               >
                 {/* Icon */}
@@ -3390,18 +3525,72 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
           </div>
         </div>
 
+        {/* Compteur de points (uniquement en manuel) */}
+        {showManualActions&&(
+          <div className="px-4 py-2 border-b border-slate-200">
+            <div className="flex gap-1.5 mb-1.5">
+              <div className="flex-1 flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                <span className="w-1 h-1 rounded-full bg-blue-500"/><span className="text-[10px] text-blue-400 font-bold">Référence</span>
+                <span className="ml-auto text-xs font-black text-blue-400">{refPts}</span>
+              </div>
+              <div className="flex-1 flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-slate-100 border border-slate-200">
+                <span className="w-1 h-1 rounded-full bg-slate-600"/><span className="text-[10px] text-slate-700 font-bold">Patient</span>
+                <span className="ml-auto text-xs font-black text-slate-700">{patPts}</span>
+              </div>
+            </div>
+            <div className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[10px] font-bold ${pointsStatus==='ready'?'bg-emerald-100 border border-emerald-300 text-emerald-700':pointsStatus==='unbalanced'?'bg-orange-100 border border-orange-300 text-orange-700':pointsStatus==='partial'?'bg-blue-100 border border-blue-300 text-blue-700':'bg-slate-100 border border-slate-300 text-slate-600'}`}>
+              {pointsStatus==='ready'?'✅ Prêt':pointsStatus==='unbalanced'?`⚠️ ${refPts}/${patPts}`:pointsStatus==='partial'?`Encore ${Math.max(0, 4 - Math.min(refPts, patPts))} paire(s)`:'Clic pour ajouter des points'}
+            </div>
+
+            <div className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-2 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-bold text-blue-700">Grille de repère</span>
+                <button
+                  onClick={() => setShowGrid(v => !v)}
+                  className={`rounded-md px-2 py-1 text-[9px] font-black uppercase tracking-wide transition-colors ${showGrid ? 'bg-blue-100 text-blue-700 border border-blue-300' : 'bg-white text-slate-500 border border-slate-300'}`}
+                  title="Afficher ou masquer la grille (G)"
+                >
+                  {showGrid ? 'ON' : 'OFF'}
+                </button>
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-600">Pas</span>
+                <input
+                  type="range"
+                  min="16"
+                  max="80"
+                  step="4"
+                  value={gridSize}
+                  onChange={e => setGridSize(Number(e.target.value))}
+                  className="h-1 w-full rounded-full appearance-none cursor-pointer bg-slate-200 accent-blue-500"
+                  disabled={!showGrid}
+                />
+                <span className="w-9 text-right text-[9px] font-bold text-blue-700">{gridSize}</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Mode selector or Phase 3 Info */}
         <div className="px-3 py-2.5 border-b border-slate-200">
           {phase === 3 ? (
             <div className="space-y-3">
-              <p className="text-[9px] font-bold text-slate-700 uppercase tracking-widest">{is3D ? 'Mode Brodmann' : 'Mode Resultats'}</p>
+              <p className="text-[9px] font-bold text-slate-700 uppercase tracking-widest">
+                {registrationDimension === 'advanced' ? 'Mode Brodmann' : is3D ? 'Phase validation 3D' : 'Mode Resultats'}
+              </p>
               <div className="rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2">
-                {is3D ? (
+                {registrationDimension === 'advanced' ? (
                   <>
                     <p className="text-[10px] font-bold text-emerald-700">Navigation centralisee</p>
                     <p className="mt-1 text-[9px] text-slate-600">
                       Utilisez le slider principal sous les images et les boutons A/C/S pour changer les coupes.
+                    </p>
+                  </>
+                ) : is3D ? (
+                  <>
+                    <p className="text-[10px] font-bold text-emerald-700">Validation du recalage 3D</p>
+                    <p className="mt-1 text-[9px] text-slate-600">
+                      Controlez le resultat sur les coupes. L&apos;exploration Brodmann est reservee au mode avance.
                     </p>
                   </>
                 ) : (
@@ -3436,6 +3625,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
               </button>
 
               {is3D && (
+              {registrationDimension === 'advanced' && (
               <div className="mt-2 rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-slate-50 p-3 shadow-[0_10px_22px_rgba(37,99,235,0.12)]">
                 <div className="mb-2 flex items-center justify-between">
                   <p className="text-[11px] font-black text-blue-800 uppercase tracking-[0.12em]">Zones corticales</p>
@@ -4200,6 +4390,127 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                         ))}
                       </div>
 
+
+                    {is3D && img.src && (jobId || referenceJobId || registrationDimension === 'advanced') && (
+                      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 pt-0 pb-3 space-y-2">
+                        <div className="rounded-b-xl bg-gradient-to-r from-emerald-600 to-teal-500 px-3 py-2.5 flex items-center gap-2.5 shadow-sm">
+                          <div className="shrink-0 w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
+                            <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[10px] font-black text-white uppercase tracking-[0.1em] leading-none mb-0.5">Recalage 3D volumétrique</p>
+                            <p className="text-[9px] text-emerald-100 leading-snug font-medium">
+                              Le traitement porte sur le <span className="font-black text-white">volume entier</span> — cette vue n'influence pas le résultat.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between px-0.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="text-[9px] font-bold text-slate-600 uppercase tracking-[0.14em]">Exploration visuelle</p>
+                            <span className="text-[8px] font-semibold text-slate-400 normal-case tracking-normal">(n'affecte pas le recalage)</span>
+                          </div>
+                          <p className="text-[10px] font-black text-blue-800">{index + 1} / {maxIndex + 1}</p>
+                        </div>
+                        <div className="flex gap-1.5">
+                          {axisOptions.map(({ key, label }) => (
+                            <button key={key}
+                              onClick={() => { const t = Math.floor(getAxisMax(key) / 2); queuePhase2SliceFetch(key, t); }}
+                              className={`flex-1 rounded-full border px-2 py-1 text-[10px] font-semibold transition-all ${axis===key ? 'border-sky-400 bg-sky-50 text-sky-700 shadow-sm' : 'border-slate-200 bg-white text-slate-500 hover:border-sky-200 hover:text-sky-600'}`}
+                            >{label}</button>
+                          ))}
+                        </div>
+                        <input type="range" min={0} max={Math.max(0, maxIndex)} value={index}
+                          onChange={e => queuePhase2SliceFetch(axis, Number(e.target.value))}
+                          className="w-full h-2 rounded-full appearance-none bg-slate-200 accent-blue-500"
+                        />
+                        {type === 'patient' && sliceError && <p className="text-[10px] text-rose-600">{sliceError}</p>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Identification Brodmann + intensités (mode avancé uniquement) */}
+           {phase === 3 && registrationDimension === 'advanced' && (
+            <div className="flex-1 min-h-0 flex gap-6 animate-in slide-in-from-right-12 duration-700">
+              <div className="flex-[2] min-h-0 flex flex-col gap-4">
+                <div className="flex-1 min-h-0 grid grid-cols-2 gap-4">
+                    <div className="rounded-[2.5rem] overflow-hidden border border-slate-200 bg-white relative shadow-xl group">
+                      <div className="absolute top-4 left-5 z-10 px-3 py-1 rounded-full bg-blue-600/80 text-[10px] font-black uppercase text-white shadow-xl backdrop-blur-md">Atlas de référence</div>
+                      <canvas ref={refCanvasRef} onClick={e=>handleBrodmannClick(e,'reference')} onWheel={e=>handleWheel(e,'reference')} onMouseDown={e=>handleMouseDown(e,'reference')} onMouseMove={e=>handleMouseMove(e,'reference')} className="w-full h-full cursor-crosshair"/>
+                      {brodmannTooltip?.panel === 'reference' && (
+                        <div
+                          className="pointer-events-none absolute z-20 w-[250px] rounded-xl border border-blue-200 bg-white/95 px-3 py-2 shadow-[0_10px_26px_rgba(15,23,42,0.18)] backdrop-blur-sm"
+                          style={{ left: brodmannTooltip.x, top: brodmannTooltip.y }}
+                        >
+                          {brodmannTooltip.insideBrain ? (
+                            <>
+                              <p className="text-[9px] font-black uppercase tracking-[0.12em] text-blue-700">Zone détectée</p>
+                              <p className="mt-0.5 text-[11px] font-black leading-snug text-slate-900">
+                                BA {brodmannTooltip.zoneId ?? '--'} - {brodmannTooltip.zoneName || 'Zone corticale'}
+                              </p>
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-[9px] font-black uppercase tracking-[0.12em] text-amber-700">Hors cerveau</p>
+                              <p className="mt-0.5 text-[11px] font-semibold text-slate-600">Aucune aire Brodmann à cet endroit</p>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="rounded-[2.5rem] overflow-hidden border border-slate-200 bg-white relative shadow-xl group">
+                      <div className="absolute top-4 left-5 z-10 px-3 py-1 rounded-full bg-slate-700/90 text-[10px] font-black uppercase text-white shadow-xl backdrop-blur-md">Patient recalé</div>
+                      <canvas ref={patCanvasRef} onClick={e=>handleBrodmannClick(e,'patient')} onWheel={e=>handleWheel(e,'patient')} onMouseDown={e=>handleMouseDown(e,'patient')} onMouseMove={e=>handleMouseMove(e,'patient')} className="w-full h-full cursor-crosshair"/>
+                      {brodmannTooltip?.panel === 'patient' && (
+                        <div
+                          className="pointer-events-none absolute z-20 w-[250px] rounded-xl border border-blue-200 bg-white/95 px-3 py-2 shadow-[0_10px_26px_rgba(15,23,42,0.18)] backdrop-blur-sm"
+                          style={{ left: brodmannTooltip.x, top: brodmannTooltip.y }}
+                        >
+                          {brodmannTooltip.insideBrain ? (
+                            <>
+                              <p className="text-[9px] font-black uppercase tracking-[0.12em] text-blue-700">Zone détectée</p>
+                              <p className="mt-0.5 text-[11px] font-black leading-snug text-slate-900">
+                                BA {brodmannTooltip.zoneId ?? '--'} - {brodmannTooltip.zoneName || 'Zone corticale'}
+                              </p>
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-[9px] font-black uppercase tracking-[0.12em] text-amber-700">Hors cerveau</p>
+                              <p className="mt-0.5 text-[11px] font-semibold text-slate-600">Aucune aire Brodmann à cet endroit</p>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {/* Axis Switch + Slider */}
+                  <div className="shrink-0 sticky bottom-0 z-20 rounded-[2rem] border border-slate-200 bg-white/95 px-5 py-4 backdrop-blur-xl shadow-lg">
+                    <div className="mb-3 space-y-3">
+                      <div className="grid grid-cols-3 gap-2">
+                        {axisOptions.map(({ key, label }) => (
+                          <button
+                            key={key}
+                            onClick={() => {
+                              const axisMax = getAxisMax(key);
+                              const mid = Math.floor(axisMax / 2);
+                              setAxis(key);
+                              setIndex(mid);
+                              void sync3DViews(key, mid);
+                            }}
+                            className={`w-full rounded-xl border px-3 py-2.5 text-center text-[11px] font-bold uppercase tracking-[0.12em] transition-all ${axis===key ? 'border-blue-400 bg-blue-600 text-white shadow-lg shadow-blue-200' : 'border-slate-300 bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-50 hover:text-slate-900'}`}
+                            aria-label={`Changer vers le plan ${label}`}
+                            title={label}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+
                       <div className="text-right">
                         <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-slate-500">Coupe {axis}</p>
                         <p className="text-sm font-black text-blue-700">Coupe {index + 1} / {maxIndex + 1}</p>
@@ -4261,6 +4572,14 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                     axis={axis}
                     index={index}
                     maxIndex={maxIndex}
+                  />
+                  <BrodmannIntensityPanel
+                    zoneName={zone?.name}
+                    zoneNumber={zone?.id}
+                    stats={brodmannIntensityStats}
+                    loading={brodmannIntensityLoading}
+                    error={brodmannIntensityError}
+                    analyseAvailable={brodmannAnalyseId != null || (jobId != null && jobId !== '')}
                   />
                   <BrodmannZone3D
                     labelId={zone?.id ?? null}
@@ -4638,6 +4957,13 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                             : <><Check className="h-3.5 w-3.5" /> Valider le recalage</>}
                         </button>
                       </>
+                    )}
+                    {/* ── Après validation 3D : indicateur "Recalage validé" dans le footer ── */}
+                    {!(registrationDimension === '2d' && confirmedPanelPatients.patient) && !showValidationModal && saveToPatientResult && (
+                      <div className="flex items-center gap-1.5 rounded-lg bg-slate-50 border border-slate-200 px-3 py-1.5 text-[10px] font-semibold text-slate-500">
+                        <Check className="h-3.5 w-3.5 text-emerald-500" />
+                        Recalage validé — exports disponibles en haut
+                      </div>
                     )}
                   </div>
                 </div>

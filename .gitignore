@@ -1,4 +1,4 @@
-# Environnements virtuels Python
+﻿# Environnements virtuels Python
 venv/
 env/
 ENV/
@@ -11,7 +11,7 @@ __pycache__/
 *.so
 .Python
 
-# Base de données
+# Base de donnees
 *.sqlite3
 db.sqlite3
 backend_django/db_backups/*.json
@@ -20,7 +20,7 @@ backend_django/db_backups/_*.py
 backend_django/*.json
 backend_django/db_export*
 
-# Fichiers uploadés (IMPORTANT!)
+# Fichiers uploades
 uploads/
 media/
 staticfiles/
@@ -52,9 +52,14 @@ node_modules/
 build/
 dist/
 
+# Markdown
 *.md
+!README.md
 
 # MAIS garder le README.md
 !README.md
-# Modeles ONNX
+
+# Modeles ONNX (ne jamais versionner — trop lourds pour GitHub)
 *.onnx
+backend_django/models/*.onnx
+**/*.onnx

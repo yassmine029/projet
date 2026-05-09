@@ -174,7 +174,7 @@ export default function ReclamationsList() {
                 <th className="px-5 py-3.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-surface-border">
               {loading ? (
                 <tr>
                   <td colSpan="7" className="px-5 py-16 text-center">

@@ -3,7 +3,7 @@ import json
 import os
 import tempfile
 import uuid
-from typing import Dict
+from typing import Any, Dict, Tuple
 
 import cv2
 import numpy as np
@@ -1335,6 +1335,20 @@ def _ensure_atlas():
             except Exception:
                 labels = None
                 lut = None
+    # Même bundle que api.official_atlas (Harvard–Oxford sur MNI152 Nilearn)
+    if datasets is not None and nilearn_image is not None:
+        try:
+            from .official_atlas import load_official_mni_atlas_bundle
+
+            template_img, labels_img, lut = load_official_mni_atlas_bundle()
+            vol = np.asanyarray(template_img.dataobj).astype(np.float32)
+            labels = np.asanyarray(labels_img.dataobj).astype(np.int16)
+            atlas_affine = np.asarray(template_img.affine, dtype=np.float32)
+        except Exception:
+            vol = None
+            labels = None
+            lut = None
+            atlas_affine = None
 
     # Fallbacks inchangés...
     if vol is None:
@@ -2536,6 +2550,197 @@ def manual_align_volume(request):
     })
 
 
+def mine_register_nifti_for_reference_pipeline(
+    source_nifti_path: str,
+    work_dir: str,
+    *,
+    n_iters: int = 60,
+    strict_atlas_grid: bool = True,
+    use_hybrid: bool = False,
+    device_name: str = 'cuda',
+) -> Tuple[np.ndarray, dict]:
+    """
+    Recalage 3D identique à `auto_align_volume` (prépa atlas, MINE ou Hybrid,
+    post-traitement extent + stabilisation similarité), sans session `job_id`.
+
+    Le volume source doit être un NIfTI IRM (même entrée qu'un upload plateforme).
+    Retourne (volume recalé float32, même forme que l’atlas, dict résultat MINE).
+    """
+    if nib is None:
+        raise RuntimeError('nibabel requis pour le recalage de référence')
+
+    os.makedirs(work_dir, exist_ok=True)
+    _ensure_atlas()
+
+    atlas_vol = VOLUMES_CACHE['atlas']['data']
+    atlas_shape = tuple(int(v) for v in atlas_vol.shape)
+
+    n_iters = int(np.clip(int(n_iters), 30, 1000))
+    if use_hybrid:
+        n_iters = int(np.clip(n_iters, 100, 250))
+
+    prepared_path = os.path.join(work_dir, 'patient_prepared.nii.gz')
+    _vol, _bz, _meta = _load_nifti_from_path(
+        source_nifti_path,
+        prepared_output_path=prepared_path,
+    )
+    patient_vol = np.asarray(_vol, dtype=np.float32)
+    patient_nifti_path = prepared_path
+    patient_prepared_mode = 'reference-script'
+
+    patient_vol_for_mine = np.asarray(patient_vol, dtype=np.float32)
+    patient_shape = tuple(int(v) for v in patient_vol_for_mine.shape)
+
+    if patient_nifti_path and nib is not None and os.path.exists(patient_nifti_path):
+        try:
+            prepared_img = nib.load(patient_nifti_path)
+            prepared_data = prepared_img.get_fdata(dtype=np.float32)
+            if prepared_data.ndim == 4:
+                prepared_data = prepared_data[..., 0]
+            if prepared_data.ndim == 2:
+                prepared_data = prepared_data[:, :, np.newaxis]
+            if prepared_data.ndim == 3:
+                patient_vol_for_mine = np.asarray(prepared_data, dtype=np.float32)
+                patient_shape = tuple(int(v) for v in patient_vol_for_mine.shape)
+                patient_prepared_mode = 'prepared-nifti'
+        except Exception as e:
+            print(f"[REF_PIPELINE] Lecture prepared NIfTI ignorée : {e}")
+
+    if _is_likely_pet_volume(patient_vol_for_mine) and not use_hybrid:
+        n_iters_boosted = int(np.clip(max(n_iters, 150), 150, 300))
+        if n_iters_boosted != n_iters:
+            print(f"[REF_PIPELINE] PET detecte - iters MINE {n_iters} -> {n_iters_boosted}")
+            n_iters = n_iters_boosted
+    elif _is_likely_pet_volume(patient_vol_for_mine) and use_hybrid:
+        n_iters_boosted = int(np.clip(max(n_iters, 150), 150, 250))
+        if n_iters_boosted != n_iters:
+            print(f"[REF_PIPELINE] PET detecte - iters Hybrid {n_iters} -> {n_iters_boosted}")
+            n_iters = n_iters_boosted
+
+    if patient_shape != atlas_shape:
+        try:
+            from nibabel.processing import resample_from_to
+
+            atlas_affine = np.asarray(VOLUMES_CACHE['atlas'].get('affine', np.eye(4)), dtype=np.float32)
+            if patient_nifti_path and os.path.exists(patient_nifti_path):
+                src_img = nib.as_closest_canonical(nib.load(patient_nifti_path))
+                patient_resampled_nii = resample_from_to(
+                    src_img,
+                    (atlas_shape, atlas_affine),
+                    order=1,
+                    mode='nearest',
+                    cval=0.0,
+                )
+                patient_vol_for_mine = patient_resampled_nii.get_fdata(dtype=np.float32)
+                if _is_suspicious_spatial_position(patient_vol_for_mine):
+                    raise ValueError('affine resampling produced suspicious position')
+            else:
+                raise ValueError('original nifti path unavailable')
+        except Exception as e:
+            print(f"[REF_PIPELINE] Resampling affine indisponible ({e}), fallback forme+centre")
+            source_vol = np.asarray(patient_vol, dtype=np.float32)
+            patient_vol_for_mine = _resample_volume_to_shape(source_vol, atlas_shape)
+            if not _is_likely_pet_volume(patient_vol_for_mine):
+                patient_vol_for_mine = _center_volume_by_foreground(patient_vol_for_mine)
+        patient_vol_for_mine = _robust_normalize_01(patient_vol_for_mine)
+
+    if _is_likely_pet_volume(patient_vol_for_mine) and patient_vol_for_mine.ndim == 3:
+        if patient_shape == atlas_shape:
+            patient_vol_for_mine = _robust_normalize_01(patient_vol_for_mine)
+        atlas_norm = _robust_normalize_01(np.asarray(atlas_vol, dtype=np.float32))
+        thr = 0.10
+        p_mask = patient_vol_for_mine > thr
+        a_mask = atlas_norm > thr
+        if np.any(p_mask) and np.any(a_mask):
+            p_zs = np.where(np.any(p_mask, axis=(0, 1)))[0]
+            a_zs = np.where(np.any(a_mask, axis=(0, 1)))[0]
+            if p_zs.size > 0 and a_zs.size > 0:
+                p_zcenter = float(p_zs.mean())
+                a_zcenter = float(a_zs.mean())
+                dz = int(round(a_zcenter - p_zcenter))
+                max_allowed_dz = patient_vol_for_mine.shape[2] // 3
+                dz = int(np.clip(dz, -max_allowed_dz, max_allowed_dz))
+                if abs(dz) >= 3:
+                    print(
+                        f"[REF_PIPELINE] PET z-pre-alignement dz={dz} "
+                        f"(patient z-center={p_zcenter:.1f}, atlas z-center={a_zcenter:.1f})"
+                    )
+                    patient_vol_for_mine = np.roll(patient_vol_for_mine, dz, axis=2)
+                    if dz > 0:
+                        patient_vol_for_mine[:, :, :dz] = 0.0
+                    else:
+                        patient_vol_for_mine[:, :, dz:] = 0.0
+
+    atlas_nifti_path = os.path.join(work_dir, 'atlas_fixed.nii.gz')
+    moving_prepared_nifti_path = os.path.join(work_dir, 'moving_prepared.nii.gz')
+    _save_volume_nifti(atlas_vol, atlas_nifti_path, affine=VOLUMES_CACHE['atlas'].get('affine'))
+    _save_volume_nifti(
+        patient_vol_for_mine,
+        moving_prepared_nifti_path,
+        affine=VOLUMES_CACHE['atlas'].get('affine'),
+    )
+
+    _reg_fn = run_mine_3d_hybrid if use_hybrid else run_mine_3d_nifti
+    _hybrid_kwargs: Dict[str, Any] = dict(base=16, max_disp=0.05) if use_hybrid else {}
+    result = _reg_fn(
+        fixed_path=atlas_nifti_path,
+        moving_path=moving_prepared_nifti_path,
+        output_dir=work_dir,
+        n_iters=n_iters,
+        max_levels=3,
+        levels_used=2,
+        max_samples=4096 if use_hybrid else 16384,
+        device_name=device_name,
+        save_extended_outputs=False,
+        early_stop_patience=10 if use_hybrid else 22,
+        early_stop_min_iters=15 if use_hybrid else 35,
+        early_stop_min_delta=1e-3 if use_hybrid else 5e-4,
+        progress_callback=None,
+        **_hybrid_kwargs,
+    )
+
+    warped_path = result.get('warped_path')
+    if not warped_path or not os.path.isfile(warped_path):
+        raise RuntimeError("MINE n'a pas produit warped_path")
+
+    warped_vol = nib.load(warped_path).get_fdata(dtype=np.float32)
+    if tuple(int(v) for v in warped_vol.shape) != atlas_shape:
+        warped_vol = _resample_volume_to_shape(warped_vol, atlas_vol.shape)
+
+    warped_is_pet = _is_likely_pet_volume(np.asarray(warped_vol, dtype=np.float32))
+    strict_scale = 1.0
+    if strict_atlas_grid and not warped_is_pet:
+        warped_vol, strict_scale = _force_extent_alignment_to_reference(
+            np.asarray(warped_vol, dtype=np.float32),
+            np.asarray(atlas_vol, dtype=np.float32),
+            threshold=0.10,
+            max_scale_delta=0.30,
+        )
+
+    if warped_is_pet:
+        stabilization = {'scale': 1.0, 'shift': (0, 0, 0)}
+    else:
+        warped_vol, stabilization = _stabilize_similarity_to_reference(
+            np.asarray(warped_vol, dtype=np.float32),
+            np.asarray(atlas_vol, dtype=np.float32),
+            threshold=0.10,
+            max_shift_ratio=0.15 if strict_atlas_grid else 0.08,
+            max_scale_delta=0.30 if strict_atlas_grid else 0.14,
+            min_scale_trigger=0.03 if strict_atlas_grid else 0.08,
+        )
+
+    meta_extra = {
+        'prepared_mode': patient_prepared_mode,
+        'strict_atlas_grid': strict_atlas_grid,
+        'strict_scale': float(strict_scale),
+        'similarity_scale': float(stabilization.get('scale', 1.0)),
+        'shift': list(stabilization.get('shift', (0, 0, 0))),
+        'warped_path': warped_path,
+    }
+    result = {**result, **meta_extra}
+    return np.asarray(warped_vol, dtype=np.float32), result
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def auto_align_volume(request):
@@ -3210,9 +3415,27 @@ def save_registered_to_patient(request):
     # ── Récupérer le patient ──────────────────────────────────────────────────────
     try:
         from .models import Patient, MRIFile
+        from .emergency_access import is_emergency_session
+
         patient = Patient.objects.get(id=patient_id, doctor=request.user)
     except Patient.DoesNotExist:
         return JsonResponse({'error': 'Patient introuvable ou accès refusé'}, status=404)
+
+    em = is_emergency_session(request)
+    temp = getattr(patient, 'emergency_temp', False)
+    if temp and not em:
+        return JsonResponse(
+            {'success': False, 'error': "Ce dossier temporaire n'est plus accessible."},
+            status=403,
+        )
+    if em and not temp:
+        return JsonResponse(
+            {
+                'success': False,
+                'error': 'Mode urgence : enregistrez uniquement vers un dossier importé dans cette session.',
+            },
+            status=403,
+        )
 
     # ── Données recalées : job ou image base64 (fallback 2D) ─────────────────────
     image_data_b64 = payload.get('imageData')  # base64 PNG envoyé par le frontend (mode 2D)
@@ -3332,6 +3555,18 @@ def save_registered_to_patient(request):
             file_type='analysis',
         )
 
+        brodmann_analyse_id = None
+        if mode == 'advanced' and is_3d:
+            from .models import Analyse
+
+            analyse = Analyse.objects.create(
+                patient=patient,
+                doctor=request.user,
+                titre=f'IRM recalée MNI152 ({now_str})',
+            )
+            analyse.mri_registered.save(filename, ContentFile(file_bytes), save=True)
+            brodmann_analyse_id = analyse.pk
+
     except Exception as exc:
         return JsonResponse({'error': f'Erreur sauvegarde fichier : {exc}'}, status=500)
 
@@ -3340,7 +3575,7 @@ def save_registered_to_patient(request):
     media_url = getattr(_settings, 'MEDIA_URL', '/media/')
     file_url  = f"{media_url.rstrip('/')}/{rel_path_url}"
 
-    return JsonResponse({
+    out = {
         'success': True,
         'file_id': mri_file.id,
         'original_filename': filename,
@@ -3360,7 +3595,10 @@ def save_registered_to_patient(request):
             'n_iters': n_iters,
             'processing_time_ms': proc_ms,
         },
-    })
+    }
+    if brodmann_analyse_id is not None:
+        out['brodmann_analyse_id'] = brodmann_analyse_id
+    return JsonResponse(out)
 
 
 @csrf_exempt

@@ -4,12 +4,18 @@ psycopg2-binary
 python-dotenv
 django-cors-headers
 numpy
+# Windows + Python 3.12 : SciPy ≥1.17 peut retomber sur un build Meson (erreur
+# metadata-generation-failed sans toolchain C++/Fortran). Rester <1.17 force les roues binaires.
+scipy>=1.11,<1.17
 opencv-python
 Pillow
+# GPU (Windows) : utiliser le venv backend_django/.venv (Python 3.12).
+# PyTorch CUDA n'est pas sur PyPI en build GPU : après création du venv :
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+# (cu118 convient aux pilotes NVIDIA plus anciens ; cu124 si pilote récent)
 torch
 torchvision
 scikit-image
-scipy
 onnxruntime
 trimesh
 reportlab
@@ -18,3 +24,6 @@ nibabel
 SimpleITK
 nilearn
 channels
+daphne>=4.0
+django-extensions
+antspyx

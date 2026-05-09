@@ -54,13 +54,20 @@ urlpatterns = [
     path('volume/validate-registration', volume_api.validate_volume_registration, name='validate_volume_registration'),
     path('volume/reject-registration', volume_api.reject_volume_registration, name='reject_volume_registration'),
     path('volume/save-registered-to-patient', volume_api.save_registered_to_patient, name='save_registered_to_patient'),
+    path('volume/save-registration-report', volume_api.save_registration_report, name='save_registration_report'),
+    path('volume/download-nifti', volume_api.download_volume_nifti, name='download_volume_nifti'),
     path('volume/viewer', volume_api.slice_viewer_page, name='slice_viewer_page'),
 
     # Preprocessing route
     path('preprocess', views.preprocess_image, name='preprocess'),
 
-    # Apply transformation route
+    # Apply transformation routes
     path('apply_tform', views.apply_tform_to_series, name='apply_tform'),
+    path('apply_to_patient_series', views.apply_to_patient_series, name='apply_to_patient_series'),
+    path('save_registered_series_to_patient', views.save_registered_series_to_patient, name='save_registered_series_to_patient'),
+    path('download_registered_series', views.download_registered_series, name='download_registered_series'),
+    path('series_all_thumbnails', views.series_all_thumbnails, name='series_all_thumbnails'),
+    path('series_comparison_slice', views.series_comparison_slice, name='series_comparison_slice'),
 
     # History routes
     path('history', views.history, name='history'),
@@ -88,6 +95,11 @@ urlpatterns = [
     path('patients/', views.patients_list_create, name='patients_list_create'),
     path('patients/next-dossier/', views.next_dossier_number, name='next_dossier_number'),
     path('patients/<int:patient_id>/', views.patient_detail_update_delete, name='patient_detail_update_delete'),
+    path(
+        'patients/<int:patient_id>/latest-brodmann-analyse/',
+        views.patient_latest_brodmann_analyse,
+        name='patient_latest_brodmann_analyse',
+    ),
     path('patients/<int:patient_id>/mri-files/', views.mri_files_list_upload, name='mri_files_list_upload'),
     path('mri-files/<int:file_id>/preview/', views.mri_file_preview, name='mri_file_preview'),
     path('patients/<int:patient_id>/segment/', views.launch_patient_segmentation, name='launch_patient_segmentation'),
@@ -130,4 +142,6 @@ urlpatterns = [
 
     # Brodmann projection route
     path('project_brodmann', views.project_brodmann, name='project_brodmann'),
+    # Intensités Brodmann (patient MNI vs référence sujet1 en BDD)
+    path('brodmann/intensity/', views.brodmann_intensity, name='brodmann_intensity'),
 ]

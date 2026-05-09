@@ -3,7 +3,7 @@ import json
 import os
 import tempfile
 import uuid
-from typing import Dict
+from typing import Any, Dict, Tuple
 
 import cv2
 import numpy as np
@@ -973,6 +973,49 @@ def _center_volume_by_foreground(vol: np.ndarray) -> np.ndarray:
     return out.astype(np.float32)
 
 
+def _com_prealign_moving_to_fixed(fixed_vol: np.ndarray, moving_vol: np.ndarray) -> np.ndarray:
+    """Translate moving volume so its bounding-box center matches the fixed volume's center.
+    This gives MINE a much better starting point for patient-to-patient registration."""
+    fixed = np.asarray(fixed_vol, dtype=np.float32)
+    moving = np.asarray(moving_vol, dtype=np.float32)
+
+    norm_f = _robust_normalize_01(fixed)
+    norm_m = _robust_normalize_01(moving)
+
+    mask_f = norm_f > 0.15
+    mask_m = norm_m > 0.15
+
+    if np.count_nonzero(mask_f) == 0 or np.count_nonzero(mask_m) == 0:
+        return moving
+
+    xs_f, ys_f, zs_f = np.where(mask_f)
+    cx_f = 0.5 * (float(xs_f.min()) + float(xs_f.max()))
+    cy_f = 0.5 * (float(ys_f.min()) + float(ys_f.max()))
+    cz_f = 0.5 * (float(zs_f.min()) + float(zs_f.max()))
+
+    xs_m, ys_m, zs_m = np.where(mask_m)
+    cx_m = 0.5 * (float(xs_m.min()) + float(xs_m.max()))
+    cy_m = 0.5 * (float(ys_m.min()) + float(ys_m.max()))
+    cz_m = 0.5 * (float(zs_m.min()) + float(zs_m.max()))
+
+    dx = int(round(cx_f - cx_m))
+    dy = int(round(cy_f - cy_m))
+    dz = int(round(cz_f - cz_m))
+
+    if dx == 0 and dy == 0 and dz == 0:
+        return moving
+
+    print(f"[P2P_PREALIGN] Centre-of-mass shift applied: dx={dx}, dy={dy}, dz={dz}")
+    out = np.roll(moving, shift=(dx, dy, dz), axis=(0, 1, 2))
+    if dx > 0:  out[:dx, :, :] = 0
+    elif dx < 0: out[dx:, :, :] = 0
+    if dy > 0:  out[:, :dy, :] = 0
+    elif dy < 0: out[:, dy:, :] = 0
+    if dz > 0:  out[:, :, :dz] = 0
+    elif dz < 0: out[:, :, dz:] = 0
+    return out.astype(np.float32)
+
+
 def _stabilize_translation_to_reference(
     moving_vol: np.ndarray,
     ref_vol: np.ndarray,
@@ -1258,40 +1301,20 @@ def _ensure_atlas():
     lut = None
     atlas_affine = None
 
-    if datasets is not None:
+    # Même bundle que api.official_atlas (Harvard–Oxford sur MNI152 Nilearn)
+    if datasets is not None and nilearn_image is not None:
         try:
-            template_img = datasets.load_mni152_template()
-            vol = template_img.get_fdata().astype(np.float32)
+            from .official_atlas import load_official_mni_atlas_bundle
+
+            template_img, labels_img, lut = load_official_mni_atlas_bundle()
+            vol = np.asanyarray(template_img.dataobj).astype(np.float32)
+            labels = np.asanyarray(labels_img.dataobj).astype(np.int16)
             atlas_affine = np.asarray(template_img.affine, dtype=np.float32)
         except Exception:
             vol = None
-
-        if nilearn_image is not None:
-            try:
-                ho = datasets.fetch_atlas_harvard_oxford(
-                    'cort-maxprob-thr25-2mm',
-                    symmetric_split=False
-                )
-                ho_img = ho['maps']
-
-                # Toujours resampler sur le template pour avoir la même shape
-                if vol is not None and tuple(ho_img.shape) != tuple(vol.shape):
-                    ho_img = nilearn_image.resample_to_img(
-                        ho_img,
-                        template_img,
-                        interpolation='nearest'
-                    )
-
-                labels = ho_img.get_fdata().astype(np.int16)
-                raw_labels = list(ho.get('labels', []))
-                lut = {
-                    i: str(name)
-                    for i, name in enumerate(raw_labels)
-                    if i > 0 and str(name).strip()
-                }
-            except Exception:
-                labels = None
-                lut = None
+            labels = None
+            lut = None
+            atlas_affine = None
 
     # Fallbacks inchangés...
     if vol is None:
@@ -1377,8 +1400,16 @@ def get_atlas_slice(request):
     atlas_data = VOLUMES_CACHE['atlas']['data']
     atlas_labels = VOLUMES_CACHE['atlas']['labels']
     axis = request.GET.get('axis', 'axial')
-    idx = int(request.GET.get('index', request.GET.get('z', _max_index(atlas_data.shape, axis) // 2)))
-    idx = int(np.clip(idx, 0, _max_index(atlas_data.shape, axis)))
+    atlas_max = _max_index(atlas_data.shape, axis)
+    # pct (0.0–1.0) allows callers with a different-shaped volume to request
+    # the anatomically equivalent slice regardless of voxel count.
+    pct_str = request.GET.get('pct')
+    if pct_str is not None:
+        pct = float(np.clip(float(pct_str), 0.0, 1.0))
+        idx = int(round(pct * atlas_max))
+    else:
+        idx = int(request.GET.get('index', request.GET.get('z', atlas_max // 2)))
+    idx = int(np.clip(idx, 0, atlas_max))
 
     job_id = request.GET.get('jobId')
     show_contour = request.GET.get('showContour', '0') in ('1', 'true', 'True')
@@ -1741,14 +1772,30 @@ def get_slice(request):
     if axis not in ('axial', 'coronal', 'sagittal'):
         return JsonResponse({'error': 'invalid axis'}, status=400)
 
-    try:
-        index = int(index)
-    except (TypeError, ValueError):
-        return JsonResponse({'error': 'invalid index'}, status=400)
+    source = request.GET.get('source', 'original')
+    if source == 'registered':
+        _vol = entry.get('pending_registered_data')
+        if _vol is None:
+            _vol = entry.get('registered_data')
+        if _vol is None:
+            _vol = entry.get('data')
+        vol = np.asarray(_vol, dtype=np.float32)
+    else:
+        vol = np.asarray(entry['data'], dtype=np.float32)
 
-    vol = entry['data']
     max_idx = _max_index(vol.shape, axis)
-    index = int(np.clip(index, 0, max_idx))
+
+    # Support pct (0.0–1.0): anatomically correct slice when caller's
+    # reference volume has a different voxel count than this volume.
+    pct_str = request.GET.get('pct')
+    if pct_str is not None:
+        pct = float(np.clip(float(pct_str), 0.0, 1.0))
+        index = int(round(pct * max_idx))
+    else:
+        try:
+            index = int(np.clip(int(index), 0, max_idx))
+        except (TypeError, ValueError):
+            return JsonResponse({'error': 'invalid index'}, status=400)
 
     # Keep patient orientation strictly identical to atlas rendering.
     sl = _render_slice(vol, index, axis)
@@ -2469,6 +2516,197 @@ def manual_align_volume(request):
     })
 
 
+def mine_register_nifti_for_reference_pipeline(
+    source_nifti_path: str,
+    work_dir: str,
+    *,
+    n_iters: int = 60,
+    strict_atlas_grid: bool = True,
+    use_hybrid: bool = False,
+    device_name: str = 'cuda',
+) -> Tuple[np.ndarray, dict]:
+    """
+    Recalage 3D identique à `auto_align_volume` (prépa atlas, MINE ou Hybrid,
+    post-traitement extent + stabilisation similarité), sans session `job_id`.
+
+    Le volume source doit être un NIfTI IRM (même entrée qu'un upload plateforme).
+    Retourne (volume recalé float32, même forme que l’atlas, dict résultat MINE).
+    """
+    if nib is None:
+        raise RuntimeError('nibabel requis pour le recalage de référence')
+
+    os.makedirs(work_dir, exist_ok=True)
+    _ensure_atlas()
+
+    atlas_vol = VOLUMES_CACHE['atlas']['data']
+    atlas_shape = tuple(int(v) for v in atlas_vol.shape)
+
+    n_iters = int(np.clip(int(n_iters), 30, 1000))
+    if use_hybrid:
+        n_iters = int(np.clip(n_iters, 100, 250))
+
+    prepared_path = os.path.join(work_dir, 'patient_prepared.nii.gz')
+    _vol, _bz, _meta = _load_nifti_from_path(
+        source_nifti_path,
+        prepared_output_path=prepared_path,
+    )
+    patient_vol = np.asarray(_vol, dtype=np.float32)
+    patient_nifti_path = prepared_path
+    patient_prepared_mode = 'reference-script'
+
+    patient_vol_for_mine = np.asarray(patient_vol, dtype=np.float32)
+    patient_shape = tuple(int(v) for v in patient_vol_for_mine.shape)
+
+    if patient_nifti_path and nib is not None and os.path.exists(patient_nifti_path):
+        try:
+            prepared_img = nib.load(patient_nifti_path)
+            prepared_data = prepared_img.get_fdata(dtype=np.float32)
+            if prepared_data.ndim == 4:
+                prepared_data = prepared_data[..., 0]
+            if prepared_data.ndim == 2:
+                prepared_data = prepared_data[:, :, np.newaxis]
+            if prepared_data.ndim == 3:
+                patient_vol_for_mine = np.asarray(prepared_data, dtype=np.float32)
+                patient_shape = tuple(int(v) for v in patient_vol_for_mine.shape)
+                patient_prepared_mode = 'prepared-nifti'
+        except Exception as e:
+            print(f"[REF_PIPELINE] Lecture prepared NIfTI ignorée : {e}")
+
+    if _is_likely_pet_volume(patient_vol_for_mine) and not use_hybrid:
+        n_iters_boosted = int(np.clip(max(n_iters, 150), 150, 300))
+        if n_iters_boosted != n_iters:
+            print(f"[REF_PIPELINE] PET detecte - iters MINE {n_iters} -> {n_iters_boosted}")
+            n_iters = n_iters_boosted
+    elif _is_likely_pet_volume(patient_vol_for_mine) and use_hybrid:
+        n_iters_boosted = int(np.clip(max(n_iters, 150), 150, 250))
+        if n_iters_boosted != n_iters:
+            print(f"[REF_PIPELINE] PET detecte - iters Hybrid {n_iters} -> {n_iters_boosted}")
+            n_iters = n_iters_boosted
+
+    if patient_shape != atlas_shape:
+        try:
+            from nibabel.processing import resample_from_to
+
+            atlas_affine = np.asarray(VOLUMES_CACHE['atlas'].get('affine', np.eye(4)), dtype=np.float32)
+            if patient_nifti_path and os.path.exists(patient_nifti_path):
+                src_img = nib.as_closest_canonical(nib.load(patient_nifti_path))
+                patient_resampled_nii = resample_from_to(
+                    src_img,
+                    (atlas_shape, atlas_affine),
+                    order=1,
+                    mode='nearest',
+                    cval=0.0,
+                )
+                patient_vol_for_mine = patient_resampled_nii.get_fdata(dtype=np.float32)
+                if _is_suspicious_spatial_position(patient_vol_for_mine):
+                    raise ValueError('affine resampling produced suspicious position')
+            else:
+                raise ValueError('original nifti path unavailable')
+        except Exception as e:
+            print(f"[REF_PIPELINE] Resampling affine indisponible ({e}), fallback forme+centre")
+            source_vol = np.asarray(patient_vol, dtype=np.float32)
+            patient_vol_for_mine = _resample_volume_to_shape(source_vol, atlas_shape)
+            if not _is_likely_pet_volume(patient_vol_for_mine):
+                patient_vol_for_mine = _center_volume_by_foreground(patient_vol_for_mine)
+        patient_vol_for_mine = _robust_normalize_01(patient_vol_for_mine)
+
+    if _is_likely_pet_volume(patient_vol_for_mine) and patient_vol_for_mine.ndim == 3:
+        if patient_shape == atlas_shape:
+            patient_vol_for_mine = _robust_normalize_01(patient_vol_for_mine)
+        atlas_norm = _robust_normalize_01(np.asarray(atlas_vol, dtype=np.float32))
+        thr = 0.10
+        p_mask = patient_vol_for_mine > thr
+        a_mask = atlas_norm > thr
+        if np.any(p_mask) and np.any(a_mask):
+            p_zs = np.where(np.any(p_mask, axis=(0, 1)))[0]
+            a_zs = np.where(np.any(a_mask, axis=(0, 1)))[0]
+            if p_zs.size > 0 and a_zs.size > 0:
+                p_zcenter = float(p_zs.mean())
+                a_zcenter = float(a_zs.mean())
+                dz = int(round(a_zcenter - p_zcenter))
+                max_allowed_dz = patient_vol_for_mine.shape[2] // 3
+                dz = int(np.clip(dz, -max_allowed_dz, max_allowed_dz))
+                if abs(dz) >= 3:
+                    print(
+                        f"[REF_PIPELINE] PET z-pre-alignement dz={dz} "
+                        f"(patient z-center={p_zcenter:.1f}, atlas z-center={a_zcenter:.1f})"
+                    )
+                    patient_vol_for_mine = np.roll(patient_vol_for_mine, dz, axis=2)
+                    if dz > 0:
+                        patient_vol_for_mine[:, :, :dz] = 0.0
+                    else:
+                        patient_vol_for_mine[:, :, dz:] = 0.0
+
+    atlas_nifti_path = os.path.join(work_dir, 'atlas_fixed.nii.gz')
+    moving_prepared_nifti_path = os.path.join(work_dir, 'moving_prepared.nii.gz')
+    _save_volume_nifti(atlas_vol, atlas_nifti_path, affine=VOLUMES_CACHE['atlas'].get('affine'))
+    _save_volume_nifti(
+        patient_vol_for_mine,
+        moving_prepared_nifti_path,
+        affine=VOLUMES_CACHE['atlas'].get('affine'),
+    )
+
+    _reg_fn = run_mine_3d_hybrid if use_hybrid else run_mine_3d_nifti
+    _hybrid_kwargs: Dict[str, Any] = dict(base=16, max_disp=0.05) if use_hybrid else {}
+    result = _reg_fn(
+        fixed_path=atlas_nifti_path,
+        moving_path=moving_prepared_nifti_path,
+        output_dir=work_dir,
+        n_iters=n_iters,
+        max_levels=3,
+        levels_used=2,
+        max_samples=4096 if use_hybrid else 16384,
+        device_name=device_name,
+        save_extended_outputs=False,
+        early_stop_patience=10 if use_hybrid else 22,
+        early_stop_min_iters=15 if use_hybrid else 35,
+        early_stop_min_delta=1e-3 if use_hybrid else 5e-4,
+        progress_callback=None,
+        **_hybrid_kwargs,
+    )
+
+    warped_path = result.get('warped_path')
+    if not warped_path or not os.path.isfile(warped_path):
+        raise RuntimeError("MINE n'a pas produit warped_path")
+
+    warped_vol = nib.load(warped_path).get_fdata(dtype=np.float32)
+    if tuple(int(v) for v in warped_vol.shape) != atlas_shape:
+        warped_vol = _resample_volume_to_shape(warped_vol, atlas_vol.shape)
+
+    warped_is_pet = _is_likely_pet_volume(np.asarray(warped_vol, dtype=np.float32))
+    strict_scale = 1.0
+    if strict_atlas_grid and not warped_is_pet:
+        warped_vol, strict_scale = _force_extent_alignment_to_reference(
+            np.asarray(warped_vol, dtype=np.float32),
+            np.asarray(atlas_vol, dtype=np.float32),
+            threshold=0.10,
+            max_scale_delta=0.30,
+        )
+
+    if warped_is_pet:
+        stabilization = {'scale': 1.0, 'shift': (0, 0, 0)}
+    else:
+        warped_vol, stabilization = _stabilize_similarity_to_reference(
+            np.asarray(warped_vol, dtype=np.float32),
+            np.asarray(atlas_vol, dtype=np.float32),
+            threshold=0.10,
+            max_shift_ratio=0.15 if strict_atlas_grid else 0.08,
+            max_scale_delta=0.30 if strict_atlas_grid else 0.14,
+            min_scale_trigger=0.03 if strict_atlas_grid else 0.08,
+        )
+
+    meta_extra = {
+        'prepared_mode': patient_prepared_mode,
+        'strict_atlas_grid': strict_atlas_grid,
+        'strict_scale': float(strict_scale),
+        'similarity_scale': float(stabilization.get('scale', 1.0)),
+        'shift': list(stabilization.get('shift', (0, 0, 0))),
+        'warped_path': warped_path,
+    }
+    result = {**result, **meta_extra}
+    return np.asarray(warped_vol, dtype=np.float32), result
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def auto_align_volume(request):
@@ -2531,15 +2769,18 @@ def auto_align_volume(request):
 
         _emit_registration_progress(job_id, 3, 'initialisation', 'Initialisation du recalage patient-patient...')
         try:
+            # Pre-align moving patient to fixed patient center-of-mass
+            # This corrects global position differences before MINE fine-tunes alignment.
+            _emit_registration_progress(job_id, 5, 'prealign', 'Pré-alignement par centre de masse...')
+            patient_vol_p2p_aligned = _com_prealign_moving_to_fixed(fixed_vol, patient_vol_p2p)
+
             if fixed_nifti_path and nib is not None and os.path.exists(fixed_nifti_path):
                 nib.save(nib.load(fixed_nifti_path), fixed_nifti_out)
             else:
                 _save_volume_nifti(fixed_vol, fixed_nifti_out)
 
-            if patient_nifti_path_p2p and nib is not None and os.path.exists(patient_nifti_path_p2p):
-                nib.save(nib.load(patient_nifti_path_p2p), moving_nifti_out)
-            else:
-                _save_volume_nifti(patient_vol_p2p, moving_nifti_out)
+            # Always use the CoM-aligned version for MINE (better convergence)
+            _save_volume_nifti(patient_vol_p2p_aligned, moving_nifti_out)
 
             _emit_registration_progress(job_id, 10, 'preparation', 'Volumes NIfTI prêts — lancement MINE...')
 
@@ -3261,32 +3502,50 @@ def save_registered_to_patient(request):
         from django.conf import settings
 
         # Sous-dossier organisé par patient
-        rel_dir  = os.path.join('patients_mri_files', f'patient_{patient.id}', 'registrations')
-        abs_dir  = os.path.join(settings.MEDIA_ROOT, rel_dir)
+        # Utiliser '/' (pas os.sep) pour que le chemin stocké en DB soit valide comme URL
+        rel_dir_url = f'patients_mri_files/patient_{patient.id}/registrations'
+        abs_dir     = os.path.join(settings.MEDIA_ROOT, *rel_dir_url.split('/'))
         os.makedirs(abs_dir, exist_ok=True)
 
-        rel_path = os.path.join(rel_dir, filename)
-        abs_path = os.path.join(abs_dir, filename)
+        rel_path_url = f'{rel_dir_url}/{filename}'   # toujours avec /
+        abs_path     = os.path.join(abs_dir, filename)
         with open(abs_path, 'wb') as f_out:
             f_out.write(file_bytes)
 
         mri_file = MRIFile.objects.create(
             patient=patient,
-            file=rel_path,
+            file=rel_path_url,           # chemin URL-friendly stocké en DB
             original_filename=filename,
-            relative_path=rel_path,
+            relative_path=rel_path_url,
             file_size=len(file_bytes),
             file_type='analysis',
         )
+
+        brodmann_analyse_id = None
+        if mode == 'advanced' and is_3d:
+            from .models import Analyse
+
+            analyse = Analyse.objects.create(
+                patient=patient,
+                doctor=request.user,
+                titre=f'IRM recalée MNI152 ({now_str})',
+            )
+            analyse.mri_registered.save(filename, ContentFile(file_bytes), save=True)
+            brodmann_analyse_id = analyse.pk
 
     except Exception as exc:
         return JsonResponse({'error': f'Erreur sauvegarde fichier : {exc}'}, status=500)
 
     # ── Réponse ───────────────────────────────────────────────────────────────────
-    return JsonResponse({
+    from django.conf import settings as _settings
+    media_url = getattr(_settings, 'MEDIA_URL', '/media/')
+    file_url  = f"{media_url.rstrip('/')}/{rel_path_url}"
+
+    out = {
         'success': True,
         'file_id': mri_file.id,
         'original_filename': filename,
+        'file_url': file_url,
         'file_size': len(file_bytes),
         'uploaded_at': mri_file.uploaded_at.isoformat(),
         'patient': {
@@ -3302,4 +3561,290 @@ def save_registered_to_patient(request):
             'n_iters': n_iters,
             'processing_time_ms': proc_ms,
         },
+    }
+    if brodmann_analyse_id is not None:
+        out['brodmann_analyse_id'] = brodmann_analyse_id
+    return JsonResponse(out)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def save_registration_report(request):
+    """
+    Génère un PDF de synthèse du recalage 2D et l'archive dans le dossier patient
+    (PatientReport) pour qu'il apparaisse dans 'Rapports cliniques archivés'.
+
+    Payload JSON :
+        patientId          : int
+        mode               : '2d' | '3d' | 'advanced'
+        mi                 : float | null
+        processing_time_ms : float | null
+        patient_name       : str          (nom affiché dans le PDF)
+        dossier            : str          (numéro de dossier, ex. DOS-2026-0004)
+        imageData          : str | null   (base64 PNG de la coupe recalée)
+    """
+    import io
+    from datetime import datetime
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage,
+    )
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    from django.core.files.base import ContentFile
+
+    if not request.user.is_authenticated:
+        return JsonResponse({'error': 'Authentication required'}, status=401)
+
+    try:
+        payload = json.loads(request.body)
+    except Exception:
+        return JsonResponse({'error': 'invalid json'}, status=400)
+
+    patient_id  = payload.get('patientId')
+    mode        = str(payload.get('mode', '2d')).lower()
+    mi          = payload.get('mi')
+    proc_ms     = payload.get('processing_time_ms')
+    patient_name = payload.get('patient_name', '')
+    dossier      = payload.get('dossier', '')
+    image_b64    = payload.get('imageData')
+
+    if not patient_id:
+        return JsonResponse({'error': 'patientId manquant'}, status=400)
+
+    try:
+        from .models import Patient, PatientReport
+        patient = Patient.objects.get(id=patient_id, doctor=request.user)
+    except Patient.DoesNotExist:
+        return JsonResponse({'error': 'Patient introuvable'}, status=404)
+
+    # ── Construire le PDF ─────────────────────────────────────────────────────
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=2*cm, rightMargin=2*cm,
+        topMargin=2*cm, bottomMargin=2*cm,
+    )
+    styles = getSampleStyleSheet()
+    story  = []
+
+    # Couleur principale
+    BLUE = colors.HexColor('#2563eb')
+    LIGHT = colors.HexColor('#eff6ff')
+
+    title_style = ParagraphStyle(
+        'Title', parent=styles['Title'],
+        textColor=BLUE, fontSize=18, spaceAfter=4,
+    )
+    sub_style = ParagraphStyle(
+        'Sub', parent=styles['Normal'],
+        textColor=colors.HexColor('#64748b'), fontSize=10, spaceAfter=12,
+    )
+    label_style = ParagraphStyle(
+        'Label', parent=styles['Normal'],
+        textColor=colors.HexColor('#374151'), fontSize=10, fontName='Helvetica-Bold',
+    )
+    value_style = ParagraphStyle(
+        'Value', parent=styles['Normal'],
+        textColor=colors.HexColor('#111827'), fontSize=11,
+    )
+
+    now = datetime.now()
+    mode_label = {'2d': '2D', '3d': '3D', 'advanced': 'Avancé'}.get(mode, mode.upper())
+
+    # En-tête
+    story.append(Paragraph('RAPPORT DE RECALAGE', title_style))
+    story.append(Paragraph(f'Généré le {now.strftime("%d/%m/%Y à %H:%M")} · Dr. {request.user.get_full_name() or request.user.username}', sub_style))
+    story.append(Spacer(1, 0.3*cm))
+
+    # Tableau métriques
+    mi_str = f'{float(mi):.4f}' if mi is not None else 'N/A'
+    mi_quality = (
+        'Excellent' if mi is not None and float(mi) > 0.5 else
+        'Bon'       if mi is not None and float(mi) > 0.3 else
+        'Faible'    if mi is not None else 'N/A'
+    )
+    duration_str = f'{float(proc_ms)/1000:.1f} s' if proc_ms is not None else 'N/A'
+    name_str = patient_name or f'Patient #{patient_id}'
+    dos_str  = dossier or '—'
+
+    table_data = [
+        ['Champ', 'Valeur'],
+        ['Patient',               name_str],
+        ['Numéro de dossier',     dos_str],
+        ['Mode de recalage',      mode_label],
+        ['Information Mutuelle',  f'{mi_str}  ({mi_quality})'],
+        ['Durée de traitement',   duration_str],
+        ['Date',                  now.strftime('%d/%m/%Y %H:%M')],
+        ['Médecin',               request.user.get_full_name() or request.user.username],
+    ]
+    tbl = Table(table_data, colWidths=[5.5*cm, 11*cm])
+    tbl.setStyle(TableStyle([
+        ('BACKGROUND',   (0,0), (-1,0), BLUE),
+        ('TEXTCOLOR',    (0,0), (-1,0), colors.white),
+        ('FONTNAME',     (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE',     (0,0), (-1,-1), 10),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [LIGHT, colors.white]),
+        ('GRID',         (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
+        ('LEFTPADDING',  (0,0), (-1,-1), 8),
+        ('RIGHTPADDING', (0,0), (-1,-1), 8),
+        ('TOPPADDING',   (0,0), (-1,-1), 6),
+        ('BOTTOMPADDING',(0,0), (-1,-1), 6),
+        ('VALIGN',       (0,0), (-1,-1), 'MIDDLE'),
+    ]))
+    story.append(tbl)
+    story.append(Spacer(1, 0.5*cm))
+
+    # Image recalée (optionnelle)
+    if image_b64:
+        try:
+            img_bytes = base64.b64decode(image_b64.split(',')[-1])
+            img_io = io.BytesIO(img_bytes)
+            rl_img = RLImage(img_io, width=8*cm, height=8*cm, kind='proportional')
+            story.append(Paragraph('Coupe recalée', label_style))
+            story.append(Spacer(1, 0.2*cm))
+            story.append(rl_img)
+        except Exception as e:
+            print(f'save_registration_report — image embed error: {e}')
+
+    story.append(Spacer(1, 0.5*cm))
+    story.append(Paragraph(
+        'Ce rapport a été généré automatiquement par NeuroScan Registration Hub '
+        'suite à la validation et à l\'application du recalage sur la série IRM du patient.',
+        ParagraphStyle('Footer', parent=styles['Normal'],
+                       textColor=colors.HexColor('#94a3b8'), fontSize=8, alignment=TA_CENTER),
+    ))
+
+    doc.build(story)
+    pdf_bytes = buf.getvalue()
+
+    # ── Sauvegarder le PatientReport ─────────────────────────────────────────
+    # Pattern correct : créer l'instance sans DB, sauvegarder le fichier (→ INSERT unique)
+    filename = f'recalage_{mode_label}_{now.strftime("%Y%m%d_%H%M%S")}_patient{patient_id}.pdf'
+    report = PatientReport(
+        patient=patient,
+        segmentation_run=None,
+        doctor=request.user,
+        doctor_conclusion=json.dumps({
+            'type': 'recalage',
+            'mode': mode_label,
+            'mi': float(mi) if mi is not None else None,
+            'mi_quality': mi_quality,
+        }),
+        doctor_recommendations=[],
+    )
+    # save=True déclenche aussi le report.save() → un seul INSERT en base
+    report.file.save(filename, ContentFile(pdf_bytes), save=True)
+
+    return JsonResponse({
+        'success': True,
+        'report_id': report.id,
+        'filename': filename,
+        'created_at': report.created_at.strftime('%d/%m/%Y %H:%M'),
     })
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def download_volume_nifti(request):
+    """
+    Télécharge le volume recalé et/ou de référence (atlas) en NIfTI (.nii.gz).
+
+    Query params :
+        jobId  : str  — identifiant du job
+        panel  : str  — 'patient' | 'reference' | 'all'  (défaut : 'patient')
+    """
+    import io
+    import zipfile
+    from datetime import datetime
+    from django.http import HttpResponse
+
+    if not request.user.is_authenticated:
+        return JsonResponse({'error': 'Authentication required'}, status=401)
+
+    job_id = request.GET.get('jobId', '')
+    panel  = request.GET.get('panel', 'patient')
+
+    if not job_id:
+        return JsonResponse({'error': 'jobId manquant'}, status=400)
+    if panel not in ('patient', 'reference', 'all'):
+        return JsonResponse({'error': 'panel invalide'}, status=400)
+
+    entry = _get_job_entry(job_id)
+    if not entry:
+        return JsonResponse({'error': 'Job introuvable'}, status=404)
+
+    try:
+        import nibabel as nib
+    except ImportError:
+        return JsonResponse({'error': 'nibabel non disponible sur ce serveur'}, status=500)
+
+    stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+    def _vol_to_nifti_bytes(vol_array: np.ndarray, affine: np.ndarray) -> bytes:
+        img = nib.Nifti1Image(vol_array.astype(np.float32), affine)
+        tmp = os.path.join(tempfile.gettempdir(), f'dl_{uuid.uuid4().hex}.nii.gz')
+        try:
+            nib.save(img, tmp)
+            with open(tmp, 'rb') as f:
+                return f.read()
+        finally:
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+
+    def _patient_nifti_bytes():
+        vol = entry.get('registered_data') or entry.get('pending_registered_data')
+        if vol is None:
+            return None, 'Volume recalé non disponible — relancez le recalage'
+        affine = np.eye(4, dtype=np.float64)
+        nifti_path = entry.get('nifti_path')
+        if nifti_path and os.path.exists(str(nifti_path)):
+            try:
+                affine = nib.load(str(nifti_path)).affine
+            except Exception:
+                pass
+        return _vol_to_nifti_bytes(np.asarray(vol, dtype=np.float32), affine), None
+
+    def _reference_nifti_bytes():
+        _ensure_atlas()
+        atlas_data = VOLUMES_CACHE.get('atlas', {}).get('data')
+        if atlas_data is None:
+            return None, 'Volume de référence (atlas) non chargé'
+        return _vol_to_nifti_bytes(np.asarray(atlas_data, dtype=np.float32), np.eye(4, dtype=np.float64)), None
+
+    if panel == 'patient':
+        data, err = _patient_nifti_bytes()
+        if err:
+            return JsonResponse({'error': err}, status=404)
+        resp = HttpResponse(data, content_type='application/gzip')
+        resp['Content-Disposition'] = f'attachment; filename="volume_recale_{stamp}.nii.gz"'
+        return resp
+
+    if panel == 'reference':
+        data, err = _reference_nifti_bytes()
+        if err:
+            return JsonResponse({'error': err}, status=404)
+        resp = HttpResponse(data, content_type='application/gzip')
+        resp['Content-Disposition'] = f'attachment; filename="volume_reference_{stamp}.nii.gz"'
+        return resp
+
+    # panel == 'all'
+    pat_bytes, pat_err   = _patient_nifti_bytes()
+    ref_bytes, ref_err   = _reference_nifti_bytes()
+    if pat_bytes is None and ref_bytes is None:
+        return JsonResponse({'error': pat_err or ref_err}, status=404)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        if pat_bytes:
+            zf.writestr(f'volume_recale_{stamp}.nii.gz', pat_bytes)
+        if ref_bytes:
+            zf.writestr(f'volume_reference_{stamp}.nii.gz', ref_bytes)
+    buf.seek(0)
+    resp = HttpResponse(buf.read(), content_type='application/zip')
+    resp['Content-Disposition'] = f'attachment; filename="volumes_recalage_{stamp}.zip"'
+    return resp

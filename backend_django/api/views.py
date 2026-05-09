@@ -38,6 +38,9 @@ from rest_framework.authentication import SessionAuthentication
 from rest_framework.permissions import AllowAny, IsAuthenticated
 
 import numpy as np
+import nibabel as nib
+from nilearn.image import resample_to_img
+from pathlib import Path
 import cv2
 from PIL import Image, ImageOps
 from PIL import ImageDraw
@@ -51,7 +54,14 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from datetime import timedelta
 from django.utils import timezone
 from django.core.mail import send_mail
-# from django.core.paginator import Paginator # Not used, can be removed
+
+# WebSocket support for registration progress
+try:
+    from asgiref.sync import async_to_sync
+    from channels.layers import get_channel_layer
+except Exception:
+    async_to_sync = None
+    get_channel_layer = None
 from django.db.models import Q
 from .models import Series, PasswordResetToken, AccountActivationToken, EmergencyLoginAttempt, Patient, Reclamation, MRIFile, ContactRequest, DoctorProfile, Testimonial
 from .serializers import ReclamationSerializer, PatientSerializer, MRIFileSerializer, ContactRequestSerializer
@@ -70,6 +80,9 @@ from .models import (
     PatientImageOrientation,
     SegmentationRun,
     SegmentationMaskResult,
+    PatientReport,
+    ReferenceIntensity,
+    Analyse,
 )
 from .serializers import (
     ReclamationSerializer, PatientSerializer, MRIFileSerializer, SegmentationRunSerializer,
@@ -81,7 +94,6 @@ from .serializers import (
 from .mine_registration import run_mine_registration
 from .segmentation_inference import run_segmentation_on_files
 from .modelisation_3d import run_modelisation_3d, parse_spacing, parse_reference_values
-from .emergency_access import is_emergency_session, deny_if_patient_session_mismatch
 
 # Setup logging - just flush stdout for real-time output
 sys.stdout.flush()
@@ -99,6 +111,31 @@ PHONE_NUMBER_PATTERN = re.compile(r'^[24579]\d{7}$')
 
 # Compte technique Django pour la session du dashboard admin SPA (voir admin_portal_login).
 PORTAL_ADMIN_USERNAME = '__neuroscan_portal_admin__'
+
+
+def _emit_registration_progress(job_id: str, progress: int, stage: str, message: str, status: str = 'processing'):
+    """Send registration progress update via WebSocket to frontend."""
+    if not job_id or get_channel_layer is None or async_to_sync is None:
+        return
+    try:
+        channel_layer = get_channel_layer()
+        if channel_layer is None:
+            return
+        pct = int(max(0, min(100, int(progress))))
+        async_to_sync(channel_layer.group_send)(
+            f'registration_{job_id}',
+            {
+                'type': 'registration_progress',
+                'jobId': str(job_id),
+                'status': status,
+                'stage': stage,
+                'progress': pct,
+                'message': message,
+            },
+        )
+    except Exception:
+        # Never fail registration because of websocket updates.
+        return
 
 
 def get_frontend_origin():
@@ -336,11 +373,6 @@ class CsrfExemptSessionAuthentication(SessionAuthentication):
         return
 
 
-class CsrfExemptSessionAuthentication(SessionAuthentication):
-    def enforce_csrf(self, request):
-        return
-
-
 def send_email_async(subject, message, from_email, recipient_list, html_message=None):
     """Send email in a background thread to avoid blocking HTTP response"""
     def _send():
@@ -417,6 +449,71 @@ def affine_from_tform(tform):
     M[:, :2] = (b * T).T
     M[:, 2] = c
     return M
+
+
+def _get_warp_from_tform(tform, upload_dir, target_size=(512, 512)):
+    """
+    Returns a callable warp_fn(img_gray) -> warped_img.
+    Handles three tform formats:
+      - MINE: {"method": "mine", "transform_file": "relative/path/H.npy"}
+              3×3 homography stored in normalized [-1,1] coords
+      - RANSAC manual: {"M": [[2x3 list]]}
+      - Procrustes: {"rotation": ..., "scale": ..., "translation": ...}
+    """
+    method = tform.get('method', '')
+    w, h = target_size
+
+    if method == 'mine':
+        transform_file = tform.get('transform_file', '')
+        if not transform_file:
+            raise ValueError('MINE tform missing transform_file path')
+        H_path = os.path.join(upload_dir, transform_file)
+        if not os.path.exists(H_path):
+            raise ValueError(f'MINE transform file not found: {H_path}')
+        H = np.load(H_path).astype(np.float64)
+        # Convert from MINE normalized [-1,1] space to pixel space
+        N2P = np.array([
+            [(w - 1) / 2, 0, (w - 1) / 2],
+            [0, (h - 1) / 2, (h - 1) / 2],
+            [0, 0, 1],
+        ], dtype=np.float64)
+        P2N = np.array([
+            [2 / (w - 1), 0, -1],
+            [0, 2 / (h - 1), -1],
+            [0, 0, 1],
+        ], dtype=np.float64)
+        H_px = N2P @ H @ P2N
+
+        def warp_fn(img):
+            if img.shape[:2] != (h, w):
+                img = cv2.resize(img, target_size, interpolation=cv2.INTER_LINEAR)
+            # MINE H maps dst→src (inverse mapping) — use WARP_INVERSE_MAP
+            return cv2.warpPerspective(img, H_px, target_size,
+                                       flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
+                                       borderMode=cv2.BORDER_CONSTANT,
+                                       borderValue=0)
+    elif 'M' in tform:
+        M = np.array(tform['M'], dtype=np.float32)
+
+        def warp_fn(img):
+            if img.shape[:2] != (h, w):
+                img = cv2.resize(img, target_size, interpolation=cv2.INTER_LINEAR)
+            return cv2.warpAffine(img, M, target_size,
+                                  flags=cv2.INTER_LINEAR,
+                                  borderMode=cv2.BORDER_CONSTANT,
+                                  borderValue=0)
+    else:
+        M = affine_from_tform(tform)
+
+        def warp_fn(img):
+            if img.shape[:2] != (h, w):
+                img = cv2.resize(img, target_size, interpolation=cv2.INTER_LINEAR)
+            return cv2.warpAffine(img, M, target_size,
+                                  flags=cv2.INTER_LINEAR,
+                                  borderMode=cv2.BORDER_CONSTANT,
+                                  borderValue=0)
+
+    return warp_fn
 
 
 def select_brain_candidate(img):
@@ -784,8 +881,6 @@ def _next_dossier_number():
 @api_view(['GET'])
 @login_required
 def next_dossier_number(request):
-    if is_emergency_session(request):
-        return JsonResponse({'ok': False, 'error': 'Non disponible en mode urgence.'}, status=403)
     return JsonResponse({'ok': True, 'dossier_number': _next_dossier_number()})
 
 
@@ -928,7 +1023,6 @@ def login_view(request):
 
         login(request, user)
         request.session['username'] = user.username
-        request.session.pop('emergency_access', None)
 
         profile = DoctorProfile.objects.filter(user=user).first()
         if profile and ((profile.nom or '').strip() or (profile.prenom or '').strip()):
@@ -966,7 +1060,7 @@ def login_view(request):
 def logout_view(request):
     print(f"Yassmine now the logout endpoint works")
     user = getattr(request, 'user', None)
-    if user and user.is_authenticated:
+    if getattr(user, 'is_authenticated', False) and is_emergency_session(request):
         try:
             Patient.objects.filter(doctor=user, emergency_temp=True).delete()
         except Exception as e:
@@ -991,8 +1085,7 @@ def _portal_dashboard_credentials():
 @require_http_methods(["POST"])
 def admin_portal_login(request):
     """
-    Authentifie le portail admin du frontend : mêmes identifiants que VITE_ADMIN_DASHBOARD_*.
-    Crée une vraie session Django (is_staff) pour que /api/admin/dashboard/* fonctionne.
+    Authentifie le portail admin du frontend : identifiants ADMIN_PORTAL_* ou VITE_ADMIN_DASHBOARD_*.
     """
     try:
         data = json.loads(request.body or '{}')
@@ -1054,6 +1147,7 @@ def admin_portal_login(request):
     })
 
 
+@api_view(['GET'])
 def check_session(request):
     if request.user and request.user.is_authenticated:
         print(f"Yassmine now the check_session works - user: {request.user.username}")
@@ -1137,9 +1231,6 @@ def initialize_registration_from_patient_files(request):
             return JsonResponse({'error': 'pat_file_id is required'}, status=400)
 
         pat_file = get_object_or_404(MRIFile, id=pat_file_id, patient__doctor=request.user)
-        deny_pf = deny_if_patient_session_mismatch(request, pat_file.patient)
-        if deny_pf:
-            return deny_pf
         is_3d = pat_file.original_filename.lower().endswith(('.nii', '.nii.gz'))
         
         job_id = str(uuid.uuid4())
@@ -1178,9 +1269,6 @@ def initialize_registration_from_patient_files(request):
             if ref_file_id:
                 # Custom Atlas
                 ref_file = get_object_or_404(MRIFile, id=ref_file_id, patient__doctor=request.user)
-                deny_rf = deny_if_patient_session_mismatch(request, ref_file.patient)
-                if deny_rf:
-                    return deny_rf
                 try:
                     atlas_vol, _, _ = _load_nifti_from_path(ref_file.file.path)
                     from .volume_api import _set_custom_atlas_volume
@@ -1202,10 +1290,7 @@ def initialize_registration_from_patient_files(request):
                 return JsonResponse({'error': 'ref_file_id is required for 2D registration'}, status=400)
 
             ref_file = get_object_or_404(MRIFile, id=ref_file_id, patient__doctor=request.user)
-            deny_rf2 = deny_if_patient_session_mismatch(request, ref_file.patient)
-            if deny_rf2:
-                return deny_rf2
-
+            
             job_dir = os.path.join(UPLOAD_DIR, job_id)
             os.makedirs(job_dir, exist_ok=True)
 
@@ -1536,16 +1621,26 @@ def auto_align(request):
         print(f"Yassmine: Starting MINE registration for job {job_id} with n_iters={n_iters}...")
         os.makedirs(auto_dir, exist_ok=True)
         print(f"AUTO DIR created: {auto_dir}")
+        
+        # Send initial progress update via WebSocket
+        _emit_registration_progress(job_id, 10, 'initialisation', 'Initialisation du recalage MINE...')
+        
+        # Create a callback to send progress updates during registration
+        def on_progress(pct: int, msg: str):
+            _emit_registration_progress(job_id, pct, 'optimisation', msg)
+        
         result = run_mine_registration(
             ref_path,
             pat_path,
             os.path.join(auto_dir, f"mine_{job_id}"),
             n_iters=n_iters,
-            device_name="auto"
+            device_name="auto",
+            progress_callback=on_progress
         )
 
         if not result.get('success', False):
             print(f"Yassmine now the auto_align FAILED - MINE failed")
+            _emit_registration_progress(job_id, 100, 'error', 'Le recalage MINE a échoué', status='error')
             return JsonResponse({
                 'error': 'alignment failed',
                 'message': 'Le recalage MINE a échoué',
@@ -1639,6 +1734,7 @@ def auto_align(request):
 
         except Exception as e:
             print(f"Yassmine now the auto_align WARNING - failed to read warped image: {str(e)}")
+            _emit_registration_progress(job_id, 100, 'completed', 'Recalage terminé avec succès', status='success')
             return JsonResponse({
                 'success': True,
                 'message': 'Recalage automatique réussi',
@@ -1646,6 +1742,7 @@ def auto_align(request):
             })
 
         print(f"Yassmine now the auto_align SUCCESS - job_id: {job_id}, RMSE: {metrics.get('rmse')}")
+        _emit_registration_progress(job_id, 100, 'completed', 'Recalage terminé avec succès', status='success')
 
         return JsonResponse({
             'success': True,
@@ -1822,9 +1919,6 @@ def history(request):
 def patient_detail_update_delete(request, patient_id):
     print(f"Nadine Yassmine - patient_detail_update_delete - id: {patient_id}, user: {request.user.username}")
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
-    deny = deny_if_patient_session_mismatch(request, patient)
-    if deny:
-        return deny
 
     if request.method == 'GET':
         serializer = PatientSerializer(patient, context={'request': request})
@@ -2106,6 +2200,263 @@ def project_brodmann(request):
     return HttpResponse(buf.tobytes(), content_type='image/png')
 
 
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def brodmann_intensity(request):
+    """
+    Compare la somme d'intensités (masque de zone) entre le volume patient recalé MNI152
+    et les sommes précalculées (ReferenceIntensity).
+
+    Query params :
+      zone_number (int) : indice Harvard–Oxford (identification).
+      analyse_id (int, optionnel) : volume archivé (modèle Analyse).
+      job_id (str, optionnel) : session de recalage (même volume que les coupes affichées).
+
+    Fournir analyse_id ou job_id ; si les deux sont présents, analyse_id est utilisé.
+
+    Réponse : sommes brutes, ratio brut (souvent non interprétable), et champs
+    ratio_relative_percent / moyennes par zone lorsque le fichier IRM du sujet de référence est lisible.
+    """
+    qp = request.query_params
+    analyse_raw = qp.get('analyse_id')
+    job_raw = (qp.get('job_id') or '').strip()
+
+    try:
+        zone_number = int(qp.get('zone_number', ''))
+    except (TypeError, ValueError):
+        return Response(
+            {'detail': 'Paramètre zone_number (entier) requis.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    use_analyse = analyse_raw not in (None, '')
+    if use_analyse:
+        try:
+            analyse_id = int(analyse_raw)
+        except (TypeError, ValueError):
+            return Response(
+                {'detail': 'analyse_id invalide.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+    elif job_raw:
+        analyse_id = None
+    else:
+        return Response(
+            {'detail': 'Fournir analyse_id ou job_id avec zone_number.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # ── Référence d'intensité : lecture BDD uniquement (pas de NIfTI) ───────
+    ref_row = ReferenceIntensity.objects.order_by('-date_creation').first()
+    if ref_row is None:
+        return Response(
+            {
+                'detail': 'Aucune ReferenceIntensity en base. Exécuter : '
+                'python manage.py runscript setup_reference_intensity',
+            },
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    key = str(zone_number)
+    if key not in (ref_row.brodmann_intensities or {}):
+        return Response(
+            {'detail': f'Zone {zone_number} absente du JSON de référence (relancer runscript setup_reference_intensity si besoin).'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    somme_reference = float(ref_row.brodmann_intensities[key])
+
+    # ── Carte des régions = même bundle Nilearn que volume_api (Harvard–Oxford sur MNI152) ───
+    try:
+        from api.official_atlas import load_official_mni_atlas_bundle
+
+        template_img, labels_img, _lut = load_official_mni_atlas_bundle()
+    except Exception as exc:
+        return Response(
+            {'detail': f'Impossible de charger la carte des régions Nilearn : {exc}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+    if use_analyse:
+        analyse = get_object_or_404(
+            Analyse.objects.select_related('patient'),
+            pk=analyse_id,
+            patient__doctor=request.user,
+        )
+        try:
+            patient_path = analyse.mri_registered.path
+        except Exception:
+            patient_path = ''
+        if not patient_path or not os.path.isfile(patient_path):
+            return Response(
+                {'detail': 'Fichier IRM recalée (Analyse.mri_registered) introuvable sur le disque.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            patient_img = nib.load(patient_path)
+            patient_data = np.asanyarray(patient_img.dataobj).astype(np.float64, copy=False)
+            atlas_on_patient = resample_to_img(
+                labels_img,
+                patient_img,
+                interpolation='nearest',
+                force_resample=True,
+            )
+            labels = np.rint(np.asanyarray(atlas_on_patient.dataobj)).astype(np.int32)
+        except Exception as exc:
+            return Response(
+                {'detail': f'Erreur lecture NIfTI / atlas : {exc}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+    else:
+        from api.volume_api import _get_job_entry
+
+        entry = _get_job_entry(job_raw)
+        if entry is None:
+            return Response(
+                {
+                    'detail': 'Session de recalage introuvable ou expirée. Relancez un recalage ou '
+                    'enregistrez le volume dans le dossier patient.',
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        vol = entry.get('registered_data')
+        if vol is None:
+            vol = entry.get('pending_registered_data')
+        if vol is None:
+            return Response(
+                {'detail': "Pas encore de volume recalé dans cette session — validez d'abord le recalage."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            patient_data = np.asarray(vol, dtype=np.float64)
+            patient_img = nib.Nifti1Image(
+                patient_data.astype(np.float64),
+                template_img.affine,
+                template_img.header,
+            )
+            atlas_on_patient = resample_to_img(
+                labels_img,
+                patient_img,
+                interpolation='nearest',
+                force_resample=True,
+            )
+            labels = np.rint(np.asanyarray(atlas_on_patient.dataobj)).astype(np.int32)
+        except Exception as exc:
+            return Response(
+                {'detail': f'Erreur volume session / atlas : {exc}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    if labels.shape != patient_data.shape:
+        return Response(
+            {
+                'detail': 'Forme atlas != forme volume patient après rééchantillonnage '
+                '(vérifier que le NIfTI est bien en espace MNI152 aligné atlas).',
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    mask = labels == zone_number
+    if not np.any(mask):
+        return Response(
+            {'detail': f'Masque vide pour la zone {zone_number} (volume ou atlas).'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    brain_mask = labels > 0
+    if not np.any(brain_mask):
+        return Response(
+            {'detail': 'Aucun voxel cortical (atlas) ne recouvre ce volume — vérifier le recalage MNI.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    somme_patient = float(np.sum(patient_data[mask]))
+    n_vox = int(np.sum(mask))
+    patient_zone_mean = somme_patient / max(n_vox, 1)
+    patient_brain_mean = float(np.mean(patient_data[brain_mask]))
+    patient_rel_index = patient_zone_mean / max(patient_brain_mean, 1e-12)
+
+    # Somme JSON (ancienne) ; recalcul préféré depuis le fichier référence pour aligner les échelles.
+    somme_reference = float(ref_row.brodmann_intensities[key])
+    reference_zone_mean = None
+    reference_brain_mean = None
+    reference_rel_index = None
+    ratio_relative_percent = None
+
+    rel_media = (ref_row.mri_registered_path or '').strip().replace('\\', '/')
+    ref_path = None
+    if rel_media:
+        ref_path = rel_media if os.path.isabs(rel_media) else os.path.join(str(settings.MEDIA_ROOT), rel_media)
+    if ref_path and os.path.isfile(ref_path):
+        try:
+            ref_img = nib.load(ref_path)
+            ref_data = np.asanyarray(ref_img.dataobj).astype(np.float64, copy=False)
+            atlas_on_ref = resample_to_img(
+                labels_img,
+                ref_img,
+                interpolation='nearest',
+                force_resample=True,
+            )
+            labels_ref = np.rint(np.asanyarray(atlas_on_ref.dataobj)).astype(np.int32)
+            if labels_ref.shape == ref_data.shape:
+                bm_ref = labels_ref > 0
+                if np.any(bm_ref):
+                    reference_brain_mean = float(np.mean(ref_data[bm_ref]))
+                    mask_ref = labels_ref == zone_number
+                    if np.any(mask_ref):
+                        somme_reference = float(np.sum(ref_data[mask_ref]))
+                        nv_ref = int(np.sum(mask_ref))
+                        reference_zone_mean = somme_reference / max(nv_ref, 1)
+                        reference_rel_index = reference_zone_mean / max(reference_brain_mean, 1e-12)
+        except Exception:
+            pass
+
+    if reference_rel_index is not None and reference_rel_index > 0:
+        ratio_relative_percent = float((patient_rel_index / reference_rel_index) * 100.0)
+
+    difference = somme_patient - somme_reference
+    if somme_reference == 0.0:
+        ratio_percent = None
+    else:
+        ratio_percent = (somme_patient / somme_reference) * 100.0
+
+    return Response({
+        'zone_number': zone_number,
+        'somme_patient': somme_patient,
+        'somme_reference': somme_reference,
+        'difference': difference,
+        'ratio_percent': ratio_percent,
+        'ratio_relative_percent': ratio_relative_percent,
+        'n_voxels': n_vox,
+        'patient_zone_mean': patient_zone_mean,
+        'patient_brain_mean': patient_brain_mean,
+        'reference_zone_mean': reference_zone_mean,
+        'reference_brain_mean': reference_brain_mean,
+        'patient_relative_index': patient_rel_index,
+        'reference_relative_index': reference_rel_index,
+    })
+
+
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def patient_latest_brodmann_analyse(request, patient_id):
+    """
+    Dernière fiche « analyse » (volume IRM recalé MNI) pour un patient du médecin connecté.
+    Utilisé par l’écran Brodmann pour retrouver l’id sans paramètre d’URL.
+    """
+    get_object_or_404(Patient, id=patient_id, doctor=request.user)
+    analyse = (
+        Analyse.objects.filter(patient_id=patient_id, doctor=request.user)
+        .order_by('-created_at')
+        .only('id')
+        .first()
+    )
+    if analyse is None:
+        return Response({'analyse_id': None})
+    return Response({'analyse_id': analyse.pk})
+
+
 @require_http_methods(["POST"])
 def delete_series(request):
     if not request.user or not request.user.is_authenticated:
@@ -2235,9 +2586,6 @@ def mri_file_preview(request, file_id):
         id=file_id,
         patient__doctor=request.user,
     )
-    deny_m = deny_if_patient_session_mismatch(request, mri_file.patient)
-    if deny_m:
-        return deny_m
 
     abs_path = getattr(mri_file.file, 'path', None)
     if not abs_path or not os.path.exists(abs_path):
@@ -2270,9 +2618,6 @@ def launch_patient_segmentation(request, patient_id):
             }
     """
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
-    deny_s = deny_if_patient_session_mismatch(request, patient)
-    if deny_s:
-        return deny_s
 
     model = (request.data.get('model') or 'unetpp').strip().lower()
     threshold = request.data.get('threshold', 0.75)
@@ -2392,14 +2737,10 @@ def segmentation_runs_list(request):
         limit = 20
     limit = max(1, min(limit, 100))
 
-    base = SegmentationRun.objects.filter(doctor=request.user)
-    if is_emergency_session(request):
-        base = base.filter(patient__emergency_temp=True)
-    else:
-        base = base.filter(patient__emergency_temp=False)
-
     runs_qs = (
-        base.select_related('patient')
+        SegmentationRun.objects
+        .filter(doctor=request.user)
+        .select_related('patient')
         .order_by('-created_at')[:limit]
     )
 
@@ -2429,9 +2770,6 @@ def segmentation_runs_list(request):
 @permission_classes([IsAuthenticated])
 def segmentation_run_detail(request, run_id):
     run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
-    deny_r = deny_if_patient_session_mismatch(request, run.patient)
-    if deny_r:
-        return deny_r
     serializer = SegmentationRunSerializer(run)
     return JsonResponse({'ok': True, 'run': serializer.data}, status=200)
 
@@ -2447,9 +2785,6 @@ ADOPT_MODEL_KEYS = frozenset({'unetpp', 'nnunet', 'swinunetr'})
 @permission_classes([IsAuthenticated])
 def segmentation_mask_review(request, run_id, mask_id):
     run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
-    deny_r = deny_if_patient_session_mismatch(request, run.patient)
-    if deny_r:
-        return deny_r
     mask = get_object_or_404(SegmentationMaskResult, id=mask_id, run=run)
     status_val = (request.data.get('review_status') or request.data.get('status') or '').strip().lower()
     allowed = {c[0] for c in SegmentationMaskResult.ReviewStatus.choices}
@@ -2494,9 +2829,6 @@ def _resolve_adopt_mask_source(row: SegmentationMaskResult, model_key: str):
 def segmentation_mask_adopt_reference(request, run_id, mask_id):
     """Adopte le masque M1, M2 ou M3 comme référence clinique (remplace initial + courant, efface prior)."""
     run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
-    deny_r = deny_if_patient_session_mismatch(request, run.patient)
-    if deny_r:
-        return deny_r
     if run.status != 'done':
         return JsonResponse({'ok': False, 'error': 'Le run doit etre termine.'}, status=400)
     row = get_object_or_404(SegmentationMaskResult, id=mask_id, run=run)
@@ -2546,9 +2878,6 @@ def segmentation_mask_adopt_reference(request, run_id, mask_id):
 @permission_classes([IsAuthenticated])
 def segmentation_run_resegment_masks(request, run_id):
     run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
-    deny_r = deny_if_patient_session_mismatch(request, run.patient)
-    if deny_r:
-        return deny_r
     if run.status != 'done':
         return JsonResponse({'ok': False, 'error': 'Le run doit etre termine avant une nouvelle segmentation.'}, status=400)
 
@@ -2633,9 +2962,6 @@ def segmentation_run_resegment_masks(request, run_id):
 @permission_classes([IsAuthenticated])
 def segmentation_run_modelisation_3d(request, run_id):
     run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
-    deny_r = deny_if_patient_session_mismatch(request, run.patient)
-    if deny_r:
-        return deny_r
 
     if run.status != 'done':
         return JsonResponse({'ok': False, 'error': 'Le run doit etre termine avant la modelisation 3D.'}, status=400)
@@ -3299,9 +3625,6 @@ def _build_report_pdf(run, modelisation):
 @permission_classes([IsAuthenticated])
 def segmentation_run_report_pdf(request, run_id):
     run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
-    deny_r = deny_if_patient_session_mismatch(request, run.patient)
-    if deny_r:
-        return deny_r
     if run.status != 'done':
         return JsonResponse({'ok': False, 'error': 'Le run doit etre termine avant generation du rapport PDF.'}, status=400)
 
@@ -3339,286 +3662,6 @@ def segmentation_run_report_pdf(request, run_id):
         return response
     except Exception as e:
         return JsonResponse({'ok': False, 'error': f'Echec generation rapport PDF: {str(e)}'}, status=500)
-
-
-@api_view(['GET'])
-@authentication_classes([CsrfExemptSessionAuthentication])
-@permission_classes([IsAuthenticated])
-def patient_files_download_zip(request, patient_id):
-    patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
-    deny_z = deny_if_patient_session_mismatch(request, patient)
-    if deny_z:
-        return deny_z
-    mri_files = MRIFile.objects.filter(patient=patient).order_by('uploaded_at')
-
-    if not mri_files.exists():
-        return JsonResponse({'ok': False, 'error': 'Aucun fichier MRI disponible pour ce patient.'}, status=404)
-
-    zip_buffer = io.BytesIO()
-    written = 0
-    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-        for mri in mri_files:
-            stored_name = getattr(mri.file, 'name', '')
-            if not stored_name or not default_storage.exists(stored_name):
-                continue
-
-            fallback_name = os.path.basename(stored_name)
-            arcname = _safe_relative_path(mri.relative_path or mri.original_filename, fallback_name)
-            if not arcname:
-                arcname = fallback_name or f"file_{mri.id}"
-
-            with default_storage.open(stored_name, 'rb') as file_handle:
-                zip_file.writestr(arcname, file_handle.read())
-                written += 1
-
-    if written == 0:
-        return JsonResponse({'ok': False, 'error': 'Aucun fichier lisible n\'a ete trouve.'}, status=404)
-
-    zip_buffer.seek(0)
-    filename = f"{patient.dossier_number}_dossier.zip"
-    response = HttpResponse(zip_buffer.getvalue(), content_type='application/zip')
-    response['Content-Disposition'] = f'attachment; filename="{filename}"'
-    response['Content-Length'] = str(len(response.content))
-    return response
-
-
-@api_view(['GET'])
-@authentication_classes([CsrfExemptSessionAuthentication])
-@permission_classes([IsAuthenticated])
-def mri_file_preview(request, file_id):
-    mri_file = get_object_or_404(
-        MRIFile.objects.select_related('patient'),
-        id=file_id,
-        patient__doctor=request.user,
-    )
-
-    abs_path = getattr(mri_file.file, 'path', None)
-    if not abs_path or not os.path.exists(abs_path):
-        return JsonResponse({'ok': False, 'error': 'Fichier introuvable.'}, status=404)
-
-    image = read_gray_image(abs_path)
-    if image is None:
-        return JsonResponse({'ok': False, 'error': 'Impossible de lire l\'image.'}, status=500)
-
-    image_u8 = np.clip(image, 0, 255).astype(np.uint8)
-    ok, encoded = cv2.imencode('.png', image_u8)
-    if not ok:
-        return JsonResponse({'ok': False, 'error': 'Echec encodage preview PNG.'}, status=500)
-
-    return HttpResponse(encoded.tobytes(), content_type='image/png')
-
-
-@csrf_exempt
-@api_view(['POST'])
-@authentication_classes([CsrfExemptSessionAuthentication])
-@permission_classes([IsAuthenticated])
-def launch_patient_segmentation(request, patient_id):
-    """
-    Launch synchronous ONNX segmentation for selected MRI files.
-    Request body:
-            {
-                "model": "unetpp" | "nnunet",
-                "file_ids": [1,2,3],
-                "threshold": 0.25
-            }
-    """
-    patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
-
-    model = (request.data.get('model') or 'unetpp').strip().lower()
-    threshold = request.data.get('threshold', 0.25)
-
-    try:
-        threshold = float(threshold)
-    except (TypeError, ValueError):
-        return JsonResponse({'ok': False, 'error': 'threshold invalide'}, status=400)
-
-    if threshold < 0.0 or threshold > 1.0:
-        return JsonResponse({'ok': False, 'error': 'threshold doit etre entre 0 et 1'}, status=400)
-
-    file_ids = request.data.get('file_ids') or []
-    if isinstance(file_ids, str):
-        try:
-            file_ids = json.loads(file_ids)
-        except Exception:
-            return JsonResponse({'ok': False, 'error': 'file_ids invalide'}, status=400)
-    if not isinstance(file_ids, list):
-        return JsonResponse({'ok': False, 'error': 'file_ids doit etre une liste'}, status=400)
-
-    queryset = MRIFile.objects.filter(patient=patient).order_by('uploaded_at')
-    if file_ids:
-        queryset = queryset.filter(id__in=file_ids)
-
-    mri_files = list(queryset)
-    if not mri_files:
-        return JsonResponse({'ok': False, 'error': 'Aucune coupe IRM selectionnee'}, status=400)
-
-    run = SegmentationRun.objects.create(
-        patient=patient,
-        doctor=request.user,
-        model_key=model,
-        threshold=threshold,
-        selected_count=len(mri_files),
-        status='running',
-    )
-
-    try:
-        results = run_segmentation_on_files(mri_files, model_key=model, threshold=threshold)
-
-        created_results = []
-        with transaction.atomic():
-            for item in results:
-                seg_row = SegmentationMaskResult.objects.create(
-                    run=run,
-                    patient=patient,
-                    mri_file_id=item['file_id'],
-                    slice_index=int(item.get('index') or 1),
-                    source_filename=item.get('source_filename') or '',
-                    source_file=item.get('source_file') or '',
-                    source_url=item.get('source_url') or '',
-                    mask_file=item.get('mask_file') or '',
-                    mask_url=item.get('mask_url') or '',
-                )
-                created_results.append(seg_row)
-
-            run.status = 'done'
-            run.processed_count = len(created_results)
-            run.completed_at = timezone.now()
-            run.error_message = ''
-            run.save(update_fields=['status', 'processed_count', 'completed_at', 'error_message'])
-
-    except FileNotFoundError as e:
-        run.status = 'failed'
-        run.error_message = str(e)
-        run.completed_at = timezone.now()
-        run.save(update_fields=['status', 'error_message', 'completed_at'])
-        return JsonResponse({'ok': False, 'error': str(e), 'run_id': run.id}, status=500)
-    except ValueError as e:
-        run.status = 'failed'
-        run.error_message = str(e)
-        run.completed_at = timezone.now()
-        run.save(update_fields=['status', 'error_message', 'completed_at'])
-        return JsonResponse({'ok': False, 'error': str(e), 'run_id': run.id}, status=400)
-    except RuntimeError as e:
-        run.status = 'failed'
-        run.error_message = str(e)
-        run.completed_at = timezone.now()
-        run.save(update_fields=['status', 'error_message', 'completed_at'])
-        return JsonResponse({'ok': False, 'error': str(e), 'run_id': run.id}, status=500)
-    except Exception as e:
-        run.status = 'failed'
-        run.error_message = f'Echec segmentation: {str(e)}'
-        run.completed_at = timezone.now()
-        run.save(update_fields=['status', 'error_message', 'completed_at'])
-        return JsonResponse({'ok': False, 'error': f'Echec segmentation: {str(e)}', 'run_id': run.id}, status=500)
-
-    return JsonResponse(
-        {
-            'ok': True,
-            'run_id': run.id,
-            'patient_id': patient.id,
-            'model': model,
-            'model_version': _segmentation_model_label(model),
-            'threshold': threshold,
-            'count': len(results),
-            'results': results,
-        },
-        status=200,
-    )
-
-
-@api_view(['GET'])
-@authentication_classes([CsrfExemptSessionAuthentication])
-@permission_classes([IsAuthenticated])
-def segmentation_runs_list(request):
-    limit_raw = request.GET.get('limit', 20)
-    try:
-        limit = int(limit_raw)
-    except (TypeError, ValueError):
-        limit = 20
-    limit = max(1, min(limit, 100))
-
-    runs_qs = (
-        SegmentationRun.objects
-        .filter(doctor=request.user)
-        .select_related('patient')
-        .order_by('-created_at')[:limit]
-    )
-
-    runs = []
-    for run in runs_qs:
-        patient = run.patient
-        full_name = f"{(patient.prenom or '').strip()} {(patient.nom or '').strip()}".strip()
-        runs.append({
-            'id': run.id,
-            'patient_id': patient.id,
-            'patient_name': full_name or f'Patient #{patient.id}',
-            'model_key': run.model_key,
-            'model_version': _segmentation_model_label(run.model_key),
-            'status': run.status,
-            'selected_count': run.selected_count,
-            'processed_count': run.processed_count,
-            'created_at': run.created_at.isoformat() if run.created_at else None,
-            'completed_at': run.completed_at.isoformat() if run.completed_at else None,
-            'error_message': run.error_message,
-        })
-
-    return JsonResponse({'ok': True, 'runs': runs}, status=200)
-
-
-@api_view(['GET'])
-@authentication_classes([CsrfExemptSessionAuthentication])
-@permission_classes([IsAuthenticated])
-def segmentation_run_detail(request, run_id):
-    run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
-    serializer = SegmentationRunSerializer(run)
-    return JsonResponse({'ok': True, 'run': serializer.data}, status=200)
-
-
-@csrf_exempt
-@api_view(['POST'])
-@authentication_classes([CsrfExemptSessionAuthentication])
-@permission_classes([IsAuthenticated])
-def segmentation_run_modelisation_3d(request, run_id):
-    run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
-
-    if run.status != 'done':
-        return JsonResponse({'ok': False, 'error': 'Le run doit etre termine avant la modelisation 3D.'}, status=400)
-
-    structure = str(request.data.get('structure') or 'both').strip().lower()
-    quality = str(request.data.get('quality') or 'standard').strip().lower()
-    smoothing = str(request.data.get('smoothing') or 'low').strip().lower()
-
-    spacing = parse_spacing(
-        {
-            'spacing_z': request.data.get('spacing_z'),
-            'spacing_y': request.data.get('spacing_y'),
-            'spacing_x': request.data.get('spacing_x'),
-        }
-    )
-    normative_total_mean_mm3, normative_total_std_mm3 = parse_reference_values(
-        {
-            'normative_total_mean_mm3': request.data.get('normative_total_mean_mm3'),
-            'normative_total_std_mm3': request.data.get('normative_total_std_mm3'),
-        }
-    )
-
-    try:
-        result = run_modelisation_3d(
-            run=run,
-            structure=structure,
-            quality=quality,
-            smoothing=smoothing,
-            spacing=spacing,
-            normative_total_mean_mm3=normative_total_mean_mm3,
-            normative_total_std_mm3=normative_total_std_mm3,
-        )
-        return JsonResponse({'ok': True, 'modelisation': result}, status=200)
-    except FileNotFoundError as e:
-        return JsonResponse({'ok': False, 'error': str(e)}, status=404)
-    except ValueError as e:
-        return JsonResponse({'ok': False, 'error': str(e)}, status=400)
-    except Exception as e:
-        return JsonResponse({'ok': False, 'error': f'Echec modelisation 3D: {str(e)}'}, status=500)
 
 
 @api_view(['GET'])
@@ -3740,6 +3783,390 @@ def apply_tform_to_series(request):
         return JsonResponse({'error': f'transformation failed: {str(e)}'}, status=500)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def apply_to_patient_series(request):
+    """
+    Apply the 2D registration transform to all MRI slices of a patient.
+    Uses parallel I/O, generates thumbnails in the same pass, returns
+    thumbnails directly so no second API call is needed.
+    """
+    import time as _time
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from threading import Lock
+
+    THUMB_SIZE = 96   # smaller = faster encoding
+    MAX_WORKERS = 6   # parallel file operations
+
+    if not request.user or not request.user.is_authenticated:
+        return JsonResponse({'error': 'login required'}, status=401)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'invalid JSON'}, status=400)
+
+    job_id     = data.get('jobId')
+    patient_id = data.get('patientId')
+    ref_patient_id = data.get('refPatientId')
+    print(f'apply_to_patient_series — job={job_id!r} patient={patient_id!r} ref={ref_patient_id!r}')
+
+    if not job_id or not patient_id:
+        return JsonResponse({'error': 'missing jobId or patientId'}, status=400)
+
+    # Series + transform
+    try:
+        series = Series.objects.get(job_id=job_id, user=request.user)
+        tform  = series.tform
+        if not tform:
+            return JsonResponse({'error': 'Aucune transformation trouvée. Faites d\'abord le recalage.'}, status=404)
+    except Series.DoesNotExist:
+        return JsonResponse({'error': 'Session de recalage introuvable.'}, status=404)
+
+    # Patient
+    try:
+        patient   = Patient.objects.get(id=int(patient_id), doctor=request.user)
+    except (Patient.DoesNotExist, ValueError, TypeError):
+        return JsonResponse({'error': f'Patient introuvable (id={patient_id}).'}, status=404)
+
+    mri_files = list(MRIFile.objects.filter(patient=patient, file_type='original').order_by('uploaded_at'))
+    if not mri_files:
+        return JsonResponse({'error': f'Aucune coupe IRM originale pour {patient.nom} {patient.prenom}.'}, status=404)
+
+    try:
+        warp_fn = _get_warp_from_tform(tform, UPLOAD_DIR)
+    except ValueError as e:
+        return JsonResponse({'error': f'Transformation invalide: {str(e)}'}, status=400)
+
+    t0 = _time.time()
+
+    # Send initial progress update
+    _emit_registration_progress(job_id, 5, 'application', f'Application à la série ({len(mri_files)} coupes)...')
+
+    registered_dir = os.path.join(UPLOAD_DIR, job_id, 'registered_series')
+    os.makedirs(registered_dir, exist_ok=True)
+
+    # Track progress with thread-safe counter
+    progress_lock = Lock()
+    processed_count = [0]  # Use list for mutable reference in nested function
+
+    def _process_patient_slice(mri):
+        """Read → warp → save full-size + generate thumbnail. Returns (order, path, thumb_b64|None)."""
+        try:
+            img = cv2.imread(mri.file.path, cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                return None
+            warped  = warp_fn(img)
+            out_path = os.path.join(registered_dir, f'reg_{mri.id}_{mri.original_filename}')
+            cv2.imwrite(out_path, warped)
+            # thumbnail in same pass
+            thumb = cv2.resize(warped, (THUMB_SIZE, THUMB_SIZE), interpolation=cv2.INTER_AREA)
+            _, buf = cv2.imencode('.jpg', thumb, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            b64 = base64.b64encode(buf).decode('utf-8')
+            
+            # Update progress
+            with progress_lock:
+                processed_count[0] += 1
+                pct = 5 + int((processed_count[0] / len(mri_files)) * 85)  # 5-90%
+                _emit_registration_progress(
+                    job_id, 
+                    pct, 
+                    'application',
+                    f'Traitement des coupes: {processed_count[0]}/{len(mri_files)}'
+                )
+            
+            return out_path, f'data:image/jpeg;base64,{b64}'
+        except Exception as e:
+            print(f'  patient slice error {mri.original_filename}: {e}')
+            with progress_lock:
+                processed_count[0] += 1
+            return None
+
+    # Run patient slices in parallel, preserve order
+    patient_results = [None] * len(mri_files)
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+        futures = {ex.submit(_process_patient_slice, mri): i for i, mri in enumerate(mri_files)}
+        for fut in as_completed(futures):
+            idx = futures[fut]
+            patient_results[idx] = fut.result()
+
+    patient_slice_paths = [r[0] for r in patient_results if r]
+    patient_thumbs_b64  = [r[1] if r else None for r in patient_results]
+
+    # Reference slices (optional) — also parallel
+    ref_slice_paths = []
+    ref_thumbs_b64  = []
+    ref_name = ''
+    
+    if ref_patient_id:
+        _emit_registration_progress(job_id, 91, 'reference', 'Traitement des coupes de référence...')
+
+        try:
+            ref_patient = Patient.objects.get(id=int(ref_patient_id), doctor=request.user)
+            ref_mri     = list(MRIFile.objects.filter(patient=ref_patient, file_type='original').order_by('uploaded_at'))
+            ref_dir     = os.path.join(UPLOAD_DIR, job_id, 'ref_series')
+            os.makedirs(ref_dir, exist_ok=True)
+
+            def _process_ref_slice(mri):
+                try:
+                    img = cv2.imread(mri.file.path, cv2.IMREAD_GRAYSCALE)
+                    if img is None:
+                        return None
+                    img = cv2.resize(img, (512, 512), interpolation=cv2.INTER_LINEAR)
+                    out_path = os.path.join(ref_dir, f'ref_{mri.id}_{mri.original_filename}')
+                    cv2.imwrite(out_path, img)
+                    thumb = cv2.resize(img, (THUMB_SIZE, THUMB_SIZE), interpolation=cv2.INTER_AREA)
+                    _, buf = cv2.imencode('.jpg', thumb, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                    b64 = base64.b64encode(buf).decode('utf-8')
+                    return out_path, f'data:image/jpeg;base64,{b64}'
+                except Exception as e:
+                    print(f'  ref slice error {mri.original_filename}: {e}')
+                    return None
+
+            ref_results = [None] * len(ref_mri)
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+                futures = {ex.submit(_process_ref_slice, mri): i for i, mri in enumerate(ref_mri)}
+                for fut in as_completed(futures):
+                    ref_results[futures[fut]] = fut.result()
+
+            ref_slice_paths = [r[0] for r in ref_results if r]
+            ref_thumbs_b64  = [r[1] if r else None for r in ref_results]
+            ref_name = f'{ref_patient.prenom} {ref_patient.nom}'.strip()
+        except (Patient.DoesNotExist, ValueError, TypeError) as e:
+            print(f'apply_to_patient_series — ref patient introuvable: {e}')
+
+    # Save metadata for series_comparison_slice
+    meta = {'patient_slices': patient_slice_paths, 'ref_slices': ref_slice_paths}
+    with open(os.path.join(UPLOAD_DIR, job_id, 'series_comparison.json'), 'w') as f:
+        json.dump(meta, f)
+
+    elapsed = round(_time.time() - t0, 1)
+    skipped = len(mri_files) - len(patient_slice_paths)
+    print(f'apply_to_patient_series OK — {len(patient_slice_paths)} pat + {len(ref_slice_paths)} ref in {elapsed}s')
+
+    # Send completion progress update
+    _emit_registration_progress(job_id, 100, 'completed', 'Application réussie — série recaléée prête', status='success')
+
+    return JsonResponse({
+        'success': True,
+        'patient_count':  len(patient_slice_paths),
+        'ref_count':      len(ref_slice_paths),
+        'skipped':        skipped,
+        'patient_name':   f'{patient.prenom} {patient.nom}'.strip(),
+        'patient_dossier': patient.dossier_number or '',
+        'ref_name':       ref_name,
+        'patient_thumbs': patient_thumbs_b64,   # list[str|None] — already generated
+        'ref_thumbs':     ref_thumbs_b64,
+    })
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def save_registered_series_to_patient(request):
+    """
+    Sauvegarde la série recalée complète comme un fichier ZIP dans le dossier patient (MRIFile).
+    Payload JSON : { jobId, patientId }
+    """
+    import io, zipfile
+    from datetime import datetime
+    from django.core.files.base import ContentFile
+    from django.conf import settings as _settings
+
+    if not request.user or not request.user.is_authenticated:
+        return JsonResponse({'error': 'login required'}, status=401)
+
+    try:
+        data = json.loads(request.body)
+    except Exception:
+        return JsonResponse({'error': 'invalid JSON'}, status=400)
+
+    job_id     = data.get('jobId', '')
+    patient_id = data.get('patientId')
+
+    if not job_id:
+        return JsonResponse({'error': 'jobId manquant'}, status=400)
+    if not patient_id:
+        return JsonResponse({'error': 'patientId manquant'}, status=400)
+
+    meta_path = os.path.join(UPLOAD_DIR, job_id, 'series_comparison.json')
+    if not os.path.exists(meta_path):
+        return JsonResponse({'error': 'Données de série introuvables — relancez l\'application.'}, status=404)
+
+    with open(meta_path, 'r') as f:
+        meta = json.load(f)
+
+    patient_slices = [p for p in meta.get('patient_slices', []) if os.path.exists(p)]
+    if not patient_slices:
+        return JsonResponse({'error': 'Aucune coupe recalée disponible.'}, status=404)
+
+    try:
+        patient = Patient.objects.get(id=int(patient_id), doctor=request.user)
+    except Patient.DoesNotExist:
+        return JsonResponse({'error': 'Patient introuvable'}, status=404)
+
+    # Générer le ZIP en mémoire
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for path in patient_slices:
+            zf.write(path, os.path.basename(path))
+    buf.seek(0)
+    zip_bytes = buf.read()
+
+    now_str  = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f'reg_serie_{patient.dossier_number}_{now_str}.zip'
+
+    mri_file = MRIFile(
+        patient=patient,
+        original_filename=filename,
+        file_size=len(zip_bytes),
+        file_type='analysis',
+        relative_path=f'patients_mri_files/patient_{patient.id}/registered_series/{filename}',
+    )
+    mri_file.file.save(filename, ContentFile(zip_bytes), save=True)
+
+    return JsonResponse({
+        'success': True,
+        'file_id': mri_file.id,
+        'filename': filename,
+        'slice_count': len(patient_slices),
+        'file_size_mb': round(len(zip_bytes) / 1024 / 1024, 2),
+    })
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def download_registered_series(request):
+    """Download registered and/or reference slices as a ZIP file."""
+    if not request.user or not request.user.is_authenticated:
+        return JsonResponse({'error': 'login required'}, status=401)
+
+    job_id = request.GET.get('jobId', '')
+    panel  = request.GET.get('panel', 'patient')   # 'patient' | 'reference' | 'all'
+
+    if not job_id:
+        return JsonResponse({'error': 'missing jobId'}, status=400)
+
+    meta_path = os.path.join(UPLOAD_DIR, job_id, 'series_comparison.json')
+    if not os.path.exists(meta_path):
+        return JsonResponse({'error': 'comparison data not found — run apply first'}, status=404)
+
+    with open(meta_path, 'r') as f:
+        meta = json.load(f)
+
+    to_zip = []
+    if panel in ('patient', 'all'):
+        for p in meta.get('patient_slices', []):
+            if os.path.exists(p):
+                to_zip.append((p, f'patient_recale/{os.path.basename(p)}'))
+    if panel in ('reference', 'all'):
+        for p in meta.get('ref_slices', []):
+            if os.path.exists(p):
+                to_zip.append((p, f'reference/{os.path.basename(p)}'))
+
+    if not to_zip:
+        return JsonResponse({'error': 'no files to export'}, status=404)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for abs_path, arc_name in to_zip:
+            zf.write(abs_path, arc_name)
+    buf.seek(0)
+
+    label = {'patient': 'serie_recalee', 'reference': 'serie_reference', 'all': 'series_completes'}.get(panel, panel)
+    filename = f'{label}_{job_id[:8]}.zip'
+    response = HttpResponse(buf.read(), content_type='application/zip')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def series_all_thumbnails(request):
+    """Return ALL slices of a panel as small (120×120) base64 thumbnails in one request."""
+    if not request.user or not request.user.is_authenticated:
+        return JsonResponse({'error': 'login required'}, status=401)
+
+    job_id = request.GET.get('jobId', '')
+    panel = request.GET.get('panel', 'patient')  # 'patient' | 'reference'
+
+    if not job_id:
+        return JsonResponse({'error': 'missing jobId'}, status=400)
+
+    meta_path = os.path.join(UPLOAD_DIR, job_id, 'series_comparison.json')
+    if not os.path.exists(meta_path):
+        return JsonResponse({'error': 'comparison data not found'}, status=404)
+
+    with open(meta_path, 'r') as f:
+        meta = json.load(f)
+
+    slices = meta.get('patient_slices' if panel == 'patient' else 'ref_slices', [])
+    if not slices:
+        return JsonResponse({'thumbs': [], 'count': 0})
+
+    THUMB_SIZE = 120
+    thumbs = []
+    for idx, path in enumerate(slices):
+        if not os.path.exists(path):
+            thumbs.append({'index': idx, 'b64': None})
+            continue
+        try:
+            img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                thumbs.append({'index': idx, 'b64': None})
+                continue
+            img = cv2.resize(img, (THUMB_SIZE, THUMB_SIZE), interpolation=cv2.INTER_AREA)
+            _, buf = cv2.imencode('.png', img)
+            b64 = base64.b64encode(buf).decode('utf-8')
+            thumbs.append({'index': idx, 'b64': f'data:image/png;base64,{b64}'})
+        except Exception as e:
+            print(f'series_all_thumbnails WARNING idx={idx}: {e}')
+            thumbs.append({'index': idx, 'b64': None})
+
+    return JsonResponse({'thumbs': thumbs, 'count': len(slices)})
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def series_comparison_slice(request):
+    """Return a single slice (base64 PNG) from the registered or reference series."""
+    if not request.user or not request.user.is_authenticated:
+        return JsonResponse({'error': 'login required'}, status=401)
+
+    job_id = request.GET.get('jobId', '')
+    panel = request.GET.get('panel', 'patient')   # 'patient' | 'reference'
+    try:
+        index = int(request.GET.get('index', 0))
+    except (ValueError, TypeError):
+        return JsonResponse({'error': 'invalid index'}, status=400)
+
+    if not job_id:
+        return JsonResponse({'error': 'missing jobId'}, status=400)
+
+    meta_path = os.path.join(UPLOAD_DIR, job_id, 'series_comparison.json')
+    if not os.path.exists(meta_path):
+        return JsonResponse({'error': 'comparison data not found — run apply first'}, status=404)
+
+    with open(meta_path, 'r') as f:
+        meta = json.load(f)
+
+    slices = meta.get('patient_slices' if panel == 'patient' else 'ref_slices', [])
+    if not slices:
+        return JsonResponse({'error': f'no slices for panel {panel}'}, status=404)
+
+    idx = max(0, min(index, len(slices) - 1))
+    img_path = slices[idx]
+    if not os.path.exists(img_path):
+        return JsonResponse({'error': f'slice file missing: {os.path.basename(img_path)}'}, status=404)
+
+    img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        return JsonResponse({'error': 'cannot read slice image'}, status=500)
+
+    _, buf = cv2.imencode('.png', img)
+    b64 = base64.b64encode(buf).decode('utf-8')
+    return JsonResponse({'image': f'data:image/png;base64,{b64}', 'index': idx, 'total': len(slices)})
 
 
 @api_view(['GET'])
@@ -3864,10 +4291,7 @@ def delete_patient(request, patient_id):
 def emergency_stage_patient(request):
     """
     Crée un Patient jetable (emergency_temp) avec fichiers — réservé aux sessions urgence.
-    Même logique de validation des fichiers que POST /patients/.
     """
-    # Pas de @login_required ici : le décorateur renvoie une redirection HTML ; Axios suit
-    # vers une autre origine (django:8000) → souvent erreur réseau / CORS côté SPA.
     if not request.user.is_authenticated:
         return JsonResponse(
             {'ok': False, 'error': 'Session expirée ou non authentifié. Reconnectez-vous en mode urgence.'},
@@ -3929,16 +4353,13 @@ def emergency_stage_patient(request):
                 storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
                 saved_path = default_storage.save(storage_path, uploaded_file)
 
-                mri_rec = MRIFile.objects.create(
+                MRIFile.objects.create(
                     patient=patient,
                     file=saved_path,
                     original_filename=uploaded_file.name,
                     relative_path=safe_rel,
                     file_size=int(getattr(uploaded_file, 'size', 0) or 0),
                 )
-                # Ne pas ouvrir chaque fichier ici (PIL/cv2 sur des stacks DICOM est coûteux et peut
-                # faire expirer le POST via le proxy Vite). Les dimensions sont calculées à l’étape
-                # « coupes » (GET …/mri-files/) via _ensure_mri_file_dimensions.
 
             out_serializer = PatientSerializer(patient, context={'request': request})
             return JsonResponse(
@@ -3988,7 +4409,6 @@ def emergency_login(request):
         attempt.save()
         login(request, user)
         request.session['username'] = user.username
-        request.session['emergency_access'] = True
         return JsonResponse({'ok': True, 'message': f'Connexion d\'urgence réussie ({attempt.count}/2)', 'user': user.username, 'count': attempt.count})
     except json.JSONDecodeError:
         return JsonResponse({'ok': False, 'error': 'JSON invalide'}, status=400)
@@ -4495,11 +4915,7 @@ def _dashboard_patient_payload(patient):
 @login_required
 def patients_list_create(request):
     if request.method == 'GET':
-        qs = (
-            Patient.objects.filter(doctor=request.user, emergency_temp=False)
-            .prefetch_related('mri_files')
-            .order_by('-created_at')
-        )
+        qs = Patient.objects.filter(doctor=request.user).prefetch_related('mri_files').order_by('-created_at')
 
         # Dashboard filters from query params
         search = (request.GET.get('id') or '').strip()
@@ -4526,15 +4942,6 @@ def patients_list_create(request):
 
         data = [_dashboard_patient_payload(p) for p in qs]
         return JsonResponse({'ok': True, 'patients': data})
-
-    if is_emergency_session(request):
-        return JsonResponse(
-            {
-                'ok': False,
-                'error': 'En mode urgence, utilisez l’import dossier / fichiers depuis la segmentation.',
-            },
-            status=403,
-        )
 
     try:
         is_json = bool(request.content_type and 'application/json' in request.content_type)
@@ -4743,12 +5150,10 @@ def patient_detail_update_delete_legacy(request, patient_id: uuid.UUID):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@login_required
 def upload_mri_files(request, patient_id: int):
     print(f"Nadine Yassmine - upload_mri_files endpoint works - patient_id: {patient_id}, user: {request.user.username}")
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
-    deny_u = deny_if_patient_session_mismatch(request, patient)
-    if deny_u:
-        return deny_u
 
     files = request.FILES.getlist('files')
     if not files:
@@ -4866,13 +5271,14 @@ def _compute_slice_quality(file_path: str) -> dict:
 
 
 @api_view(['GET'])
+@login_required
 def list_mri_files(request, patient_id: int):
     print(f"Nadine Yassmine - list_mri_files endpoint works - patient_id: {patient_id}, user: {request.user.username}")
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
     deny_l = deny_if_patient_session_mismatch(request, patient)
     if deny_l:
         return deny_l
-    mri_files = list(MRIFile.objects.filter(patient=patient).order_by('-uploaded_at'))
+    mri_files = list(MRIFile.objects.filter(patient=patient, file_type='original').order_by('-uploaded_at'))
 
     quality_map = {}
     for m in mri_files:
@@ -4907,13 +5313,8 @@ def list_mri_files(request, patient_id: int):
 
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
+@login_required
 def mri_files_list_upload(request, patient_id: int):
-    # Pas @login_required : redirection HTML → Axios sur autre origine = erreur réseau.
-    if not request.user.is_authenticated:
-        return JsonResponse(
-            {'ok': False, 'error': 'Session expirée ou non authentifié.', 'mri_files': []},
-            status=401,
-        )
     if request.method == 'GET':
         return list_mri_files(request, patient_id)
     return upload_mri_files(request, patient_id)

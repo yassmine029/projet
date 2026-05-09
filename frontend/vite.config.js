@@ -1,6 +1,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+// Même machine que le backend Django (change si run-dev utilise un autre port).
+const API_TARGET = process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8000'
+const WS_TARGET = API_TARGET.replace(/^http/, 'ws')
+
 export default defineConfig({
   plugins: [react()],
   test: {
@@ -16,7 +20,7 @@ export default defineConfig({
     proxy: {
       '/api': {
         // 127.0.0.1 évite parfois des soucis IPv6/localhost sous Windows
-        target: 'http://127.0.0.1:8000',
+        target: API_TARGET,
         changeOrigin: true,
         secure: false,
         // Uploads multi-fichiers (DICOM) : défaut court → ECONNRESET / « Network Error » côté client
@@ -25,10 +29,13 @@ export default defineConfig({
         rewrite: path => path.replace(/^\/api/, '/api'),
       },
       '/ws': {
-        target: 'ws://127.0.0.1:8000',
+        target: WS_TARGET,
         ws: true,
         changeOrigin: true,
         secure: false,
+        // Recalage 3D peut prendre plusieurs minutes — évite ECONNRESET côté proxy
+        timeout: 0,
+        proxyTimeout: 0,
       },
     },
   },

@@ -20,6 +20,8 @@ DEBUG = os.getenv('DEBUG', '1') == '1'
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost 127.0.0.1 testserver *').split()
 
 INSTALLED_APPS = [
+    # ASGI / WebSockets (recalage progression temps réel) — doit précéder staticfiles pour runserver
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -28,6 +30,8 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'corsheaders',
+    'channels',
+    'django_extensions',
     'api',
     'django.contrib.postgres',
 ]
@@ -62,6 +66,13 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'backend_django.wsgi.application'
+# Requis pour WebSockets (/ws/registration/...) — sans cela, le proxy Vite coupe avec ECONNRESET
+ASGI_APPLICATION = 'backend_django.asgi.application'
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    },
+}
 
 DATABASES = {
     'default': {
@@ -178,3 +189,15 @@ NNUNET_MODEL_PATH = (
     or (_nnunet_v2_default if os.path.exists(_nnunet_v2_default) else None)
     or _nnunet_legacy_default
 )
+
+# Recalage MINE (2D + 3D) : si True, aucun repli CPU — erreur explicite sans CUDA/MPS.
+# Défaut 1 (GPU obligatoire). Mettre MINE_FORCE_GPU=0 pour autoriser le CPU (dev sans GPU).
+MINE_FORCE_GPU = os.getenv('MINE_FORCE_GPU', '1').strip().lower() in ('1', 'true', 'yes')
+
+# Carte des régions pour l’identification et les intensités : api.official_atlas (Nilearn, Harvard–Oxford).
+# Sujet de référence d’intensité (une seule exécution du script runscript).
+REFERENCE_INTENSITY_NIFTI_SOURCE = os.getenv(
+    'REFERENCE_INTENSITY_NIFTI_SOURCE',
+    r'C:\Users\Asus\Desktop\reference_intensité\sujet1.nii',
+)
+REFERENCE_INTENSITY_NOM = os.getenv('REFERENCE_INTENSITY_NOM', 'sujet1')

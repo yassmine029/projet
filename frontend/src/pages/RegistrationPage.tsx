@@ -3,21 +3,23 @@
 // ================================================================
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, ArrowDown, Upload, X, Eye, Download, Trash2, Check,
   MousePointer2, ZoomIn, ZoomOut, RotateCcw, Keyboard, BrainCircuit, Brain, Undo2,
-  Box, Loader2, FileText, Users, ChevronRight, Search, ScanSearch, Zap
+  Box, Loader2, FileText, Users, ChevronRight, Search, ScanSearch, Zap, ChevronLeft, Columns2
 } from 'lucide-react';
 
 const GuideIcon = () => (
   <img src="/assets/images/creative.png" alt="guide" className="h-6 w-6 object-contain" />
 );
-import api from '../api';
+import api, { getBrodmannIntensity } from '../api';
 import RegistrationModeSelector from '../components/RegistrationModeSelector';
 import AutoAlignOverlay from '../components/AutoAlignOverlay';
+import ExplorationPage from './ExplorationPage';
 import BrodmannIdentificationView from '../components/BrodmannIdentificationView';
 import BrodmannZone3D from '../components/BrodmannZone3D';
+import BrodmannIntensityPanel from '../components/BrodmannIntensityPanel';
 import BrainVolume3D from '../components/BrainVolume3D';
 import OrientationPanel from '../components/viewer/OrientationPanel';
 import PatientSelectionModal from '../components/PatientSelectionModal';
@@ -32,7 +34,6 @@ interface User {
   prenom?: string;
   nom?: string;
   specialty?: string;
-  is_emergency_session?: boolean;
 }
 interface RegistrationPageProps { user: User; accessToken: string | null; onNavigate: (page: Page) => void; }
 interface Point { x: number; y: number; id: number; }
@@ -49,9 +50,39 @@ interface OrientationState { rotation: number; flipH: boolean; flipV: boolean; }
 const POINT_COLORS = ['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899','#06B6D4','#F97316'];
 const DEFAULT_VIEW: ViewTransform = { scale: 1, panX: 0, panY: 0 };
 
+interface BrodmannIntensityPayload {
+  zone_number: number;
+  somme_patient: number;
+  somme_reference: number;
+  difference: number;
+  ratio_percent: number | null;
+  ratio_relative_percent?: number | null;
+  n_voxels?: number;
+  patient_zone_mean?: number;
+  patient_brain_mean?: number;
+  reference_zone_mean?: number | null;
+  reference_brain_mean?: number | null;
+  patient_relative_index?: number;
+  reference_relative_index?: number | null;
+}
+
 export function RegistrationPage({ user, accessToken, onNavigate }: RegistrationPageProps) {
   const navigate = useNavigate();
-  const isEmergencySession = Boolean(user?.is_emergency_session);
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const brodmannAnalyseIdFromNav = React.useMemo(() => {
+    const q = searchParams.get('brodmannAnalyseId');
+    if (q != null && q !== '') {
+      const n = parseInt(q, 10);
+      if (!Number.isNaN(n)) return n;
+    }
+    const s = location.state as { brodmannAnalyseId?: number } | null | undefined;
+    return typeof s?.brodmannAnalyseId === 'number' ? s.brodmannAnalyseId : null;
+  }, [searchParams, location.state]);
+
+  const [brodmannAnalyseIdAuto, setBrodmannAnalyseIdAuto] = useState<number | null>(null);
+  const brodmannAnalyseId = brodmannAnalyseIdFromNav ?? brodmannAnalyseIdAuto;
+
   const doctorDisplayName = React.useMemo(() => {
     const fromFullName = String(user?.fullName || user?.full_name || '').trim();
     if (fromFullName && !fromFullName.includes('@')) return fromFullName;
@@ -123,6 +154,11 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const [originalImages, setOriginalImages] = useState<{ ref: string; pat: string } | null>(null);
   const [displayResultImages, setDisplayResultImages] = useState<{ ref: string; pat: string } | null>(null);
   const [overlayOpacity, setOverlayOpacity] = useState(50);
+  const [splitPos, setSplitPos]             = useState(50);
+  const [resultsAxis, setResultsAxis]       = useState('axial');
+  const [resultsIdx, setResultsIdx]         = useState(0);
+  const [resultsMax, setResultsMax]         = useState(0);
+  const [resultsSliceLoading, setResultsSliceLoading] = useState(false);
   const [showManualGuide, setShowManualGuide] = useState(false);
   const [showAutoGuide, setShowAutoGuide] = useState(false);
   const [showAutoGuide3D, setShowAutoGuide3D] = useState(false);
@@ -132,8 +168,30 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const [, setNormalizedOriginal] = useState<{ ref: string; pat: string } | null>(null);
   const [pendingShowResult, setPendingShowResult] = useState(false);
   const [showValidationModal, setShowValidationModal] = useState(false);
+  const [showExploration, setShowExploration] = useState(false);
   const [savingToPatient, setSavingToPatient] = useState(false);
-  const [saveToPatientResult, setSaveToPatientResult] = useState<{ ok: boolean; filename?: string; uploadedAt?: string; error?: string } | null>(null);
+  const [saveToPatientResult, setSaveToPatientResult] = useState<{ ok: boolean; filename?: string; downloadUrl?: string; uploadedAt?: string; error?: string } | null>(null);
+  const [autoSavedToPatient, setAutoSavedToPatient] = useState<{ ok: boolean; filename?: string } | null>(null);
+  const [applyingToSeries, setApplyingToSeries] = useState(false);
+  const [applyingToSeriesStatus, setApplyingToSeriesStatus] = useState<'idle'|'processing'|'success'|'error'>('idle');
+  const [applyingToSeriesProgress, setApplyingToSeriesProgress] = useState<number | undefined>(undefined);
+  const [applyingToSeriesMessage, setApplyingToSeriesMessage] = useState('');
+  const [applyingToSeriesError, setApplyingToSeriesError] = useState('');
+  const [comparisonData, setComparisonData] = useState<{
+    patientCount: number; refCount: number;
+    patientName: string; patientDossier: string; refName: string;
+  } | null>(null);
+  // per-panel: thumbs (small), selected index, full-size preview, loading flags
+  const [panelThumbs, setPanelThumbs] = useState<{ ref: (string | null)[]; patient: (string | null)[] }>({ ref: [], patient: [] });
+  const [panelThumbsLoading, setPanelThumbsLoading] = useState<{ ref: boolean; patient: boolean }>({ ref: false, patient: false });
+  const [panelIndex, setPanelIndex] = useState<{ ref: number; patient: number }>({ ref: 0, patient: 0 });
+  const [panelFullImg, setPanelFullImg] = useState<{ ref: string | null; patient: string | null }>({ ref: null, patient: null });
+  const [panelFullLoading, setPanelFullLoading] = useState<{ ref: boolean; patient: boolean }>({ ref: false, patient: false });
+  const panelDebounceRef = useRef<{ ref: ReturnType<typeof setTimeout> | null; patient: ReturnType<typeof setTimeout> | null }>({ ref: null, patient: null });
+  const filmstripRefRef = useRef<HTMLDivElement>(null);
+  const filmstripPatRef = useRef<HTMLDivElement>(null);
+  const [showSeriesApplyConfirm, setShowSeriesApplyConfirm] = useState(false);
+  const [showRegisteredSeries, setShowRegisteredSeries] = useState(false);
   const [loadingCorticalZones, setLoadingCorticalZones] = useState(false);
   const [brodmannTooltip, setBrodmannTooltip] = useState<{
     panel: 'reference' | 'patient';
@@ -143,6 +201,9 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     zoneId?: number;
     zoneName?: string;
   } | null>(null);
+  const [brodmannIntensityStats, setBrodmannIntensityStats] = useState<BrodmannIntensityPayload | null>(null);
+  const [brodmannIntensityLoading, setBrodmannIntensityLoading] = useState(false);
+  const [brodmannIntensityError, setBrodmannIntensityError] = useState<string | null>(null);
 
   const [showPatientSelector, setShowPatientSelector] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState<any>(null);
@@ -170,6 +231,34 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   // Tracks which patient was confirmed for each panel (to prevent duplicate selection)
   const [confirmedPanelPatients, setConfirmedPanelPatients] = useState<{ reference: any | null; patient: any | null }>({ reference: null, patient: null });
 
+  useEffect(() => {
+    if (brodmannAnalyseIdFromNav != null) {
+      setBrodmannAnalyseIdAuto(null);
+      return;
+    }
+    const pid = confirmedPanelPatients.patient?.id;
+    if (phase !== 3 || registrationDimension !== 'advanced' || typeof pid !== 'number') {
+      setBrodmannAnalyseIdAuto(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .get(`/patients/${pid}/latest-brodmann-analyse/`)
+      .then((res) => {
+        if (cancelled) return;
+        const aid = res.data?.analyse_id;
+        setBrodmannAnalyseIdAuto(
+          typeof aid === 'number' && !Number.isNaN(aid) ? aid : null
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setBrodmannAnalyseIdAuto(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [brodmannAnalyseIdFromNav, phase, registrationDimension, confirmedPanelPatients.patient?.id]);
+
   // Interactive confirmation dialog
   const [confirmDialog, setConfirmDialog] = useState<{
     title: string;
@@ -179,14 +268,6 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     danger?: boolean;
     onConfirm: () => void;
   } | null>(null);
-
-  useEffect(() => {
-    if (!isEmergencySession) return;
-    setPanelPickerOpen(null);
-    setPickerSelectedPatient(null);
-    setPickerPatientFiles([]);
-    setPickerSearch('');
-  }, [isEmergencySession]);
 
   const refCanvasRef       = useRef<HTMLCanvasElement>(null);
   const patCanvasRef       = useRef<HTMLCanvasElement>(null);
@@ -202,6 +283,54 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const sliceDebounceRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoAlignWsRef     = useRef<WebSocket | null>(null);
   const lastProgressUpdateRef = useRef<number>(0);
+  const splitDragRef       = useRef(false);
+  const superpositionPanelRef = useRef<HTMLDivElement>(null);
+
+  const loadBrodmannIntensity = useCallback(
+    async (zoneNumber: number) => {
+      const useJob = brodmannAnalyseId == null && jobId;
+      if (brodmannAnalyseId == null && !useJob) return;
+      setBrodmannIntensityLoading(true);
+      setBrodmannIntensityError(null);
+      try {
+        const { data } = await getBrodmannIntensity({
+          analyseId: brodmannAnalyseId ?? undefined,
+          jobId: useJob ? jobId : undefined,
+          zoneNumber,
+        });
+        setBrodmannIntensityStats(data as BrodmannIntensityPayload);
+      } catch (err: unknown) {
+        setBrodmannIntensityStats(null);
+        const ax = err as { response?: { data?: { detail?: string } } };
+        const detail = ax?.response?.data?.detail;
+        setBrodmannIntensityError(
+          typeof detail === 'string' ? detail : 'Impossible de charger les intensités Brodmann.'
+        );
+      } finally {
+        setBrodmannIntensityLoading(false);
+      }
+    },
+    [brodmannAnalyseId, jobId]
+  );
+
+  /** Recalcule les intensités quand la zone ou l’analyse MNI devient disponible (évite le clic « trop tôt » avant la fin du chargement auto de l’id). */
+  useEffect(() => {
+    if (phase !== 3 || registrationDimension !== 'advanced') return;
+    const canIntensity = brodmannAnalyseId != null || (jobId != null && jobId !== '');
+    if (!canIntensity) {
+      setBrodmannIntensityStats(null);
+      setBrodmannIntensityError(null);
+      setBrodmannIntensityLoading(false);
+      return;
+    }
+    if (zone?.id == null) {
+      setBrodmannIntensityStats(null);
+      setBrodmannIntensityError(null);
+      setBrodmannIntensityLoading(false);
+      return;
+    }
+    void loadBrodmannIntensity(zone.id);
+  }, [phase, brodmannAnalyseId, jobId, zone?.id, loadBrodmannIntensity, registrationDimension]);
 
   const applyPatientOrientationToScreen = useCallback((sx: number, sy: number, t: ImageTransform) => {
     const w = t.imageWidth * t.scale;
@@ -444,7 +573,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   useEffect(() => { drawCanvas('patient');   }, [drawCanvas]);
 
   useEffect(() => {
-    if (autoAlignStatus !== 'processing' || !jobId) return;
+    if ((autoAlignStatus !== 'processing' && applyingToSeriesStatus !== 'processing') || !jobId) return;
 
     const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${wsProto}//${window.location.host}/ws/registration/${encodeURIComponent(jobId)}/`;
@@ -454,7 +583,11 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       autoAlignWsRef.current = ws;
 
       ws.onopen = () => {
-        setAutoAlignStageMessage('Moteur de recalage connecté — en attente des données...');
+        if (autoAlignStatus === 'processing') {
+          setAutoAlignStageMessage('Moteur de recalage connecté — en attente des données...');
+        } else if (applyingToSeriesStatus === 'processing') {
+          setApplyingToSeriesMessage('Connexion établie — application en cours...');
+        }
       };
 
       ws.onmessage = (evt) => {
@@ -464,13 +597,20 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
           if (String(payload?.jobId || '') !== String(jobId)) return;
 
           const p = Number(payload?.progress);
-          if (Number.isFinite(p)) {
-            setAutoAlignProgress(Math.max(0, Math.min(100, Math.round(p))));
-            lastProgressUpdateRef.current = Date.now();
-          }
+          const msg = String(payload?.message || payload?.stage || '').trim();
 
-          const stageText = String(payload?.message || payload?.stage || '').trim();
-          if (stageText) setAutoAlignStageMessage(stageText);
+          if (autoAlignStatus === 'processing') {
+            if (Number.isFinite(p)) {
+              setAutoAlignProgress(Math.max(0, Math.min(100, Math.round(p))));
+              lastProgressUpdateRef.current = Date.now();
+            }
+            if (msg) setAutoAlignStageMessage(msg);
+          } else if (applyingToSeriesStatus === 'processing') {
+            if (Number.isFinite(p)) {
+              setApplyingToSeriesProgress(Math.max(0, Math.min(100, Math.round(p))));
+            }
+            if (msg) setApplyingToSeriesMessage(msg);
+          }
         } catch {
           // Ignore malformed websocket payloads.
         }
@@ -493,7 +633,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         // ignore
       }
     };
-  }, [autoAlignStatus, jobId]);
+  }, [autoAlignStatus, applyingToSeriesStatus, jobId]);
 
   useEffect(() => {
     if (autoAlignStatus !== 'processing') return;
@@ -1344,6 +1484,61 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     }
   };
 
+  const resetCurrentRegistration = () => {
+    // Réinitialise la session sans changer le mode (2D/3D/advanced)
+    sessionStorage.removeItem('volumeJobId');
+    setUploadedFiles({});
+    setReferenceImage({ src: '', points: [] });
+    setPatientImage({ src: '', points: [] });
+    setActiveImage('reference');
+    setShowResult(false);
+    setShowValidationModal(false);
+    setPhase(1);
+    setNextPointId(1);
+    setOverlayRefOpacity(78);
+    setOverlayPatOpacity(72);
+    setHeatSensitivity(50);
+    setShowGrid(true);
+    setGridSize(32);
+    setVisMode('overlay');
+    setRegistrationMode(registrationDimension === '2d' ? 'manual' : 'mine');
+    setReferenceJobId('');
+    setCameFromMINE(false);
+    setAutoAlignStatus('idle');
+    setAutoAlignMetrics(null);
+    setAutoAlignError('');
+    setAutoAlignProgress(undefined);
+    setAutoAlignStageMessage('');
+    setJobId('');
+    setRefView(DEFAULT_VIEW);
+    setPatView(DEFAULT_VIEW);
+    setAxis('axial');
+    setIndex(0);
+    setMaxIndex(0);
+    setSliceShape(null);
+    setSuggestedSlice(null);
+    setSliceConfirmed(false);
+    setAtlasSliceConfirmed(false);
+    setSliceLoading(false);
+    setSliceError('');
+    setAtlasSliceError('');
+    setZone(null);
+    setInsideBrain(false);
+    setHasBrodmannAttempt(false);
+    setAtlasSource('official');
+    setShowPatientOrientation(false);
+    setPatientOrientation({ rotation: 0, flipH: false, flipV: false });
+    setResultImages(null);
+    setOriginalImages(null);
+    setDisplayResultImages(null);
+    setNormalizedResult(null);
+    setNormalizedOriginal(null);
+    setPendingShowResult(false);
+    setSaveToPatientResult(null);
+    setAutoSavedToPatient(null);
+    setConfirmedPanelPatients({ reference: null, patient: null });
+  };
+
   const startNewRegistration = () => {
     sessionStorage.removeItem('volumeJobId');
     setRegistrationDimension(null);
@@ -1616,7 +1811,10 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
 
   const handleSaveToPatient = async () => {
     const dbPatient = confirmedPanelPatients.patient ?? confirmedPanelPatients.reference;
-    if (!dbPatient) return;
+    if (!dbPatient) {
+      setSaveToPatientResult({ ok: false, error: 'Aucun patient sélectionné — choisissez un patient dans le panneau avant de valider.' });
+      return;
+    }
     setSavingToPatient(true);
     setSaveToPatientResult(null);
     try {
@@ -1638,7 +1836,14 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       });
       const data = res.data;
       if (data.success) {
-        setSaveToPatientResult({ ok: true, filename: data.original_filename, uploadedAt: data.uploaded_at });
+        setSaveToPatientResult({ ok: true, filename: data.original_filename, downloadUrl: data.file_url, uploadedAt: data.uploaded_at });
+        if (typeof data.brodmann_analyse_id === 'number') {
+          window.dispatchEvent(
+            new CustomEvent('brodmann-analyse-updated', {
+              detail: { analyseId: data.brodmann_analyse_id, patientId: dbPatient.id },
+            })
+          );
+        }
       } else {
         setSaveToPatientResult({ ok: false, error: data.error || 'Erreur inconnue' });
       }
@@ -1650,31 +1855,187 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     }
   };
 
-  const handleRejectRegistration = async () => {
+  const handleExportSeries = async (panel: 'patient' | 'reference' | 'all') => {
     if (!jobId) return;
     try {
-      setShowValidationModal(false);
-      setAutoAlignStatus('processing');
-      const res = await fetch('/api/volume/reject-registration', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ jobId }),
+      const res = await fetch(
+        `/api/download_registered_series?jobId=${encodeURIComponent(jobId)}&panel=${panel}`,
+        { credentials: 'include' }
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Export échoué : ${err.error || res.statusText}`);
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const label = panel === 'patient' ? 'serie_recalee' : panel === 'reference' ? 'serie_reference' : 'series_completes';
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${label}_${jobId.slice(0, 8)}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('handleExportSeries:', err);
+      alert('Erreur lors du téléchargement.');
+    }
+  };
+
+  const handleDownloadVolume = async (panel: 'patient' | 'reference' | 'all') => {
+    // For patient panel: prefer the already-saved media file (no extra endpoint needed)
+    if (panel === 'patient' && saveToPatientResult?.downloadUrl) {
+      const a = document.createElement('a');
+      a.href = saveToPatientResult.downloadUrl;
+      a.download = saveToPatientResult.filename || 'volume_recale.nii.gz';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      return;
+    }
+    if (!jobId) return;
+    try {
+      const res = await fetch(
+        `/api/volume/download-nifti?jobId=${encodeURIComponent(jobId)}&panel=${panel}`,
+        { credentials: 'include' }
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const msg = err.error || res.statusText;
+        alert(`Export échoué : ${msg}\n\nSi le problème persiste, redémarrez le serveur Django.`);
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const labels: Record<string, string> = { patient: 'volume_recale', reference: 'volume_reference', all: 'volumes' };
+      const exts:   Record<string, string> = { patient: '.nii.gz',       reference: '.nii.gz',          all: '.zip' };
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${labels[panel]}_${jobId.slice(0, 8)}${exts[panel]}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('handleDownloadVolume:', err);
+      alert('Erreur lors du téléchargement.');
+    }
+  };
+
+  const handleApplyToSeries = async () => {
+    const dbPatient = confirmedPanelPatients.patient;
+    const dbRef = confirmedPanelPatients.reference;
+    if (!dbPatient || !jobId) {
+      alert(`Données manquantes — patient: ${JSON.stringify(dbPatient?.id)}, jobId: ${jobId}`);
+      return;
+    }
+    setApplyingToSeries(true);
+    setApplyingToSeriesStatus('processing');
+    setApplyingToSeriesProgress(undefined);
+    setApplyingToSeriesMessage('Initialisation de l\'application à la série...');
+    setApplyingToSeriesError('');
+    setComparisonData(null);
+    setShowSeriesApplyConfirm(false);
+    try {
+      console.log('apply_to_patient_series envoi:', { jobId, patientId: dbPatient.id, refPatientId: dbRef?.id });
+      const res = await api.post('/apply_to_patient_series', {
+        jobId,
+        patientId: dbPatient.id,
+        refPatientId: dbRef?.id ?? null,
       });
-      if (!res.ok) throw new Error('Rejet échoué');
-      setShowResult(false);
-      setAutoAlignStatus('idle');
-      setPhase(2);
-      // Optional: reset images to original
-      const resetRes = await fetch(`/api/volume/get-slice?jobId=${jobId}&axis=${axis}&index=${index}`, { credentials: 'include' });
-      if (resetRes.ok) {
-        const data = await resetRes.json();
-        setPatientImage(p => ({ ...p, src: data.slice || data.image }));
+      const data = res.data;
+      console.log('apply_to_patient_series réponse:', data);
+
+      if (!data.success) {
+        const msg = `Le serveur a répondu sans succès.\nRéponse: ${JSON.stringify(data).slice(0, 200)}`;
+        setApplyingToSeriesError(msg);
+        setApplyingToSeriesStatus('error');
+        alert(msg);
+        return;
+      }
+
+      const patientCount = typeof data.patient_count === 'number' ? data.patient_count : 0;
+      const refCount     = typeof data.ref_count     === 'number' ? data.ref_count     : 0;
+
+      setComparisonData({
+        patientCount,
+        refCount,
+        patientName:    data.patient_name    ?? dbPatient.nom ?? '',
+        patientDossier: data.patient_dossier ?? '',
+        refName:        data.ref_name        ?? dbRef?.nom    ?? '',
+      });
+
+      // Thumbnails inclus dans la réponse — pas besoin de second appel
+      if (Array.isArray(data.patient_thumbs)) {
+        setPanelThumbs(prev => ({ ...prev, patient: data.patient_thumbs as (string | null)[] }));
+      }
+      if (Array.isArray(data.ref_thumbs)) {
+        setPanelThumbs(prev => ({ ...prev, ref: data.ref_thumbs as (string | null)[] }));
+      }
+
+      setShowRegisteredSeries(true);
+      setShowValidationModal(false);
+      setApplyingToSeriesStatus('success');
+      setApplyingToSeriesMessage('Série recaléée et prête pour examen');
+      setApplyingToSeriesProgress(100);
+
+      // ── Sauvegarde automatique de la série recalée dans le dossier patient ──
+      try {
+        const saveRes = await fetch('/api/save_registered_series_to_patient', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jobId, patientId: dbPatient.id }),
+        });
+        const saveData = await saveRes.json();
+        if (saveData.success) {
+          setAutoSavedToPatient({ ok: true, filename: saveData.filename });
+        } else {
+          setAutoSavedToPatient({ ok: false });
+        }
+      } catch {
+        setAutoSavedToPatient({ ok: false });
       }
     } catch (err: any) {
-      console.error(err);
+      const serverMsg = err?.response?.data?.error
+        ?? (typeof err?.response?.data === 'string' ? err.response.data.slice(0, 300) : null)
+        ?? err?.message ?? 'Erreur réseau';
+      const status = err?.response?.status ?? '?';
+      const msg = `Erreur ${status} lors de l'application à la série :\n${serverMsg}`;
+      setApplyingToSeriesError(msg);
+      setApplyingToSeriesStatus('error');
+      alert(msg);
+      console.error('apply_to_patient_series error:', err?.response?.data);
     } finally {
-      setAutoAlignStatus('idle');
+      setApplyingToSeries(false);
+    }
+  };
+
+  const handleRejectRegistration = async () => {
+    // UI reset always happens regardless of jobId
+    setShowValidationModal(false);
+    setShowResult(false);
+    setAutoAlignStatus('idle');
+    setReferenceImage({ src: '', points: [] });
+    setPatientImage({ src: '', points: [] });
+    setConfirmedPanelPatients({ reference: null, patient: null });
+    setAutoSavedToPatient(null);
+    setSaveToPatientResult(null);
+    setPhase(1);
+
+    // Notify backend only when a server-side job exists
+    if (jobId) {
+      try {
+        await fetch('/api/volume/reject-registration', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ jobId }),
+        });
+      } catch (err) {
+        console.error('reject-registration API error:', err);
+      }
     }
   };
 
@@ -1727,7 +2088,13 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       // continue anyway — the jobId is valid, exploration can proceed
     }
     sessionStorage.setItem('volumeJobId', jobId);
-    navigate('/exploration');
+    const dbPatient = confirmedPanelPatients.patient ?? confirmedPanelPatients.reference;
+    if (dbPatient?.id != null) {
+      sessionStorage.setItem('explorationPatientId', String(dbPatient.id));
+    } else {
+      sessionStorage.removeItem('explorationPatientId');
+    }
+    setShowExploration(true);
   };
 
   const getImageRatioFromClick = (
@@ -1758,7 +2125,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   };
 
   const handleBrodmannClick = async (e: React.MouseEvent<HTMLCanvasElement>, type: 'reference' | 'patient') => {
-    if (phase !== 3 || !jobId) return;
+    if (phase !== 3 || registrationDimension !== 'advanced' || !jobId) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
@@ -1836,7 +2203,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   };
 
   const handleCorticalZoneSelect = async (item: CorticalZoneItem) => {
-    if (phase !== 3 || !jobId) return;
+    if (phase !== 3 || registrationDimension !== 'advanced' || !jobId) return;
     setHasBrodmannAttempt(true);
 
     try {
@@ -1872,7 +2239,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   }, []);
 
   useEffect(() => {
-    if (phase !== 3) {
+    if (phase !== 3 || registrationDimension !== 'advanced') {
       setAvailableCorticalZones([]);
       setLoadingCorticalZones(false);
       return;
@@ -1918,7 +2285,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     return () => {
       alive = false;
     };
-  }, [phase]);
+  }, [phase, registrationDimension]);
 
   const sync3DViews = async (nextAxis = axis, nextIndex = index) => {
     if (!jobId) return;
@@ -1970,7 +2337,11 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const handleBackToImagesPanel = () => {
     setShowValidationModal(false);
     setShowResult(false);
-    setPhase(2);
+    // phase is already 2 — no reset needed; force canvas redraw after layout settles
+    requestAnimationFrame(() => {
+      drawCanvas('reference');
+      drawCanvas('patient');
+    });
   };
 
   useEffect(() => {
@@ -1999,6 +2370,93 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       setTimeout(() => { console.log('🎨 Draw 3'); drawResultImages(); }, 800);
     }
   }, [pendingShowResult, autoAlignStatus, drawResultImages]);
+
+  const loadPanelFull = useCallback((key: 'ref' | 'patient', idx: number) => {
+    const panel = key === 'ref' ? 'reference' : 'patient';
+    if (panelDebounceRef.current[key]) clearTimeout(panelDebounceRef.current[key]!);
+    panelDebounceRef.current[key] = setTimeout(async () => {
+      setPanelFullLoading(prev => ({ ...prev, [key]: true }));
+      setPanelFullImg(prev => ({ ...prev, [key]: null }));
+      try {
+        const res = await api.get('/series_comparison_slice', { params: { jobId, panel, index: idx } });
+        setPanelFullImg(prev => ({ ...prev, [key]: res.data.image ?? null }));
+      } catch (e) {
+        console.error(`series_comparison_slice ${key} error:`, e);
+      } finally {
+        setPanelFullLoading(prev => ({ ...prev, [key]: false }));
+      }
+    }, 150);
+  }, [jobId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load thumbnails when comparison opens — only if not already provided by apply response
+  useEffect(() => {
+    if (!showRegisteredSeries || !comparisonData || !jobId) return;
+
+    setPanelIndex({ ref: 0, patient: 0 });
+    setPanelFullImg({ ref: null, patient: null });
+
+    const loadPanelThumbs = async (panel: 'patient' | 'reference', key: 'patient' | 'ref') => {
+      const count = key === 'patient' ? comparisonData.patientCount : comparisonData.refCount;
+      // Skip API call if thumbnails already loaded from apply response
+      if (count === 0) return;
+      setPanelThumbsLoading(prev => ({ ...prev, [key]: true }));
+      try {
+        const res = await api.get('/series_all_thumbnails', { params: { jobId, panel } });
+        const thumbs: (string | null)[] = (res.data.thumbs as any[]).map((t: any) => t.b64 ?? null);
+        setPanelThumbs(prev => ({ ...prev, [key]: thumbs }));
+        if (thumbs.length > 0) loadPanelFull(key, 0);
+      } catch (e) {
+        console.error(`series_all_thumbnails ${panel} error:`, e);
+      } finally {
+        setPanelThumbsLoading(prev => ({ ...prev, [key]: false }));
+      }
+    };
+
+    // Use thumbnails from apply response if available, otherwise fetch
+    setPanelThumbs(prev => {
+      const needPatient = prev.patient.length === 0 && comparisonData.patientCount > 0;
+      const needRef     = prev.ref.length     === 0 && comparisonData.refCount     > 0;
+      if (needPatient) loadPanelThumbs('patient', 'patient');
+      if (needRef)     loadPanelThumbs('reference', 'ref');
+      // Load first full-size from whichever thumbnails already exist
+      if (prev.patient.length > 0) loadPanelFull('patient', 0);
+      if (prev.ref.length     > 0) loadPanelFull('ref', 0);
+      return prev; // no change — just trigger side effects
+    });
+  }, [showRegisteredSeries, comparisonData, jobId, loadPanelFull]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Initialise results-slice navigation when the result panel opens in 3D mode
+  useEffect(() => {
+    if (!showResult) return;
+    const is3DMode = registrationDimension === '3d' || registrationDimension === 'advanced';
+    if (!is3DMode) return;
+    const initAxis = axis;
+    const initIdx  = index;
+    setResultsAxis(initAxis);
+    setResultsIdx(initIdx);
+    setResultsMax(maxIndex);
+    // Pass maxIndex directly to avoid stale-closure bug (resultsMax still=0 in closure at this point)
+    if (jobId) void fetchResultsSlices(initAxis, initIdx, maxIndex);
+  }, [showResult]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Drag handler for before/after comparison slider
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!splitDragRef.current) return;
+      const panel = superpositionPanelRef.current;
+      if (!panel) return;
+      const rect = panel.getBoundingClientRect();
+      const pos = Math.max(2, Math.min(98, ((e.clientX - rect.left) / rect.width) * 100));
+      setSplitPos(pos);
+    };
+    const onUp = () => { splitDragRef.current = false; };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, []);
 
   // Computed
   const refPts     = referenceImage.points.length;
@@ -2131,6 +2589,44 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     }, 90);
   };
 
+  const fetchResultsSlices = async (nextAxis: string, nextIdx: number, knownMax?: number) => {
+    if (!jobId) return;
+    setResultsSliceLoading(true);
+    try {
+      // Use knownMax if provided (avoids stale-closure bug where resultsMax=0 at panel open)
+      const effectiveMax = knownMax ?? resultsMax;
+      const clamped = effectiveMax > 0 ? Math.max(0, Math.min(nextIdx, effectiveMax)) : Math.max(0, nextIdx);
+      // Normalized position (0–1): used for volumes with different slice counts
+      // so the atlas and original patient show the anatomically equivalent slice.
+      const pct = effectiveMax > 0 ? (clamped / effectiveMax).toFixed(6) : '0.5';
+      const [beforeRes, afterRes, refRes] = await Promise.all([
+        fetch(`/api/volume/get-slice?jobId=${jobId}&axis=${nextAxis}&pct=${pct}&source=original`, { credentials: 'include' }),
+        fetch(`/api/volume/get-slice?jobId=${jobId}&axis=${nextAxis}&index=${clamped}&source=registered`, { credentials: 'include' }),
+        referenceJobId
+          ? fetch(`/api/volume/get-slice?jobId=${referenceJobId}&axis=${nextAxis}&pct=${pct}`, { credentials: 'include' })
+          : fetch(`/api/volume/atlas_slice?jobId=${jobId}&axis=${nextAxis}&pct=${pct}&showLabels=0`, { credentials: 'include' }),
+      ]);
+      const [beforeData, afterData, refData] = await Promise.all([
+        beforeRes.ok ? beforeRes.json() : null,
+        afterRes.ok ? afterRes.json() : null,
+        refRes.ok ? refRes.json() : null,
+      ]);
+      const newMax = afterData?.max_index ?? beforeData?.max_index ?? effectiveMax;
+      if (newMax !== resultsMax) setResultsMax(newMax);
+      setResultsIdx(clamped);
+      if (beforeData?.image) setOriginalImages(prev => prev ? { ...prev, pat: beforeData.image } : prev);
+      const patAfter = afterData?.image || afterData?.slice;
+      const refImg   = refData?.image || refData?.slice;
+      if (patAfter || refImg) {
+        setResultImages(prev => ({
+          ref: refImg   || prev?.ref || '',
+          pat: patAfter || prev?.pat || '',
+        }));
+      }
+    } catch { /* keep existing images on error */ }
+    finally { setResultsSliceLoading(false); }
+  };
+
   const handleConfirmSlice = async () => {
     if (!jobId) return;
     setSliceError('');
@@ -2214,7 +2710,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     setPanelPatientFiles({ reference: [], patient: [] });
     setConfirmedPanelPatients({ reference: null, patient: null });
 
-    if (!isEmergencySession) void fetchAllPatientsForPanels();
+    void fetchAllPatientsForPanels();
 
     setRegistrationMode(mode === '2d' ? 'manual' : 'mine');
     setReferenceJobId('');
@@ -2321,7 +2817,6 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
 
   // ── Picker modal helpers ──────────────────────────────────────────────────────
   const openPanelPicker = (panelType: 'reference' | 'patient') => {
-    if (isEmergencySession) return;
     setPickerSelectedPatient(null);
     setPickerPatientFiles([]);
     setPickerSearch('');
@@ -2834,15 +3329,13 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
           </p>
         </div>{/* end cards section */}
 
-        {!isEmergencySession ? (
-          <PatientSelectionModal
-            isOpen={showPatientSelector}
-            onClose={() => setShowPatientSelector(false)}
-            onSelectPatient={handlePatientSelect}
-            onLocalImport={handleLocalImport}
-            mode={selectionPendingMode}
-          />
-        ) : null}
+        <PatientSelectionModal
+          isOpen={showPatientSelector}
+          onClose={() => setShowPatientSelector(false)}
+          onSelectPatient={handlePatientSelect}
+          onLocalImport={handleLocalImport}
+          mode={selectionPendingMode}
+        />
       </div>
     );
   }
@@ -2882,6 +3375,16 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
 
       {/* SIDEBAR */}
       <aside className="w-72 flex-none bg-white border-r border-slate-200 flex flex-col z-20 shadow-xl">
+        {/* ── Bouton Retour (identique aux autres boutons Retour de l'app) ── */}
+        <div className="px-4 pt-3 pb-2 border-b border-slate-100">
+          <button
+            onClick={startNewRegistration}
+            disabled={autoAlignStatus === 'processing'}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-300 bg-slate-100 text-[10px] font-bold text-slate-700 hover:bg-slate-200 transition-colors disabled:opacity-40"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" /> Retour au choix du mode
+          </button>
+        </div>
         <div className="px-4 py-3 border-b border-slate-200">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
@@ -2966,13 +3469,22 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         <div className="px-3 py-2.5 border-b border-slate-200">
           {phase === 3 ? (
             <div className="space-y-3">
-              <p className="text-[9px] font-bold text-slate-700 uppercase tracking-widest">{is3D ? 'Mode Brodmann' : 'Mode Resultats'}</p>
+              <p className="text-[9px] font-bold text-slate-700 uppercase tracking-widest">
+                {registrationDimension === 'advanced' ? 'Mode Brodmann' : is3D ? 'Phase validation 3D' : 'Mode Resultats'}
+              </p>
               <div className="rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2">
-                {is3D ? (
+                {registrationDimension === 'advanced' ? (
                   <>
                     <p className="text-[10px] font-bold text-emerald-700">Navigation centralisee</p>
                     <p className="mt-1 text-[9px] text-slate-600">
                       Utilisez le slider principal sous les images et les boutons A/C/S pour changer les coupes.
+                    </p>
+                  </>
+                ) : is3D ? (
+                  <>
+                    <p className="text-[10px] font-bold text-emerald-700">Validation du recalage 3D</p>
+                    <p className="mt-1 text-[9px] text-slate-600">
+                      Controlez le resultat sur les coupes. L&apos;exploration Brodmann est reservee au mode avance.
                     </p>
                   </>
                 ) : (
@@ -3002,11 +3514,11 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
               <button onClick={handleBackToRegistration} className="w-full py-2.5 px-4 rounded-xl border border-slate-300 bg-slate-100 text-[10px] font-bold text-slate-700 hover:bg-slate-200 flex items-center justify-center gap-2">
                 <ArrowLeft className="w-3.5 h-3.5"/> Retour au Recalage
               </button>
-              <button onClick={startNewRegistration} className="w-full py-2.5 px-4 rounded-xl border border-blue-300 bg-blue-50 text-[10px] font-bold text-blue-700 hover:bg-blue-100 flex items-center justify-center gap-2 transition-colors">
+              <button onClick={resetCurrentRegistration} className="w-full py-2.5 px-4 rounded-xl border border-blue-300 bg-blue-50 text-[10px] font-bold text-blue-700 hover:bg-blue-100 flex items-center justify-center gap-2 transition-colors">
                 <RotateCcw className="w-3.5 h-3.5"/> Nouveau recalage
               </button>
 
-              {is3D && (
+              {registrationDimension === 'advanced' && (
               <div className="mt-2 rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-slate-50 p-3 shadow-[0_10px_22px_rgba(37,99,235,0.12)]">
                 <div className="mb-2 flex items-center justify-between">
                   <p className="text-[11px] font-black text-blue-800 uppercase tracking-[0.12em]">Zones corticales</p>
@@ -3052,14 +3564,10 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
           ) : (
             <>
               <button
-                onClick={startNewRegistration}
+                onClick={resetCurrentRegistration}
                 disabled={autoAlignStatus==='processing'}
-                className={`w-full py-2.5 px-4 rounded-xl border text-[10px] font-bold flex items-center justify-center gap-2 transition-colors ${autoAlignStatus==='processing' ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}
+                className={`w-full py-2.5 px-4 rounded-xl border text-[10px] font-bold flex items-center justify-center gap-2 transition-colors ${autoAlignStatus==='processing' ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed' : 'border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100'}`}
               >
-                <ArrowLeft className="w-3.5 h-3.5"/> Retour au choix du mode 2D ou 3D
-              </button>
-
-              <button onClick={startNewRegistration} className="w-full py-2.5 px-4 rounded-xl border border-blue-300 bg-blue-50 text-[10px] font-bold text-blue-700 hover:bg-blue-100 flex items-center justify-center gap-2 transition-colors">
                 <RotateCcw className="w-3.5 h-3.5"/> Nouveau recalage
               </button>
 
@@ -3526,16 +4034,10 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                             Comment voulez-vous charger cette image ?
                           </p>
 
-                          {/* Même mise en page qu’en flux normal : 2 colonnes — en urgence, import local uniquement (pas « Mes patients »). */}
-                          <div
-                            className={
-                              isEmergencySession
-                                ? 'w-full max-w-md mx-auto'
-                                : 'grid gap-4 w-full max-w-sm grid-cols-2'
-                            }
-                          >
+                          {/* Two big choice cards */}
+                          <div className="grid grid-cols-2 gap-4 w-full max-w-sm">
 
-                            {/* ── Choix unique partagé : disque local (identique au mode normal, colonne 1) ── */}
+                            {/* ── Choice 1: Local disk ── */}
                             <label className="group relative flex flex-col items-center gap-3 p-5 rounded-2xl border-2 border-dashed border-blue-200 bg-blue-50/40 cursor-pointer hover:border-blue-500 hover:bg-blue-50/80 hover:-translate-y-0.5 transition-all duration-200 shadow-sm hover:shadow-md hover:shadow-blue-100">
                               <div className="w-12 h-12 rounded-xl bg-white border border-blue-200 flex items-center justify-center text-blue-400 group-hover:text-blue-600 group-hover:border-blue-400 transition-colors shadow-sm">
                                 <Upload className="w-6 h-6" />
@@ -3560,30 +4062,27 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                               />
                             </label>
 
-                            {/* ── Colonne 2 — base dossiers médecin (masquée en urgence, même comportement fonctionnel ensuite) ── */}
-                            {!isEmergencySession ? (
-                              <button
-                                type="button"
-                                onClick={() => openPanelPicker(type)}
-                                className="group relative flex flex-col items-center gap-3 p-5 rounded-2xl border-2 border-emerald-200 bg-emerald-50/40 hover:border-emerald-500 hover:bg-emerald-50/80 hover:-translate-y-0.5 transition-all duration-200 shadow-sm hover:shadow-md hover:shadow-emerald-100"
-                              >
-                                <div className="w-12 h-12 rounded-xl bg-white border border-emerald-200 flex items-center justify-center text-emerald-400 group-hover:text-emerald-600 group-hover:border-emerald-400 transition-colors shadow-sm">
-                                  <Users className="w-6 h-6" />
-                                </div>
-                                <div className="text-center">
-                                  <p className="text-sm font-black text-slate-800 group-hover:text-emerald-800 leading-tight">Mes patients</p>
-                                  <p className="text-[10px] text-slate-400 mt-1">
-                                    {allPatientsLoading
-                                      ? 'Chargement…'
-                                      : `${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length} dossier${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length !== 1 ? 's' : ''} disponible${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length !== 1 ? 's' : ''}`
-                                    }
-                                  </p>
-                                </div>
-                                <span className="text-[9px] font-black uppercase tracking-[0.12em] text-emerald-600 border border-emerald-200 rounded-full px-2 py-0.5 bg-white">
-                                  Base de données
-                                </span>
-                              </button>
-                            ) : null}
+                            {/* ── Choice 2: From patients DB ── */}
+                            <button
+                              onClick={() => openPanelPicker(type)}
+                              className="group relative flex flex-col items-center gap-3 p-5 rounded-2xl border-2 border-emerald-200 bg-emerald-50/40 hover:border-emerald-500 hover:bg-emerald-50/80 hover:-translate-y-0.5 transition-all duration-200 shadow-sm hover:shadow-md hover:shadow-emerald-100"
+                            >
+                              <div className="w-12 h-12 rounded-xl bg-white border border-emerald-200 flex items-center justify-center text-emerald-400 group-hover:text-emerald-600 group-hover:border-emerald-400 transition-colors shadow-sm">
+                                <Users className="w-6 h-6" />
+                              </div>
+                              <div className="text-center">
+                                <p className="text-sm font-black text-slate-800 group-hover:text-emerald-800 leading-tight">Mes patients</p>
+                                <p className="text-[10px] text-slate-400 mt-1">
+                                  {allPatientsLoading
+                                    ? 'Chargement…'
+                                    : `${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length} dossier${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length !== 1 ? 's' : ''} disponible${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length !== 1 ? 's' : ''}`
+                                  }
+                                </p>
+                              </div>
+                              <span className="text-[9px] font-black uppercase tracking-[0.12em] text-emerald-600 border border-emerald-200 rounded-full px-2 py-0.5 bg-white">
+                                Base de données
+                              </span>
+                            </button>
 
                           </div>
                         </div>
@@ -3592,16 +4091,32 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
 
 
                     {is3D && img.src && (jobId || referenceJobId || registrationDimension === 'advanced') && (
-                      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 py-3 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <p className="text-[9px] font-bold text-blue-700 uppercase tracking-[0.14em]">Navigation volume</p>
+                      <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 pt-0 pb-3 space-y-2">
+                        <div className="rounded-b-xl bg-gradient-to-r from-emerald-600 to-teal-500 px-3 py-2.5 flex items-center gap-2.5 shadow-sm">
+                          <div className="shrink-0 w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
+                            <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[10px] font-black text-white uppercase tracking-[0.1em] leading-none mb-0.5">Recalage 3D volumétrique</p>
+                            <p className="text-[9px] text-emerald-100 leading-snug font-medium">
+                              Le traitement porte sur le <span className="font-black text-white">volume entier</span> — cette vue n'influence pas le résultat.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between px-0.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="text-[9px] font-bold text-slate-600 uppercase tracking-[0.14em]">Exploration visuelle</p>
+                            <span className="text-[8px] font-semibold text-slate-400 normal-case tracking-normal">(n'affecte pas le recalage)</span>
+                          </div>
                           <p className="text-[10px] font-black text-blue-800">{index + 1} / {maxIndex + 1}</p>
                         </div>
-                        <div className="grid grid-cols-3 gap-1.5">
+                        <div className="flex gap-1.5">
                           {axisOptions.map(({ key, label }) => (
                             <button key={key}
                               onClick={() => { const t = Math.floor(getAxisMax(key) / 2); queuePhase2SliceFetch(key, t); }}
-                              className={`rounded-lg border px-2 py-1.5 text-[10px] font-bold transition-colors ${axis===key ? 'border-blue-300 bg-blue-100 text-blue-800' : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50'}`}
+                              className={`flex-1 rounded-full border px-2 py-1 text-[10px] font-semibold transition-all ${axis===key ? 'border-sky-400 bg-sky-50 text-sky-700 shadow-sm' : 'border-slate-200 bg-white text-slate-500 hover:border-sky-200 hover:text-sky-600'}`}
                             >{label}</button>
                           ))}
                         </div>
@@ -3618,8 +4133,8 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
             </div>
           )}
 
-          {/* Identification View (Phase 3) */}
-           {phase === 3 && (
+          {/* Identification Brodmann + intensités (mode avancé uniquement) */}
+           {phase === 3 && registrationDimension === 'advanced' && (
             <div className="flex-1 min-h-0 flex gap-6 animate-in slide-in-from-right-12 duration-700">
               <div className="flex-[2] min-h-0 flex flex-col gap-4">
                 <div className="flex-1 min-h-0 grid grid-cols-2 gap-4">
@@ -3757,6 +4272,14 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                     index={index}
                     maxIndex={maxIndex}
                   />
+                  <BrodmannIntensityPanel
+                    zoneName={zone?.name}
+                    zoneNumber={zone?.id}
+                    stats={brodmannIntensityStats}
+                    loading={brodmannIntensityLoading}
+                    error={brodmannIntensityError}
+                    analyseAvailable={brodmannAnalyseId != null || (jobId != null && jobId !== '')}
+                  />
                   <BrodmannZone3D
                     labelId={zone?.id ?? null}
                     zoneName={zone?.name}
@@ -3765,177 +4288,381 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
             </div>
           )}
 
-          {/* ══ Result panel — 3 blocs niveaux de gris ══ */}
+          {/* ══ Result panel — plein écran, style clair ══ */}
           {showResult && (
-            <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-900/50 backdrop-blur-[2px] animate-in fade-in zoom-in-95 duration-300">
-              <div className="relative flex w-full h-full flex-col overflow-hidden bg-white">
+            <div className="fixed inset-0 z-[100] flex flex-col overflow-hidden bg-[#f1f4f8] animate-in fade-in duration-300">
 
-                {/* ── Header compact ── */}
-                <div className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-2 gap-3">
-                  <div className="flex items-center gap-3">
-                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Résultats du recalage</p>
+                {/* ══ HEADER ══ */}
+                {/* paddingRight: 115px réserve l'espace du bouton "Sombre" (fixed right:16px) */}
+                <div className="shrink-0 flex items-center justify-between bg-white border-b border-gray-200 pl-5 py-3 shadow-sm" style={{ minHeight: 52, paddingRight: 115 }}>
+                  {/* Left */}
+                  <div className="flex items-center gap-4 min-w-0">
+                    <button
+                      onClick={handleBackToImagesPanel}
+                      className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-300 bg-slate-100 text-[10px] font-bold text-slate-700 hover:bg-slate-200 transition-colors shrink-0"
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5" /> Retour
+                    </button>
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="h-4 w-1 rounded-full bg-blue-600 shrink-0" />
+                      <div className="min-w-0">
+                        <span className="block text-[11px] font-bold uppercase tracking-[0.18em] text-gray-400">Analyse comparative · Recalage</span>
+                        {/* Infos patient (si disponible) */}
+                        {(confirmedPanelPatients.patient || confirmedPanelPatients.reference) && (() => {
+                          const pat = confirmedPanelPatients.patient ?? confirmedPanelPatients.reference;
+                          const fullName = [pat.nom, pat.prenom].filter(Boolean).join(' ') || 'Patient';
+                          const dossier  = pat.dossier || pat.dossier_id || pat.numero_dossier || null;
+                          return (
+                            <span className="block text-[10px] font-semibold text-slate-500 truncate">
+                              <span className="text-slate-400 font-normal">Patient :</span>{' '}
+                              <span className="font-bold text-slate-600">{fullName}</span>
+                              {dossier && (
+                                <span className="ml-2 font-mono text-[9px] bg-slate-100 border border-slate-200 rounded px-1.5 py-0.5 text-slate-500">
+                                  DOS {dossier}
+                                </span>
+                              )}
+                            </span>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+                  {/* Right — métriques + export (après validation) */}
+                  <div className="flex items-center gap-3 pr-2">
                     {mi !== undefined && (
-                      <div className="flex items-center gap-2 rounded-lg border px-2.5 py-1" style={{ borderColor: miColor + '40', background: miColor + '0d' }}>
-                        <p className="text-sm font-black" style={{ color: miColor }}>{mi.toFixed(3)}</p>
-                        <span className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${miBadgeBg}`}>{miQuality}</span>
+                      <div
+                        className="flex items-center gap-3 rounded-xl px-4 py-2 shadow-sm"
+                        style={{ background: miColor + '18', border: `1.5px solid ${miColor}55` }}
+                      >
+                        <div>
+                          <p style={{ color: '#475569', fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.14em', marginBottom: 2 }}>
+                            Information Mutuelle
+                          </p>
+                          <p style={{ color: miColor, fontSize: 20, fontWeight: 900, lineHeight: 1 }}>{mi.toFixed(3)}</p>
+                        </div>
+                        <span
+                          style={{
+                            background: miColor,
+                            color: '#fff',
+                            borderRadius: 8,
+                            padding: '3px 10px',
+                            fontSize: 10,
+                            fontWeight: 900,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.1em',
+                          }}
+                        >
+                          {miQuality}
+                        </span>
                       </div>
                     )}
                     {autoAlignMetrics?.processing_time_ms > 0 && (
-                      <div className="rounded-lg border border-slate-200 bg-slate-100 px-2.5 py-1">
-                        <span className="text-[10px] font-black text-slate-600">{(autoAlignMetrics.processing_time_ms / 1000).toFixed(1)} s</span>
+                      <div
+                        className="flex flex-col items-end rounded-xl px-4 py-2"
+                        style={{ background: '#f1f5f9', border: '1.5px solid #cbd5e1' }}
+                      >
+                        <p style={{ color: '#64748b', fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.14em', marginBottom: 2 }}>Durée</p>
+                        <p style={{ color: '#0f172a', fontSize: 16, fontWeight: 900, lineHeight: 1 }}>{(autoAlignMetrics.processing_time_ms / 1000).toFixed(1)} s</p>
                       </div>
                     )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={handleBackToImagesPanel}
-                      className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 transition hover:bg-slate-100"
-                    >
-                      <ArrowLeft className="h-3 w-3" /> Retour
-                    </button>
-                    <button
-                      onClick={handleBackToImagesPanel}
-                      className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-400 transition hover:bg-slate-100"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
+                    {/* ── Exports NIfTI (visibles après validation 3D) ── */}
+                    {saveToPatientResult && registrationDimension !== '2d' && (
+                      <>
+                        <div className="w-px h-6 bg-gray-200 shrink-0" />
+                        {/* Badge statut sauvegarde */}
+                        <div className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-bold shrink-0 ${
+                          saveToPatientResult.ok
+                            ? 'bg-emerald-50 border border-emerald-200 text-emerald-700'
+                            : 'bg-amber-50 border border-amber-200 text-amber-700'
+                        }`}>
+                          {saveToPatientResult.ok
+                            ? <><Check className="h-3.5 w-3.5" /> Enregistré dans le dossier patient</>
+                            : <><X className="h-3.5 w-3.5" /> {saveToPatientResult.error || 'Sauvegarde non effectuée'}</>}
+                        </div>
+                        <div className="w-px h-6 bg-gray-200 shrink-0" />
+                        {/* Boutons export NIfTI */}
+                        <button
+                          onClick={() => handleDownloadVolume('patient')}
+                          className="flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100 transition shrink-0"
+                          title="Télécharger le volume patient recalé (.nii.gz)"
+                        >
+                          <Download className="h-3.5 w-3.5" /> Vol. recalé
+                        </button>
+                        <button
+                          onClick={() => handleDownloadVolume('reference')}
+                          className="flex items-center gap-1.5 rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-[10px] font-bold text-blue-700 hover:bg-blue-100 transition shrink-0"
+                          title="Télécharger le volume de référence / atlas (.nii.gz)"
+                        >
+                          <Download className="h-3.5 w-3.5" /> Vol. référence
+                        </button>
+                        <button
+                          onClick={() => handleDownloadVolume('all')}
+                          className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-100 px-3 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-200 transition shrink-0"
+                          title="Télécharger les deux volumes en ZIP (.zip)"
+                        >
+                          <Download className="h-3.5 w-3.5" /> Tout exporter
+                        </button>
+                        {/* Lien vers le dossier patient */}
+                        {saveToPatientResult?.ok && (confirmedPanelPatients.patient || confirmedPanelPatients.reference) && (
+                          <button
+                            onClick={() => {
+                              const pat = confirmedPanelPatients.patient ?? confirmedPanelPatients.reference;
+                              navigate(`/patients/${pat.id}`);
+                            }}
+                            className="flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-[10px] font-bold text-violet-700 hover:bg-violet-100 transition shrink-0"
+                            title="Ouvrir le dossier patient"
+                          >
+                            <FileText className="h-3.5 w-3.5" /> Voir dossier
+                          </button>
+                        )}
+                      </>
+                    )}
                   </div>
                 </div>
 
-                {/* ── Body résultats 2D — 3 colonnes ── */}
-                <div className="min-h-0 flex-1 grid grid-cols-3 divide-x divide-white/5 overflow-hidden bg-[#0d1117]">
+                {/* ══ VIEWER AREA ══ */}
+                <div className="min-h-0 flex-1 grid grid-cols-3 gap-3 p-3 overflow-hidden">
 
-                  {/* Colonne 1 — Avant recalage */}
-                  <div className="flex flex-col overflow-hidden">
-                    <div className="shrink-0 px-4 py-3 bg-white/5 border-b border-white/10 flex items-center gap-2.5">
-                      <span className="h-2.5 w-2.5 rounded-full bg-slate-400 shrink-0" />
-                      <p className="text-sm font-black uppercase tracking-wider text-slate-300">Image patient — avant recalage</p>
+                  {/* ── Panel 1 : Patient AVANT ── */}
+                  <div className="flex flex-col overflow-hidden rounded-xl border border-gray-300 bg-white shadow-sm">
+                    {/* Panel header */}
+                    <div className="shrink-0 flex items-center gap-2.5 border-b border-gray-200 bg-gray-50 px-4 py-2">
+                      <div className="h-2 w-2 rounded-full bg-gray-400 shrink-0" />
+                      <span className="text-[12px] font-black uppercase tracking-[0.2em] text-gray-500">Patient — Avant recalage</span>
                     </div>
-                    <div className="flex-1 relative overflow-hidden">
+                    {/* Viewer */}
+                    <div className="flex-1 relative overflow-hidden bg-black min-h-0">
                       {originalImages?.pat ? (
-                        <img src={originalImages.pat} alt="avant"
-                          className="absolute inset-0 w-full h-full object-contain" />
+                        <img src={originalImages.pat} alt="avant" className="absolute inset-0 w-full h-full object-contain" />
                       ) : (
                         <div className="absolute inset-0 flex items-center justify-center">
-                          <p className="text-[10px] text-slate-600">Non disponible</p>
+                          <p className="text-[10px] text-white/30 uppercase tracking-wider">Non disponible</p>
                         </div>
                       )}
                     </div>
                   </div>
 
-                  {/* Colonne 2 — Après recalage */}
-                  <div className="flex flex-col overflow-hidden">
-                    <div className="shrink-0 px-4 py-3 bg-white/5 border-b border-white/10 flex items-center gap-2.5">
-                      <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 shrink-0" />
-                      <p className="text-sm font-black uppercase tracking-wider text-emerald-400">Image patient — après recalage</p>
+                  {/* ── Panel 2 : Patient APRÈS ── */}
+                  <div className="flex flex-col overflow-hidden rounded-xl border border-blue-200 bg-white shadow-sm">
+                    {/* Panel header */}
+                    <div className="shrink-0 flex items-center gap-2.5 border-b border-blue-100 bg-blue-50 px-4 py-2">
+                      <div className="h-2 w-2 rounded-full bg-blue-500 shrink-0" />
+                      <span className="text-[12px] font-black uppercase tracking-[0.2em] text-blue-700">Patient — Après recalage</span>
                     </div>
-                    <div className="flex-1 relative overflow-hidden">
+                    {/* Viewer */}
+                    <div className="flex-1 relative overflow-hidden bg-black min-h-0">
                       {displayResultImages?.pat ? (
-                        <img src={displayResultImages.pat} alt="après"
-                          className="absolute inset-0 w-full h-full object-contain" />
+                        <img src={displayResultImages.pat} alt="après" className="absolute inset-0 w-full h-full object-contain" />
                       ) : (
                         <div className="absolute inset-0 flex items-center justify-center">
-                          <p className="text-[10px] text-slate-600">Non disponible</p>
+                          <p className="text-[10px] text-white/30 uppercase tracking-wider">Non disponible</p>
                         </div>
                       )}
                     </div>
                   </div>
 
-                  {/* Colonne 3 — Superposition avec slider */}
-                  <div className="flex flex-col overflow-hidden">
-                    <div className="shrink-0 px-4 py-3 bg-white/5 border-b border-white/10 flex items-center gap-2.5">
-                      <span className="h-2.5 w-2.5 rounded-full bg-violet-400 shrink-0" />
-                      <p className="text-sm font-black uppercase tracking-wider text-violet-300">Superposition — image référence et patient recalé</p>
+                  {/* ── Panel 3 : Superposition Référence + Patient ── */}
+                  <div className="flex flex-col overflow-hidden rounded-xl border border-violet-200 bg-white shadow-sm">
+                    {/* Panel header */}
+                    <div className="shrink-0 flex items-center gap-2.5 border-b border-violet-100 bg-violet-50 px-4 py-2">
+                      <div className="h-2 w-2 rounded-full bg-violet-500 shrink-0" />
+                      <span className="text-[12px] font-black uppercase tracking-[0.2em] text-violet-700">Superposition — Réf. + Patient recalé</span>
                     </div>
-
-                    {/* Overlay de transparence — référence fixe dessous, patient ajustable dessus */}
-                    <div className="flex-1 relative overflow-hidden">
+                    {/* Viewer */}
+                    <div className="flex-1 relative overflow-hidden bg-black min-h-0">
                       {displayResultImages?.ref || displayResultImages?.pat ? (<>
-                        {/* Patient recalé — toujours à pleine intensité, jamais modifié */}
+                        {displayResultImages?.ref && (
+                          <img src={displayResultImages.ref} alt="référence" className="absolute inset-0 w-full h-full object-contain" />
+                        )}
                         {displayResultImages?.pat && (
                           <img src={displayResultImages.pat} alt="patient recalé"
-                            className="absolute inset-0 w-full h-full object-contain" />
+                            className="absolute inset-0 w-full h-full object-contain transition-opacity"
+                            style={{ opacity: overlayOpacity / 100 }} />
                         )}
-                        {/* Référence — s'efface progressivement avec le slider */}
-                        {displayResultImages?.ref && (
-                          <img src={displayResultImages.ref} alt="référence"
-                            className="absolute inset-0 w-full h-full object-contain"
-                            style={{ opacity: 1 - overlayOpacity / 100 }} />
-                        )}
-                        {/* Badge flottant */}
-                        <div className="absolute top-2 left-2 pointer-events-none flex flex-col gap-1">
-                          <span className="bg-black/60 backdrop-blur-sm rounded px-2 py-0.5 text-[9px] font-bold text-slate-300 flex items-center gap-1">
-                            <span className="h-1.5 w-1.5 rounded-full bg-slate-400" /> Référence
+                        {/* Légende DICOM-style */}
+                        <div className="absolute bottom-2 left-2 pointer-events-none flex flex-col gap-0.5">
+                          <span className="flex items-center gap-1.5 font-mono text-[8px] text-white/60">
+                            <span className="h-1.5 w-1.5 rounded-full bg-gray-400 shrink-0" /> REF
                           </span>
-                          <span className="bg-black/60 backdrop-blur-sm rounded px-2 py-0.5 text-[9px] font-bold text-emerald-300 flex items-center gap-1"
-                            style={{ opacity: Math.max(0.4, overlayOpacity / 100) }}>
-                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Patient recalé
+                          <span className="flex items-center gap-1.5 font-mono text-[8px] text-white/60">
+                            <span className="h-1.5 w-1.5 rounded-full bg-violet-400 shrink-0" /> PAT {overlayOpacity}%
                           </span>
                         </div>
                       </>) : (
                         <div className="absolute inset-0 flex items-center justify-center">
-                          <p className="text-[10px] text-slate-600 text-center px-4">
-                            Lancez un recalage pour voir la superposition
-                          </p>
+                          <p className="text-[10px] text-white/30 uppercase tracking-wider text-center px-6">Superposition disponible après recalage</p>
                         </div>
                       )}
                     </div>
-
-                    {/* Slider transparence */}
-                    <div className="shrink-0 px-4 py-3 bg-white/5 border-t border-white/10">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[9px] font-bold text-slate-400">Transparence référence</span>
-                        <span className="text-[9px] font-black text-white/70">{overlayOpacity}%</span>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className="text-[8px] text-slate-400 shrink-0">Réf. visible</span>
-                        <div className="relative flex-1 h-2 bg-white/10 rounded-full">
-                          {/* Fill */}
-                          <div className="absolute left-0 top-0 h-full rounded-full bg-gradient-to-r from-violet-500 to-emerald-500 transition-none"
+                    {/* Transparency control */}
+                    <div className="shrink-0 px-3 py-2 border-t border-gray-200 bg-gray-50">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[8px] font-bold uppercase tracking-wider text-gray-400 shrink-0">Réf</span>
+                        <button
+                          onClick={() => setOverlayOpacity(v => Math.max(0, v - 10))}
+                          className="h-6 w-6 shrink-0 rounded border border-gray-300 bg-white text-gray-500 text-xs font-bold hover:bg-gray-100 transition flex items-center justify-center"
+                        >‹</button>
+                        <div className="relative flex-1 h-1.5 bg-gray-200 rounded-full">
+                          <div className="absolute left-0 top-0 h-full rounded-full bg-violet-500"
                             style={{ width: `${overlayOpacity}%` }} />
-                          {/* Thumb */}
-                          <div className="absolute top-1/2 -translate-y-1/2 h-5 w-5 rounded-full bg-white shadow-lg border-2 border-violet-500 pointer-events-none"
-                            style={{ left: `calc(${overlayOpacity}% - 10px)` }} />
+                          <div className="absolute top-1/2 -translate-y-1/2 h-3.5 w-3.5 rounded-full bg-white border-[1.5px] border-violet-500 shadow-sm pointer-events-none"
+                            style={{ left: `calc(${overlayOpacity}% - 7px)` }} />
                           <input type="range" min={0} max={100} value={overlayOpacity}
                             onChange={e => setOverlayOpacity(Number(e.target.value))}
                             className="absolute inset-0 w-full opacity-0 cursor-pointer h-full" />
                         </div>
-                        <span className="text-[8px] text-emerald-400 shrink-0">Pat. seul</span>
+                        <button
+                          onClick={() => setOverlayOpacity(v => Math.min(100, v + 10))}
+                          className="h-6 w-6 shrink-0 rounded border border-gray-300 bg-white text-gray-500 text-xs font-bold hover:bg-gray-100 transition flex items-center justify-center"
+                        >›</button>
+                        <span className="text-[8px] font-bold uppercase tracking-wider text-gray-400 shrink-0">Pat</span>
+                        <span className="text-[9px] font-black text-gray-600 shrink-0 tabular-nums w-7 text-right">{overlayOpacity}%</span>
                       </div>
                     </div>
                   </div>
 
                 </div>
 
-                {/* ── Footer compact ── */}
-                <div className="shrink-0 flex items-center justify-between border-t border-slate-200 bg-slate-50 px-5 py-2 gap-3">
+                {/* ══ NAVIGATION 3D ══ */}
+                {is3D && (
+                  <div className="shrink-0 flex items-center gap-4 px-5 py-2 border-t border-gray-200 bg-white">
+                    {/* Label */}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <svg className="w-3 h-3 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-gray-400">Navigation coupes</span>
+                    </div>
+                    <div className="w-px h-5 bg-gray-200 shrink-0" />
+                    {/* Prev */}
+                    <button
+                      onClick={() => { const n = Math.max(0,resultsIdx-1); setResultsIdx(n); void fetchResultsSlices(resultsAxis,n); }}
+                      disabled={resultsIdx<=0}
+                      className="h-8 w-8 shrink-0 rounded-lg border border-gray-300 bg-white text-gray-500 font-semibold hover:bg-gray-50 disabled:opacity-30 transition flex items-center justify-center text-sm"
+                    >‹</button>
+                    {/* Segmented axis selector */}
+                    <div className="flex shrink-0 rounded-lg border border-gray-300 overflow-hidden divide-x divide-gray-300">
+                      {(['axial','coronal','sagittal'] as const).map(ax => (
+                        <button key={ax}
+                          onClick={() => { const mid=Math.floor(resultsMax/2); setResultsAxis(ax); setResultsIdx(mid); void fetchResultsSlices(ax,mid); }}
+                          className={`px-5 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors ${resultsAxis===ax ? 'bg-blue-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'}`}
+                        >{ax}</button>
+                      ))}
+                    </div>
+                    {/* Next */}
+                    <button
+                      onClick={() => { const n=Math.min(resultsMax,resultsIdx+1); setResultsIdx(n); void fetchResultsSlices(resultsAxis,n); }}
+                      disabled={resultsIdx>=resultsMax}
+                      className="h-8 w-8 shrink-0 rounded-lg border border-gray-300 bg-white text-gray-500 font-semibold hover:bg-gray-50 disabled:opacity-30 transition flex items-center justify-center text-sm"
+                    >›</button>
+                    {/* Slice slider */}
+                    <div className="relative flex-1 h-1.5 bg-gray-200 rounded-full">
+                      <div className="absolute left-0 top-0 h-full rounded-full bg-blue-500 transition-none"
+                        style={{ width: resultsMax>0 ? `${(resultsIdx/resultsMax)*100}%` : '0%' }} />
+                      <div className="absolute top-1/2 -translate-y-1/2 h-3.5 w-3.5 rounded-full bg-white border-[1.5px] border-blue-500 shadow-sm pointer-events-none"
+                        style={{ left: resultsMax>0 ? `calc(${(resultsIdx/resultsMax)*100}% - 7px)` : '-7px' }} />
+                      <input type="range" min={0} max={Math.max(0,resultsMax)} value={resultsIdx}
+                        onChange={e => setResultsIdx(Number(e.target.value))}
+                        onMouseUp={e => void fetchResultsSlices(resultsAxis, Number((e.target as HTMLInputElement).value))}
+                        onTouchEnd={e => void fetchResultsSlices(resultsAxis, Number((e.target as HTMLInputElement).value))}
+                        className="absolute inset-0 w-full opacity-0 cursor-pointer h-full" />
+                    </div>
+                    {/* Counter */}
+                    <span className="text-[10px] font-black text-gray-500 shrink-0 tabular-nums">
+                      {resultsSliceLoading ? '…' : `${resultsIdx+1} / ${resultsMax+1}`}
+                    </span>
+                  </div>
+                )}
+
+                {/* ══ FOOTER ══ */}
+                <div className="shrink-0 flex items-center justify-between border-t border-gray-200 bg-white px-5 py-2.5 gap-3">
                   <div>
                     {registrationMode === 'manual' && (
                       <button
                         onClick={handleRecommendedAutoAlign}
                         disabled={autoAlignStatus === 'processing'}
-                        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[10px] font-bold text-slate-600 transition hover:bg-slate-100 disabled:opacity-50"
+                        className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-[10px] font-semibold text-gray-500 hover:bg-gray-100 disabled:opacity-40 transition"
                       >
                         Recalage auto recommandé
                       </button>
                     )}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={handleBackToImagesPanel}
-                      className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-bold text-slate-500 transition hover:bg-slate-100"
-                    >
-                      <ArrowLeft className="h-3 w-3" /> Retour
-                    </button>
-                    {!showValidationModal && (
-                      <button
-                        onClick={() => setShowValidationModal(true)}
-                        disabled={autoAlignStatus === 'processing'}
-                        className="flex items-center gap-2 rounded-lg border border-emerald-400 bg-emerald-600 px-5 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-white shadow-[0_4px_14px_rgba(5,150,105,0.3)] transition hover:bg-emerald-700 disabled:opacity-50"
-                      >
-                        <Check className="h-3.5 w-3.5" />
-                        Valider le recalage
-                      </button>
+                  <div className="flex items-center gap-3">
+                    {registrationDimension === '2d' && confirmedPanelPatients.patient && !showValidationModal && (
+                      <>
+                        <button
+                          onClick={() => setConfirmDialog({
+                            title: 'Rejeter le recalage ?',
+                            message: 'Vous allez annuler le résultat actuel et relancer un nouvel essai de recalage.',
+                            detail: 'Le résultat calculé sera supprimé. Vous serez redirigé vers la sélection des coupes pour un nouvel essai.',
+                            confirmLabel: 'Oui, rejeter et réessayer',
+                            danger: true,
+                            onConfirm: handleRejectRegistration,
+                          })}
+                          disabled={applyingToSeries || autoAlignStatus === 'processing'}
+                          className="flex items-center gap-2 rounded-lg bg-red-600 px-5 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-white shadow-sm hover:bg-red-700 disabled:opacity-50 transition"
+                        >
+                          <X className="h-3.5 w-3.5" /> Rejeter le recalage
+                        </button>
+                        <button
+                          onClick={() => {
+                            const dbPatient = confirmedPanelPatients.patient!;
+                            setConfirmDialog({
+                              title: 'Valider le recalage ?',
+                              message: `Appliquer le recalage à toutes les coupes IRM de ${dbPatient.nom} ${dbPatient.prenom} ?`,
+                              detail: 'La transformation calculée sera appliquée à chaque image de la série du patient.',
+                              confirmLabel: 'Oui, valider',
+                              onConfirm: handleApplyToSeries,
+                            });
+                          }}
+                          disabled={applyingToSeries || autoAlignStatus === 'processing'}
+                          className="flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 transition"
+                        >
+                          {applyingToSeries ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Traitement…</> : <><Check className="h-3.5 w-3.5" /> Valider le recalage</>}
+                        </button>
+                      </>
+                    )}
+                    {!(registrationDimension === '2d' && confirmedPanelPatients.patient) && !showValidationModal && !saveToPatientResult && (
+                      <>
+                        <button
+                          onClick={() => setConfirmDialog({
+                            title: 'Rejeter le recalage ?',
+                            message: 'Vous allez annuler le résultat actuel et relancer un nouvel essai de recalage.',
+                            detail: 'Le résultat calculé sera supprimé. Vous serez redirigé vers la sélection des coupes pour un nouvel essai.',
+                            confirmLabel: 'Oui, rejeter et réessayer',
+                            danger: true,
+                            onConfirm: handleRejectRegistration,
+                          })}
+                          disabled={autoAlignStatus === 'processing'}
+                          className="flex items-center gap-2 rounded-lg bg-red-600 px-5 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-white shadow-sm hover:bg-red-700 disabled:opacity-50 transition"
+                        >
+                          <X className="h-3.5 w-3.5" /> Rejeter le recalage
+                        </button>
+                        <button
+                          onClick={() => setConfirmDialog({
+                            title: 'Valider le recalage ?',
+                            message: 'Êtes-vous satisfait du résultat du recalage ?',
+                            detail: registrationDimension === 'advanced'
+                              ? 'Le volume recalé sera utilisé pour l\'exploration des zones corticales.'
+                              : 'Le volume recalé sera enregistré dans le dossier patient.',
+                            confirmLabel: 'Oui, valider',
+                            onConfirm: registrationDimension === 'advanced' ? handleValidateAndExplore : handleSaveToPatient,
+                          })}
+                          disabled={autoAlignStatus === 'processing' || savingToPatient}
+                          className="flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 transition"
+                        >
+                          {savingToPatient
+                            ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Enregistrement…</>
+                            : <><Check className="h-3.5 w-3.5" /> Valider le recalage</>}
+                        </button>
+                      </>
+                    )}
+                    {/* ── Après validation 3D : indicateur "Recalage validé" dans le footer ── */}
+                    {!(registrationDimension === '2d' && confirmedPanelPatients.patient) && !showValidationModal && saveToPatientResult && (
+                      <div className="flex items-center gap-1.5 rounded-lg bg-slate-50 border border-slate-200 px-3 py-1.5 text-[10px] font-semibold text-slate-500">
+                        <Check className="h-3.5 w-3.5 text-emerald-500" />
+                        Recalage validé — exports disponibles en haut
+                      </div>
                     )}
                   </div>
                 </div>
@@ -3961,10 +4688,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                           Êtes-vous satisfait du résultat<br />du recalage ?
                         </h4>
                         <p className="mt-2 text-sm text-slate-500">
-                          Vérifiez la superposition avant de confirmer.
-                          {isEmergencySession
-                            ? ' En session urgence, exportez vos résultats depuis cette interface ; aucun enregistrement dans un dossier patient de la plateforme.'
-                            : ' Cette décision est enregistrée dans le dossier patient.'}
+                          Vérifiez la superposition avant de confirmer. Cette décision est enregistrée dans le dossier patient.
                         </p>
                       </div>
 
@@ -4066,9 +4790,8 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                         </div>
                       )}
 
-                      {/* ── Option : Sauvegarder dans le dossier patient (flux normal uniquement ; besoin d’un dossier choisi depuis « Mes patients ») ── */}
+                      {/* ── Option : Sauvegarder dans le dossier patient (DB uniquement) ── */}
                       {(() => {
-                        if (isEmergencySession) return null;
                         const dbPatient = confirmedPanelPatients.patient ?? confirmedPanelPatients.reference;
                         if (!dbPatient) return null;
                         return (
@@ -4187,10 +4910,238 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                   </div>
                 )}
 
+                {/* ── Comparaison Série — deux panneaux indépendants ── */}
+                {showRegisteredSeries && comparisonData && (() => {
+                  // Defensive: ensure counts are valid numbers
+                  const safeData = {
+                    ...comparisonData,
+                    patientCount: Number.isFinite(comparisonData.patientCount) ? comparisonData.patientCount : 0,
+                    refCount: Number.isFinite(comparisonData.refCount) ? comparisonData.refCount : 0,
+                  };
+                  const mkPanel = (
+                    key: 'ref' | 'patient',
+                    label: string,
+                    name: string,
+                    count: number,
+                    accentCls: string,
+                    dotCls: string,
+                    filmRef: React.RefObject<HTMLDivElement>
+                  ) => {
+                    const thumbs = panelThumbs[key];
+                    const thumbsLoading = panelThumbsLoading[key];
+                    const selIdx = panelIndex[key];
+                    const fullImg = panelFullImg[key];
+                    const fullLoading = panelFullLoading[key];
+
+                    const setIdx = (i: number) => {
+                      const clamped = Math.max(0, Math.min(count - 1, i));
+                      setPanelIndex(prev => ({ ...prev, [key]: clamped }));
+                      loadPanelFull(key, clamped);
+                      // Auto-scroll filmstrip to selected thumb
+                      if (filmRef.current) {
+                        const child = filmRef.current.children[clamped] as HTMLElement | undefined;
+                        child?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+                      }
+                    };
+
+                    return (
+                      <div className="flex-1 flex flex-col min-h-0 border-r border-slate-200 last:border-r-0">
+
+                        {/* Panel header */}
+                        <div className={`shrink-0 flex items-center gap-3 px-4 py-3 border-b border-slate-200 ${accentCls}`}>
+                          <div className={`h-3 w-3 rounded-full shrink-0 ${dotCls}`} />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[11px] font-black uppercase tracking-widest text-slate-500">{label}</p>
+                            <p className="text-base font-bold text-slate-900 truncate leading-tight">{name || '—'}</p>
+                          </div>
+                          <span className="shrink-0 text-sm font-semibold text-slate-500">{count} coupes</span>
+                        </div>
+
+                        {/* Main area : sidebar coupes + grande preview */}
+                        <div className="flex-1 flex min-h-0 bg-white">
+
+                          {/* Sidebar coupes — scroll vertical natif */}
+                          <div className="w-44 shrink-0 flex flex-col border-r border-slate-200 bg-slate-50 min-h-0">
+                            {/* Header fixe de la sidebar */}
+                            <div className="shrink-0 px-3 py-2 border-b border-slate-200 bg-slate-100">
+                              <p className="text-[10px] font-bold text-slate-500 text-center uppercase tracking-wider">
+                                {count} coupe{count > 1 ? 's' : ''}
+                              </p>
+                            </div>
+                            {/* Zone de scroll */}
+                            <div
+                              ref={filmRef}
+                              className="flex-1 overflow-y-auto min-h-0 py-2 px-2 space-y-2"
+                              style={{ overscrollBehavior: 'contain' }}
+                            >
+                              {thumbsLoading ? (
+                                <div className="flex flex-col items-center justify-center py-8 gap-2">
+                                  <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+                                  <span className="text-[10px] text-slate-400">Chargement…</span>
+                                </div>
+                              ) : (
+                                thumbs.map((thumb, i) => (
+                                  <button
+                                    key={i}
+                                    onClick={() => setIdx(i)}
+                                    className={`w-full relative rounded-xl overflow-hidden transition-all duration-150 block ${
+                                      i === selIdx
+                                        ? `ring-2 ring-offset-2 ${key === 'ref' ? 'ring-blue-500' : 'ring-emerald-500'} scale-[1.02]`
+                                        : 'opacity-65 hover:opacity-100 hover:scale-[1.01]'
+                                    }`}
+                                    style={{ height: 130 }}
+                                    title={`Coupe ${i + 1}`}
+                                  >
+                                    {thumb ? (
+                                      <img src={thumb} alt={`${i + 1}`} className="w-full h-full object-cover" />
+                                    ) : (
+                                      <div className="w-full h-full bg-slate-200" />
+                                    )}
+                                    <span className={`absolute bottom-0 inset-x-0 text-center text-[9px] py-1 font-mono font-black ${
+                                      i === selIdx
+                                        ? key === 'ref' ? 'bg-blue-600 text-white' : 'bg-emerald-600 text-white'
+                                        : 'bg-black/55 text-slate-200'
+                                    }`}>
+                                      Coupe {i + 1}
+                                    </span>
+                                  </button>
+                                ))
+                              )}
+                            </div>
+
+                          </div>
+
+                          {/* Grande preview — flex-1 remplit l'espace restant */}
+                          <div className="flex-1 flex items-center justify-center bg-black min-h-0 relative overflow-hidden">
+                            {count === 0 ? (
+                              <p className="text-[10px] text-slate-500">Non disponible</p>
+                            ) : fullLoading ? (
+                              <Loader2 className="h-7 w-7 animate-spin text-slate-600" />
+                            ) : fullImg ? (
+                              <img
+                                src={fullImg}
+                                alt={`${label} coupe ${selIdx + 1}`}
+                                className="max-w-full max-h-full object-contain"
+                              />
+                            ) : thumbs[selIdx] ? (
+                              <img
+                                src={thumbs[selIdx]!}
+                                alt={`${label} coupe ${selIdx + 1}`}
+                                className="max-w-full max-h-full object-contain"
+                                style={{ filter: 'blur(1px)' }}
+                              />
+                            ) : (
+                              <Loader2 className="h-7 w-7 animate-spin text-slate-600" />
+                            )}
+                            {count > 0 && (
+                              <div className="absolute bottom-2 right-2 bg-black/60 rounded px-2 py-0.5 text-[8px] font-mono"
+                                style={{ color: key === 'ref' ? '#60a5fa' : '#34d399' }}>
+                                {selIdx + 1} / {count}
+                              </div>
+                            )}
+                          </div>
+
+                        </div>
+                      </div>
+                    );
+                  };
+
+                  return (
+                    <div className="absolute inset-0 z-[80] flex flex-col bg-slate-50 animate-in fade-in duration-300">
+
+                      {/* Top bar */}
+                      <div className="shrink-0 flex items-center justify-between px-4 py-2.5 bg-white border-b border-slate-200 gap-3">
+                        {/* Gauche : Retour + Titre */}
+                        <div className="flex items-center gap-3 min-w-0">
+                          {/* Bouton Retour — même style que les autres */}
+                          <button
+                            onClick={() => setShowRegisteredSeries(false)}
+                            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-300 bg-slate-100 text-[10px] font-bold text-slate-700 hover:bg-slate-200 transition-colors shrink-0"
+                          >
+                            <ArrowLeft className="h-3.5 w-3.5" /> Retour
+                          </button>
+                          <div className="w-px h-5 bg-slate-200 shrink-0" />
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-500">
+                              <Columns2 className="h-3.5 w-3.5 text-white" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-base font-black text-slate-900">Comparaison — Séries recalées</p>
+                              <p className="text-[11px] text-slate-500 truncate">
+                                Naviguez indépendamment dans chaque série
+                                {safeData.patientDossier && (
+                                  <span className="ml-1 font-mono font-semibold">· DOS {safeData.patientDossier}</span>
+                                )}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Badge auto-save dossier patient */}
+                        {autoSavedToPatient && (
+                          <div className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-bold ${
+                            autoSavedToPatient.ok
+                              ? 'bg-emerald-50 border border-emerald-200 text-emerald-700'
+                              : 'bg-rose-50 border border-rose-200 text-rose-600'
+                          }`}>
+                            {autoSavedToPatient.ok ? (
+                              <><Check className="h-3.5 w-3.5" /> Sauvegardé dans le dossier patient</>
+                            ) : (
+                              <><X className="h-3.5 w-3.5" /> Échec de la sauvegarde auto</>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Boutons export + Retour */}
+                        <div className="flex items-center gap-2 shrink-0">
+                          {/* Export série recalée */}
+                          <button
+                            onClick={() => handleExportSeries('patient')}
+                            className="flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100 transition"
+                            title="Télécharger toutes les coupes du patient recalé"
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                            Série recalée
+                          </button>
+
+                          {/* Export série référence */}
+                          {safeData.refCount > 0 && (
+                            <button
+                              onClick={() => handleExportSeries('reference')}
+                              className="flex items-center gap-1.5 rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-[10px] font-bold text-blue-700 hover:bg-blue-100 transition"
+                              title="Télécharger toutes les coupes de la référence"
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                              Série référence
+                            </button>
+                          )}
+
+                          {/* Export tout */}
+                          <button
+                            onClick={() => handleExportSeries('all')}
+                            className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-100 px-3 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-200 transition"
+                            title="Télécharger les deux séries en ZIP"
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                            Tout exporter
+                          </button>
+
+                        </div>
+                      </div>
+
+                      {/* Two independent panels */}
+                      <div className="flex-1 flex min-h-0 divide-x divide-slate-200 overflow-hidden">
+                        {mkPanel('ref', 'Référence (Fixe)', safeData.refName || 'Référence', safeData.refCount, 'bg-blue-50', 'bg-blue-500', filmstripRefRef)}
+                        {mkPanel('patient', 'Patient — Recalé', safeData.patientName, safeData.patientCount, 'bg-emerald-50', 'bg-emerald-500', filmstripPatRef)}
+                      </div>
+
+                    </div>
+                  );
+                })()}
+
                 {/* Hidden canvases kept for export functionality */}
                 <canvas ref={resultRefCanvasRef} width={600} height={600} style={{ display: 'none' }} />
                 <canvas ref={resultPatCanvasRef} width={600} height={600} style={{ display: 'none' }} />
-              </div>
             </div>
           )}
         </div>
@@ -4207,20 +5158,34 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         onClose={()=>setAutoAlignStatus('idle')}
       />
 
-      {!isEmergencySession ? (
-        <PatientSelectionModal
-          isOpen={showPatientSelector}
-          onClose={() => setShowPatientSelector(false)}
-          onSelectPatient={handlePatientSelect}
-          onLocalImport={handleLocalImport}
-          mode={selectionPendingMode}
-        />
-      ) : null}
+      <AutoAlignOverlay
+        isVisible={applyingToSeriesStatus==='processing' || applyingToSeriesStatus==='success' || applyingToSeriesStatus==='error'}
+        status={applyingToSeriesStatus as any}
+        metrics={undefined}
+        progressOverride={applyingToSeriesProgress}
+        stageMessage={applyingToSeriesMessage}
+        errorMessage={applyingToSeriesError}
+        mode="apply_series"
+        onClose={()=>{
+          setApplyingToSeriesStatus('idle');
+          setApplyingToSeriesProgress(undefined);
+          setApplyingToSeriesMessage('');
+          setApplyingToSeriesError('');
+        }}
+      />
+
+      <PatientSelectionModal
+        isOpen={showPatientSelector}
+        onClose={() => setShowPatientSelector(false)}
+        onSelectPatient={handlePatientSelect}
+        onLocalImport={handleLocalImport}
+        mode={selectionPendingMode}
+      />
 
       {/* ══════════════════════════════════════════════════════════════════════
           PATIENT PICKER MODAL — full-screen, per-panel
       ══════════════════════════════════════════════════════════════════════ */}
-      {panelPickerOpen && !isEmergencySession && (
+      {panelPickerOpen && (
         <div className="fixed inset-0 z-[200] flex items-stretch justify-center bg-slate-900/60 backdrop-blur-md p-4 sm:p-6">
           <div className="relative flex w-full max-w-6xl flex-col overflow-hidden rounded-[28px] border border-white/20 bg-white shadow-[0_40px_80px_-16px_rgba(0,0,0,0.35)] animate-in zoom-in-95 slide-in-from-bottom-6 duration-400">
 
@@ -4502,7 +5467,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                   Annuler
                 </button>
                 <button
-                  onClick={confirmDialog.onConfirm}
+                  onClick={() => { setConfirmDialog(null); confirmDialog.onConfirm(); }}
                   className={`flex-1 rounded-xl px-4 py-2.5 text-sm font-black text-white shadow-md transition-all hover:brightness-110 active:scale-95 ${
                     confirmDialog.danger
                       ? 'bg-gradient-to-r from-rose-500 to-red-500 shadow-rose-200'
@@ -4514,6 +5479,20 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Overlay Exploration Corticale (advanced mode, sans navigation) ── */}
+      {showExploration && (
+        <div className="fixed inset-0 z-[250]">
+          <ExplorationPage
+            onBack={() => setShowExploration(false)}
+            dashboardPatientId={
+              confirmedPanelPatients.patient?.id ??
+              confirmedPanelPatients.reference?.id ??
+              null
+            }
+          />
         </div>
       )}
     </div>

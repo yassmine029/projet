@@ -239,6 +239,57 @@ class MRIFile(models.Model):
         return f"{self.original_filename} for {self.patient.dossier_number}"
 
 
+class ReferenceIntensity(models.Model):
+    """
+    Baseline d'intensité par zone de Brodmann pour un sujet de référence (ex. sujet1)
+    recalé en espace MNI152. Rempli une fois par le script setup_reference_intensity.
+    """
+    nom = models.CharField(max_length=100, unique=True, db_index=True)
+    mri_original_path = models.TextField(
+        help_text='Chemin absolu du NIfTI source avant recalage.',
+    )
+    mri_registered_path = models.TextField(
+        help_text='Chemin du volume recalé MNI152 (relatif à MEDIA_ROOT ou absolu).',
+    )
+    brodmann_intensities = models.JSONField(
+        default=dict,
+        help_text='Map { "1": somme_float, ..., "52": somme_float } sur masques atlas.',
+    )
+    date_creation = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date_creation']
+        verbose_name = 'Référence intensité Brodmann'
+        verbose_name_plural = 'Références intensité Brodmann'
+
+    def __str__(self):
+        return f'ReferenceIntensity({self.nom}, {self.date_creation:%Y-%m-%d})'
+
+
+class Analyse(models.Model):
+    """
+    Analyse IRM d'un patient : volume déjà recalé en MNI152 (même grille que l'atlas Brodmann).
+    Utilisé pour comparer les sommes d'intensités zone par zone à la ReferenceIntensity.
+    """
+    patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name='analyses')
+    doctor = models.ForeignKey(User, on_delete=models.CASCADE, related_name='intensity_analyses')
+    titre = models.CharField(max_length=200, blank=True, default='', help_text='Libellé optionnel (ex. coupe T1 post-recalage).')
+    mri_registered = models.FileField(
+        upload_to='analyses_mni_registered/%Y/%m/',
+        max_length=500,
+        help_text='Fichier NIfTI recalé MNI152 (aligné sur le même espace que l’atlas Brodmann).',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Analyse (volume MNI)'
+        verbose_name_plural = 'Analyses (volumes MNI)'
+
+    def __str__(self):
+        return f'Analyse #{self.id} — {self.patient.dossier_number}'
+
+
 class SegmentationRun(models.Model):
     STATUS_CHOICES = [
         ('running', 'Running'),

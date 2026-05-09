@@ -1,18 +1,12 @@
 import axios from "axios";
 
-/**
- * En dev, utiliser le proxy Vite (/api → localhost:8000) : même origine que la page,
- * cookies de session Django fiables. En prod, définir VITE_API_BASE_URL si besoin.
- */
-function resolveApiBase() {
-  const fromEnv = (import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/$/, "");
-  if (fromEnv) return fromEnv.endsWith("/api") ? fromEnv : `${fromEnv}/api`;
-  if (import.meta.env.DEV) return "/api";
-  return "http://localhost:8000/api";
-}
+// En dev avec Vite : /api est proxifié (voir vite.config.js + VITE_API_PROXY_TARGET).
+const apiBase =
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.DEV ? "/api" : "http://localhost:8000/api");
 
 const api = axios.create({
-  baseURL: resolveApiBase(),
+  baseURL: apiBase,
   withCredentials: true,
 });
 
@@ -22,7 +16,6 @@ export const register = (payload = {}) =>
 export const login = (username, password) => api.post("/login", { username, password });
 export const emergencyLogin = (email, orderNumber) => api.post("/emergency_login", { email, order_number: orderNumber });
 export const checkEmergencyLimit = (email, orderNumber) => api.post("/emergency_check", { email, order_number: orderNumber });
-/** Import urgence : dossiers volumineux — délais longs (proxy + traitement serveur). */
 export const stageEmergencyPatient = (formData) =>
   api.post("/emergency/stage-patient/", formData, {
     timeout: 900000,
@@ -79,6 +72,18 @@ export const projectBrodmann = (atlasJobId, atlasRelpath, patientJobId, patientR
     atlasJobId, atlasRelpath, patientJobId, patientRelpath, x, y, tolerance
   }, { responseType: "blob" });
 
+/** Sommes d'intensité Brodmann : volume MNI patient (Analyse ou session job_id) vs ReferenceIntensity en BDD */
+export const getBrodmannIntensity = ({ analyseId, jobId, zoneNumber }) => {
+  const params = { zone_number: zoneNumber };
+  if (analyseId != null && analyseId !== '') params.analyse_id = analyseId;
+  const j = jobId != null ? String(jobId).trim() : '';
+  if (j) params.job_id = j;
+  if (params.analyse_id == null && !params.job_id) {
+    return Promise.reject(new Error('analyseId ou jobId requis'));
+  }
+  return api.get("/brodmann/intensity/", { params });
+};
+
 // Dashboard Patients
 export const getDashboardPatients = (params) => api.get("/patients/", { params });
 export const createPatient = (data) => api.post("/patients/", data);
@@ -101,10 +106,9 @@ export const createContactRequest = (data) => api.post('/contact_requests/', dat
 export const getApprovedTestimonials = () => api.get('/testimonials/');
 export const submitTestimonial = (payload) => api.post('/testimonials/submit/', payload);
 
-// Admin dashboard (session Django staff requise — voir admin_portal_login)
+// Admin dashboard
 export const adminPortalLogin = (email, password) =>
   api.post('/admin/portal_login', { email, password });
-
 export const getAdminOverview = () => api.get('/admin/dashboard/overview');
 export const getAdminAccounts = () => api.get('/admin/dashboard/accounts');
 export const createAdminAccount = (payload) => api.post('/admin/dashboard/accounts/create', payload);
@@ -114,9 +118,7 @@ export const getAdminAnalytics = () => api.get('/admin/dashboard/analytics');
 export const getAdminTestimonials = () => api.get('/admin/dashboard/testimonials');
 export const approveAdminAccount = (userId) => api.post(`/admin/dashboard/accounts/${userId}/approve`);
 export const rejectAdminAccount = (userId, reason) => api.post(`/admin/dashboard/accounts/${userId}/reject`, { reason });
-export const approveAdminTestimonial = (testimonialId) =>
-  api.post(`/admin/dashboard/testimonials/${testimonialId}/approve`, {});
-export const rejectAdminTestimonial = (testimonialId) =>
-  api.post(`/admin/dashboard/testimonials/${testimonialId}/reject`, {});
+export const approveAdminTestimonial = (testimonialId) => api.post(`/admin/dashboard/testimonials/${testimonialId}/approve`);
+export const rejectAdminTestimonial = (testimonialId) => api.post(`/admin/dashboard/testimonials/${testimonialId}/reject`);
 
 export default api;

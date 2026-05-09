@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { ArrowLeft, Loader2 } from 'lucide-react';
+import api, { getBrodmannIntensity } from '../api';
 import BrodmannIdentificationView from '../components/BrodmannIdentificationView';
 import BrodmannZone3D from '../components/BrodmannZone3D';
+import BrodmannIntensityPanel from '../components/BrodmannIntensityPanel';
 
 interface ImageTransform {
   offsetX: number; offsetY: number; scale: number;
@@ -72,10 +74,31 @@ const GROUP_COLORS: Record<string, string> = {
   Insulaire:  'text-cyan-500',
 };
 
-// ── Right panel tab type ───────────────────────────────────────────────────────
+interface BrodmannIntensityPayload {
+  zone_number: number;
+  somme_patient: number;
+  somme_reference: number;
+  difference: number;
+  ratio_percent: number | null;
+  ratio_relative_percent?: number | null;
+  n_voxels?: number;
+  patient_zone_mean?: number;
+  patient_brain_mean?: number;
+  reference_zone_mean?: number | null;
+  reference_brain_mean?: number | null;
+  patient_relative_index?: number;
+  reference_relative_index?: number | null;
+}
+
+export type ExplorationPageProps = {
+  onBack?: () => void;
+  /** Patient dashboard (pour dernière analyse MNI / intensités Brodmann). */
+  dashboardPatientId?: number | null;
+};
+
 type RightTab = 'zones' | '3d';
 
-export default function ExplorationPage() {
+export default function ExplorationPage({ onBack, dashboardPatientId = null }: ExplorationPageProps) {
   const [jobId, setJobId]           = useState('');
   const [axis, setAxis]             = useState('axial');
   const [index, setIndex]           = useState(0);
@@ -125,6 +148,101 @@ export default function ExplorationPage() {
   useEffect(() => {
     if (zone?.id) setRightTab('3d');
   }, [zone?.id]);
+
+  const [explorerPatientId, setExplorerPatientId] = useState<number | null>(() => {
+    if (dashboardPatientId != null) return dashboardPatientId;
+    if (typeof window === 'undefined') return null;
+    const s = sessionStorage.getItem('explorationPatientId');
+    const n = s ? parseInt(s, 10) : NaN;
+    return !Number.isNaN(n) ? n : null;
+  });
+
+  useEffect(() => {
+    if (dashboardPatientId != null) setExplorerPatientId(dashboardPatientId);
+  }, [dashboardPatientId]);
+
+  const [brodmannAnalyseId, setBrodmannAnalyseId] = useState<number | null>(null);
+  const [brodmannIntensityStats, setBrodmannIntensityStats] = useState<BrodmannIntensityPayload | null>(null);
+  const [brodmannIntensityLoading, setBrodmannIntensityLoading] = useState(false);
+  const [brodmannIntensityError, setBrodmannIntensityError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (explorerPatientId == null) {
+      setBrodmannAnalyseId(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .get(`/patients/${explorerPatientId}/latest-brodmann-analyse/`)
+      .then((res) => {
+        if (cancelled) return;
+        const aid = res.data?.analyse_id;
+        setBrodmannAnalyseId(typeof aid === 'number' && !Number.isNaN(aid) ? aid : null);
+      })
+      .catch(() => {
+        if (!cancelled) setBrodmannAnalyseId(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [explorerPatientId]);
+
+  useEffect(() => {
+    const onUpd = (e: Event) => {
+      const ce = e as CustomEvent<{ analyseId?: number; patientId?: number }>;
+      const pid = ce.detail?.patientId;
+      const aid = ce.detail?.analyseId;
+      if (typeof aid !== 'number' || Number.isNaN(aid)) return;
+      if (pid != null && explorerPatientId != null && pid !== explorerPatientId) return;
+      setBrodmannAnalyseId(aid);
+    };
+    window.addEventListener('brodmann-analyse-updated', onUpd as EventListener);
+    return () => window.removeEventListener('brodmann-analyse-updated', onUpd as EventListener);
+  }, [explorerPatientId]);
+
+  const loadBrodmannIntensity = useCallback(
+    async (zoneNumber: number) => {
+      const useJob = brodmannAnalyseId == null && jobId;
+      if (brodmannAnalyseId == null && !useJob) return;
+      setBrodmannIntensityLoading(true);
+      setBrodmannIntensityError(null);
+      try {
+        const { data } = await getBrodmannIntensity({
+          analyseId: brodmannAnalyseId ?? undefined,
+          jobId: useJob ? jobId : undefined,
+          zoneNumber,
+        });
+        setBrodmannIntensityStats(data as BrodmannIntensityPayload);
+      } catch (err: unknown) {
+        setBrodmannIntensityStats(null);
+        const ax = err as { response?: { data?: { detail?: string } } };
+        const detail = ax?.response?.data?.detail;
+        setBrodmannIntensityError(
+          typeof detail === 'string' ? detail : 'Impossible de charger les intensités Brodmann.'
+        );
+      } finally {
+        setBrodmannIntensityLoading(false);
+      }
+    },
+    [brodmannAnalyseId, jobId]
+  );
+
+  useEffect(() => {
+    const canIntensity = brodmannAnalyseId != null || (jobId != null && jobId !== '');
+    if (!canIntensity) {
+      setBrodmannIntensityStats(null);
+      setBrodmannIntensityError(null);
+      setBrodmannIntensityLoading(false);
+      return;
+    }
+    if (zone?.id == null) {
+      setBrodmannIntensityStats(null);
+      setBrodmannIntensityError(null);
+      setBrodmannIntensityLoading(false);
+      return;
+    }
+    void loadBrodmannIntensity(zone.id);
+  }, [brodmannAnalyseId, jobId, zone?.id, loadBrodmannIntensity]);
 
   // ── Drawing ─────────────────────────────────────────────────────────────────
   const drawCanvas = useCallback((type: 'reference' | 'patient') => {
@@ -308,7 +426,7 @@ export default function ExplorationPage() {
       {/* ── Header ── */}
       <header className="shrink-0 flex items-center gap-4 border-b border-slate-200 bg-white px-5 py-3 shadow-sm z-20">
         <button
-          onClick={() => window.history.back()}
+          onClick={onBack ?? (() => window.history.back())}
           className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 shadow-sm transition hover:bg-slate-50"
         >
           <ArrowLeft className="h-3.5 w-3.5" /> Retour
@@ -484,6 +602,17 @@ export default function ExplorationPage() {
         {/* RIGHT STRIP — Zones list + 3D */}
         <aside className="w-80 shrink-0 border-l border-slate-200 bg-white flex flex-col overflow-hidden shadow-sm">
 
+          <div className="shrink-0 max-h-[38vh] overflow-y-auto border-b border-slate-100 px-3 py-2.5">
+            <BrodmannIntensityPanel
+              zoneName={zone?.name}
+              zoneNumber={zone?.id}
+              stats={brodmannIntensityStats}
+              loading={brodmannIntensityLoading}
+              error={brodmannIntensityError}
+              analyseAvailable={brodmannAnalyseId != null || (jobId != null && jobId !== '')}
+            />
+          </div>
+
           {/* Tab selector */}
           <div className="flex shrink-0 border-b border-slate-100">
             <button
@@ -615,12 +744,6 @@ export default function ExplorationPage() {
             </div>
           )}
 
-          {/* Validate button */}
-          <div className="shrink-0 p-3 border-t border-slate-100 bg-white">
-            <button className="w-full py-2.5 rounded-xl bg-blue-600 text-[11px] font-black uppercase tracking-widest text-white shadow-md shadow-blue-200 hover:bg-blue-700 transition-all">
-              Valider Aire
-            </button>
-          </div>
         </aside>
 
       </div>

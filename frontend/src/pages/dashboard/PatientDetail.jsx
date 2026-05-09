@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft, Calendar, FileText, Phone, Mail, Stethoscope, Clock, ShieldCheck, 
-  MapPin, Activity, Star, Plus, Boxes, Layers, ChevronRight, ChevronDown, 
+  ArrowLeft, Calendar, FileText, Phone, Mail, Stethoscope, Clock, ShieldCheck,
+  MapPin, Activity, Star, Plus, Boxes, Layers, ChevronRight, ChevronDown,
   Lock, Eye, Download, Edit3, ArrowLeftRight, Trash2, Hash, User, Search, Filter, ArrowUpDown,
-  HardDrive, FolderTree, Settings
+  HardDrive, FolderTree, Settings, CheckCircle2
 } from 'lucide-react';
 import api from '../../api';
 
@@ -251,7 +251,25 @@ export default function PatientDetail() {
   const [zipDownloading, setZipDownloading] = useState(false);
   const [zipNotice, setZipNotice] = useState(null);
   const [showTree, setShowTree] = useState(false);
-  const [isBaselineExpanded, setIsBaselineExpanded] = useState(false); // Collapsed by default for efficiency
+  const [isBaselineExpanded, setIsBaselineExpanded] = useState(false);
+  const [reports, setReports] = useState([]);
+  const [reportsLoading, setReportsLoading] = useState(false);
+
+  useEffect(() => {
+    const fetchReports = async () => {
+      if (!id) return;
+      setReportsLoading(true);
+      try {
+        const token = localStorage.getItem('access');
+        const res = await api.get(`/patients/${id}/reports/list/`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (res.data?.ok) setReports(res.data.reports || []);
+      } catch { /* silencieux */ }
+      finally { setReportsLoading(false); }
+    };
+    fetchReports();
+  }, [id]);
 
   useEffect(() => {
     const fetchPatient = async () => {
@@ -553,7 +571,6 @@ export default function PatientDetail() {
             </div>
           </div>
         </div>
-      </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -907,6 +924,69 @@ export default function PatientDetail() {
                     </div>
                 </div>
 
+                {/* ── Rapports archivés ── */}
+                {(reports.length > 0 || reportsLoading) && (
+                  <div className="mb-6">
+                    <div className="flex items-center gap-2 mb-3">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <p className="text-xs font-black uppercase tracking-widest text-slate-500">
+                        Rapports cliniques archivés
+                      </p>
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">
+                        {reports.length}
+                      </span>
+                    </div>
+                    {reportsLoading ? (
+                      <div className="flex items-center gap-2 py-3 text-sm text-slate-400">
+                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+                        Chargement des rapports…
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {reports.map((report) => (
+                          <div key={report.id}
+                            className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm hover:border-blue-200 hover:shadow-md transition-all">
+                            {/* Icône */}
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-600 shadow-sm shadow-blue-200">
+                              <FileText className="h-5 w-5 text-white" />
+                            </div>
+                            {/* Infos — compactes, sans redondance */}
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="text-sm font-bold text-slate-800">Rapport de volumétrie</p>
+                                {report.run_id && (
+                                  <span className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-600">
+                                    Segmentation #{report.run_id}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="mt-0.5 text-[11px] text-slate-400">
+                                <Calendar className="inline h-3 w-3 mr-1" />
+                                {report.created_at} · Dr. {report.doctor_name}
+                              </p>
+                            </div>
+                            {/* Actions */}
+                            <div className="flex items-center gap-2 shrink-0">
+                              {report.file_url && (
+                                <>
+                                  <a href={report.file_url} target="_blank" rel="noreferrer"
+                                    className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-all">
+                                    <Eye className="h-3.5 w-3.5" /> Voir
+                                  </a>
+                                  <a href={report.file_url} target="_blank" rel="noreferrer" download
+                                    className="flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-[11px] font-bold text-blue-700 hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-all">
+                                    <Download className="h-3.5 w-3.5" /> PDF
+                                  </a>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Sessions (segmentation) + analyses (recalage) */}
                 <div id="analyses-start" className="pt-4 space-y-4">
                     {sessions.map((session, idx) => (
@@ -1054,8 +1134,6 @@ export default function PatientDetail() {
 
         </div>
       </div>
-        </>
-      )}
     </div>
   );
 }

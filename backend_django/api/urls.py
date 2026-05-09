@@ -123,6 +123,8 @@ urlpatterns = [
     path('segmentation-runs/<int:run_id>/modelisation-3d/', views.segmentation_run_modelisation_3d, name='segmentation_run_modelisation_3d'),
     path('segmentation-runs/<int:run_id>/report-pdf/', views.segmentation_run_report_pdf, name='segmentation_run_report_pdf'),
     path('patients/<int:patient_id>/download-zip/', views.patient_files_download_zip, name='patient_files_download_zip'),
+    path('patients/<int:patient_id>/reports/', views.save_patient_report, name='save_patient_report'),
+    path('patients/<int:patient_id>/reports/list/', views.list_patient_reports, name='list_patient_reports'),
 
     # Reclamation routes
     path('reclamations/', views.reclamations_list_create, name='reclamations_list_create'),

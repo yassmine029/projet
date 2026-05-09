@@ -5275,9 +5275,6 @@ def _compute_slice_quality(file_path: str) -> dict:
 def list_mri_files(request, patient_id: int):
     print(f"Nadine Yassmine - list_mri_files endpoint works - patient_id: {patient_id}, user: {request.user.username}")
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
-    deny_l = deny_if_patient_session_mismatch(request, patient)
-    if deny_l:
-        return deny_l
     mri_files = list(MRIFile.objects.filter(patient=patient, file_type='original').order_by('-uploaded_at'))
 
     quality_map = {}
@@ -6086,3 +6083,74 @@ def admin_dashboard_settings(request):
             'date_format': 'DD/MM/YYYY',
         }
     })
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RAPPORTS PATIENT
+# ─────────────────────────────────────────────────────────────────────────────
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@login_required
+def save_patient_report(request, patient_id):
+    """Archive le rapport PDF dans le dossier patient."""
+    import json as _json
+
+    patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
+    pdf_file = request.FILES.get("pdf")
+    if not pdf_file:
+        return JsonResponse({"ok": False, "error": "Fichier PDF manquant."}, status=400)
+
+    run_id = request.POST.get("run_id")
+    doctor_conclusion = request.POST.get("doctor_conclusion", "")
+    try:
+        recommendations = _json.loads(request.POST.get("doctor_recommendations", "[]"))
+    except Exception:
+        recommendations = []
+
+    run = None
+    if run_id:
+        try:
+            run = SegmentationRun.objects.get(id=int(run_id), patient=patient)
+        except (SegmentationRun.DoesNotExist, ValueError):
+            pass
+
+    report = PatientReport.objects.create(
+        patient=patient,
+        segmentation_run=run,
+        doctor=request.user,
+        file=pdf_file,
+        doctor_conclusion=doctor_conclusion,
+        doctor_recommendations=recommendations,
+    )
+
+    return JsonResponse({
+        "ok": True,
+        "report_id": report.id,
+        "created_at": report.created_at.strftime("%d/%m/%Y %H:%M"),
+        "message": "Rapport archivé dans le dossier patient.",
+    })
+
+
+@login_required
+@require_http_methods(["GET"])
+def list_patient_reports(request, patient_id):
+    """Liste les rapports archivés d'un patient."""
+    patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
+    reports = PatientReport.objects.filter(patient=patient).select_related("segmentation_run", "doctor")
+
+    data = []
+    for r in reports:
+        url = request.build_absolute_uri(r.file.url) if r.file else None
+        data.append({
+            "id": r.id,
+            "created_at": r.created_at.strftime("%d/%m/%Y %H:%M"),
+            "run_id": r.segmentation_run_id,
+            "doctor_name": r.doctor.get_full_name() or r.doctor.username if r.doctor else "-",
+            "doctor_conclusion": r.doctor_conclusion,
+            "doctor_recommendations": r.doctor_recommendations,
+            "file_url": url,
+        })
+
+    return JsonResponse({"ok": True, "reports": data, "total": len(data)})

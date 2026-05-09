@@ -119,6 +119,9 @@ export default function Sidebar() {
 
         <NavSection title="Documents">
           <NavItem to="/dashboard/reports" icon={FileText} label="Mes rapports" />
+        </NavSection>
+
+        <NavSection title="Aide & Support">
           <NavItem to="/dashboard/reclamations" icon={HelpCircle} label="Réclamations" />
         </NavSection>
 

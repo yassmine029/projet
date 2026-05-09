@@ -7,7 +7,8 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, ArrowDown, Upload, X, Eye, Download, Trash2, Check,
   MousePointer2, ZoomIn, ZoomOut, RotateCcw, Keyboard, BrainCircuit, Brain, Undo2,
-  Box, Loader2, FileText, Users, ChevronRight, Search, ScanSearch, Zap, ChevronLeft, Columns2
+  Box, Loader2, FileText, Users, ChevronRight, Search, ScanSearch, Zap, ChevronLeft, Columns2,
+  Lightbulb, Target, Microscope, Map
 } from 'lucide-react';
 
 const GuideIcon = () => (
@@ -171,6 +172,9 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   } | null>(null);
 
   const [showPatientSelector, setShowPatientSelector] = useState(false);
+  const [showThreeDSubModal, setShowThreeDSubModal] = useState(false);
+  const [showModeAssistant, setShowModeAssistant] = useState(false);
+  const [assistantObjective, setAssistantObjective] = useState<'fast' | 'precise' | 'cortical' | 'manual' | null>(null);
   const [selectedPatient, setSelectedPatient] = useState<any>(null);
   const [patientFiles, setPatientFiles] = useState<any[]>([]);
   const [selectionPendingMode, setSelectionPendingMode] = useState<RegistrationDimension | null>(null);
@@ -1961,6 +1965,8 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const handleValidateAndExplore = async () => {
     if (!jobId) return;
     setShowValidationModal(false);
+
+    // 1. Validate registration on backend
     try {
       await fetch('/api/volume/validate-registration', {
         method: 'POST',
@@ -1969,8 +1975,37 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         body: JSON.stringify({ jobId }),
       });
     } catch {
-      // continue anyway — the jobId is valid, exploration can proceed
+      // continue anyway — jobId is valid, exploration can proceed
     }
+
+    // 2. Auto-save to patient folder
+    const dbPatient = confirmedPanelPatients.patient ?? confirmedPanelPatients.reference;
+    if (dbPatient) {
+      setSavingToPatient(true);
+      try {
+        const res = await api.post('/volume/save-registered-to-patient', {
+          jobId,
+          patientId: dbPatient.id,
+          mode: 'advanced',
+          mi: autoAlignMetrics?.mutual_information ?? null,
+          ncc: autoAlignMetrics?.ncc_after ?? null,
+          n_iters: autoAlignMetrics?.n_iters ?? null,
+          processing_time_ms: autoAlignMetrics?.processing_time_ms ?? null,
+        });
+        const data = res.data;
+        if (data.success) {
+          setSaveToPatientResult({ ok: true, filename: data.original_filename, downloadUrl: data.file_url, uploadedAt: data.uploaded_at });
+        } else {
+          setSaveToPatientResult({ ok: false, error: data.error || 'Erreur inconnue' });
+        }
+      } catch (err: any) {
+        const msg = err?.response?.data?.error || err?.message || 'Erreur réseau';
+        setSaveToPatientResult({ ok: false, error: msg });
+      } finally {
+        setSavingToPatient(false);
+      }
+    }
+
     sessionStorage.setItem('volumeJobId', jobId);
     setShowExploration(true);
   };
@@ -3065,9 +3100,9 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         step: '02',
         icon: <BrainCircuit className="h-6 w-6" />,
         title: 'Recalage 3D',
-        subtitle: 'Alignement volumique complet',
-        desc: 'Importez deux volumes NIfTI patients, naviguez dans les coupes axiales/coronales/sagittales et lancez le recalage neuronal MINE 3D ou Hybride.',
-        tags: ['2 volumes NIfTI', 'MINE 3D / Hybride', 'Navigation coupes', 'Validation clinique'],
+        subtitle: 'Standard ou basé atlas MNI152',
+        desc: 'Choisissez entre un recalage volumique standard (2 volumes NIfTI) ou un recalage basé atlas MNI152 avec identification interactive des aires de Brodmann.',
+        tags: ['Recalage standard', 'Atlas MNI152 auto', 'MINE 3D / Hybride', 'Brodmann'],
         accent: {
           card: 'border-2 border-blue-500 bg-gradient-to-br from-blue-600 to-indigo-600',
           iconWrap: 'bg-white/20 text-white border border-white/30',
@@ -3084,31 +3119,6 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
           hover: 'hover:shadow-blue-400/40',
         },
         levels: 2,
-      },
-      {
-        id: 'advanced' as const,
-        step: '03',
-        icon: <BrainCircuit className="h-6 w-6" />,
-        title: 'Recalage Avancé',
-        subtitle: 'Flux clinique complet + Brodmann',
-        desc: "Recalage 3D patient→atlas MNI152 suivi d'une identification interactive des 47 aires de Brodmann avec coordonnées MNI et visualisation 3D des régions corticales.",
-        tags: ['Atlas MNI152', 'MINE 3D / Hybride', '47 zones Brodmann', 'Coordonnées MNI', 'Visualisation 3D'],
-        accent: {
-          card: 'border-2 border-violet-500 bg-gradient-to-br from-violet-600 to-purple-700',
-          iconWrap: 'bg-white/20 text-white border border-white/30',
-          tag: 'bg-white/20 text-white border border-white/25',
-          step: 'text-white/20',
-          title: 'text-white',
-          subtitle: 'text-violet-200',
-          desc: 'text-white/80',
-          footer: 'border-white/20',
-          dot: 'bg-white',
-          dotOff: 'bg-white/25',
-          badgeText: 'Expert',
-          cta: 'text-white',
-          hover: 'hover:shadow-violet-400/40',
-        },
-        levels: 3,
       },
     ];
 
@@ -3165,11 +3175,11 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
           </p>
 
           {/* Cards */}
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 max-w-3xl mx-auto">
             {FLOWS.map((flow) => (
               <button
                 key={flow.id}
-                onClick={() => void handleChooseRegistrationDimension(flow.id)}
+                onClick={() => flow.id === '3d' ? setShowThreeDSubModal(true) : void handleChooseRegistrationDimension(flow.id)}
                 className={`group relative text-left rounded-2xl ${flow.accent.card} p-6 transition-all duration-300 hover:-translate-y-2 hover:shadow-2xl ${flow.accent.hover} shadow-lg`}
               >
                 {/* Icon */}
@@ -3206,6 +3216,83 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
             Vous pouvez changer de flux à tout moment en revenant à cette page.
           </p>
         </div>{/* end cards section */}
+
+        {/* ── Modal choix sous-flux 3D ── */}
+        {showThreeDSubModal && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+            <div
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              onClick={() => setShowThreeDSubModal(false)}
+            />
+            <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 animate-[fadeInScale_0.2s_ease-out]">
+              {/* Header */}
+              <button
+                onClick={() => setShowThreeDSubModal(false)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center shrink-0">
+                  <BrainCircuit className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900">Recalage 3D</h3>
+                  <p className="text-[10px] text-slate-500 font-semibold">Choisissez votre approche volumique</p>
+                </div>
+              </div>
+              <div className="h-px bg-slate-100 my-4" />
+
+              {/* Option 1 — Standard */}
+              <button
+                onClick={() => { setShowThreeDSubModal(false); void handleChooseRegistrationDimension('3d'); }}
+                className="w-full text-left rounded-xl border-2 border-blue-200 hover:border-blue-500 bg-blue-50/50 hover:bg-blue-50 p-4 mb-3 transition-all duration-200 group"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                    <BrainCircuit className="h-4 w-4 text-white" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-black text-slate-900 group-hover:text-blue-700 transition-colors">Recalage 3D Standard</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                      Importez deux volumes NIfTI (référence + patient) et lancez le recalage neuronal MINE 3D ou Hybride avec navigation coupes axiales/coronales/sagittales.
+                    </p>
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {['2 volumes NIfTI', 'MINE 3D / Hybride', 'Navigation coupes', 'Validation clinique'].map(t => (
+                        <span key={t} className="rounded-full px-2 py-0.5 text-[9px] font-bold bg-blue-100 text-blue-700 border border-blue-200">{t}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-blue-500 mt-1 transition-colors shrink-0" />
+                </div>
+              </button>
+
+              {/* Option 2 — Atlas MNI152 + Brodmann */}
+              <button
+                onClick={() => { setShowThreeDSubModal(false); void handleChooseRegistrationDimension('advanced'); }}
+                className="w-full text-left rounded-xl border-2 border-violet-200 hover:border-violet-500 bg-violet-50/50 hover:bg-violet-50 p-4 transition-all duration-200 group"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-600 to-purple-700 flex items-center justify-center shrink-0 mt-0.5">
+                    <BrainCircuit className="h-4 w-4 text-white" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-black text-slate-900 group-hover:text-violet-700 transition-colors">Recalage 3D basé atlas MNI152</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                      Uploadez uniquement votre volume patient — l'atlas MNI152 se télécharge automatiquement. Suivi d'une identification interactive des 47 aires de Brodmann avec coordonnées MNI.
+                    </p>
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {['1 volume patient', 'Atlas MNI152 auto', '47 zones Brodmann', 'Coordonnées MNI'].map(t => (
+                        <span key={t} className="rounded-full px-2 py-0.5 text-[9px] font-bold bg-violet-100 text-violet-700 border border-violet-200">{t}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-violet-500 mt-1 transition-colors shrink-0" />
+                </div>
+              </button>
+            </div>
+          </div>
+        )}
 
         <PatientSelectionModal
           isOpen={showPatientSelector}
@@ -3252,7 +3339,9 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       )}
 
       {/* SIDEBAR */}
-      <aside className="w-72 flex-none bg-white border-r border-slate-200 flex flex-col z-20 shadow-xl">
+      <aside className="w-72 flex-none bg-white border-r border-slate-200 flex flex-col z-20 shadow-xl overflow-hidden">
+        {/* ── Zone fixe : Retour + Header ── */}
+        <div className="shrink-0">
         {/* ── Bouton Retour (identique aux autres boutons Retour de l'app) ── */}
         <div className="px-4 pt-3 pb-2 border-b border-slate-100">
           <button
@@ -3278,9 +3367,13 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
             </div>
           </div>
         </div>
+        </div>{/* fin zone fixe */}
+
+        {/* ── Zone scrollable : Progression + Mode + Actions ── */}
+        <div className="flex-1 overflow-y-auto flex flex-col">
 
         {/* Progression */}
-        <div className="px-4 py-2.5 border-b border-slate-200">
+        <div className="px-4 py-2.5 border-b border-slate-200 shrink-0">
           <p className="text-[9px] font-bold text-slate-700 uppercase tracking-widest mb-2">Progression</p>
           <div className="flex items-center gap-0">
             {[{label:'Import',done:phase>=1,active:phase===1,color:'bg-blue-600'},{label:'Recalage',done:phase>=2,active:phase===2,color:'bg-blue-500'},{label:registrationDimension==='advanced' ? 'Brodmann' : 'Validation',done:phase>=3,active:phase===3,color:'bg-blue-700'}].map(({label,done,active,color},i,arr)=>(
@@ -3297,51 +3390,6 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
           </div>
         </div>
 
-        {/* Compteur de points (uniquement en manuel) */}
-        {showManualActions&&(
-          <div className="px-4 py-2 border-b border-slate-200">
-            <div className="flex gap-1.5 mb-1.5">
-              <div className="flex-1 flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
-                <span className="w-1 h-1 rounded-full bg-blue-500"/><span className="text-[10px] text-blue-400 font-bold">Référence</span>
-                <span className="ml-auto text-xs font-black text-blue-400">{refPts}</span>
-              </div>
-              <div className="flex-1 flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-slate-100 border border-slate-200">
-                <span className="w-1 h-1 rounded-full bg-slate-600"/><span className="text-[10px] text-slate-700 font-bold">Patient</span>
-                <span className="ml-auto text-xs font-black text-slate-700">{patPts}</span>
-              </div>
-            </div>
-            <div className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[10px] font-bold ${pointsStatus==='ready'?'bg-emerald-100 border border-emerald-300 text-emerald-700':pointsStatus==='unbalanced'?'bg-orange-100 border border-orange-300 text-orange-700':pointsStatus==='partial'?'bg-blue-100 border border-blue-300 text-blue-700':'bg-slate-100 border border-slate-300 text-slate-600'}`}>
-              {pointsStatus==='ready'?'✅ Prêt':pointsStatus==='unbalanced'?`⚠️ ${refPts}/${patPts}`:pointsStatus==='partial'?`Encore ${Math.max(0, 4 - Math.min(refPts, patPts))} paire(s)`:'Clic pour ajouter des points'}
-            </div>
-
-            <div className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-2 py-2">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[10px] font-bold text-blue-700">Grille de repère</span>
-                <button
-                  onClick={() => setShowGrid(v => !v)}
-                  className={`rounded-md px-2 py-1 text-[9px] font-black uppercase tracking-wide transition-colors ${showGrid ? 'bg-blue-100 text-blue-700 border border-blue-300' : 'bg-white text-slate-500 border border-slate-300'}`}
-                  title="Afficher ou masquer la grille (G)"
-                >
-                  {showGrid ? 'ON' : 'OFF'}
-                </button>
-              </div>
-              <div className="mt-2 flex items-center gap-2">
-                <span className="text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-600">Pas</span>
-                <input
-                  type="range"
-                  min="16"
-                  max="80"
-                  step="4"
-                  value={gridSize}
-                  onChange={e => setGridSize(Number(e.target.value))}
-                  className="h-1 w-full rounded-full appearance-none cursor-pointer bg-slate-200 accent-blue-500"
-                  disabled={!showGrid}
-                />
-                <span className="w-9 text-right text-[9px] font-bold text-blue-700">{gridSize}</span>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Mode selector or Phase 3 Info */}
         <div className="px-3 py-2.5 border-b border-slate-200">
@@ -3367,7 +3415,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
               </div>
             </div>
           ) : referenceImage.src&&patientImage.src&&is2D?(
-            <RegistrationModeSelector selectedMode={registrationMode as any} onModeChange={setRegistrationMode as any} disabled={autoAlignStatus==='processing'} onShowManualGuide={() => setShowManualGuide(true)} onShowAutoGuide={() => setShowAutoGuide(true)}/>
+            <RegistrationModeSelector selectedMode={registrationMode as any} onModeChange={setRegistrationMode as any} disabled={autoAlignStatus==='processing'} onShowManualGuide={() => setShowManualGuide(true)} onShowAutoGuide={() => setShowAutoGuide(true)} onShowAssistant={() => { setAssistantObjective(null); setShowModeAssistant(true); }}/>
           ):(
             <div className="space-y-1.5">
               <p className="text-[9px] font-bold text-slate-700 uppercase tracking-widest">Mode de Recalage</p>
@@ -3377,7 +3425,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         </div>
 
         {/* Actions */}
-        <div className="px-3 py-3 space-y-2 flex-1">
+        <div className="px-3 py-3 space-y-2 flex-1 overflow-y-auto">
           {phase === 3 ? (
             <>
               <button onClick={handleBackToRegistration} className="w-full py-2.5 px-4 rounded-xl border border-slate-300 bg-slate-100 text-[10px] font-bold text-slate-700 hover:bg-slate-200 flex items-center justify-center gap-2">
@@ -3476,10 +3524,10 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                       </div>
                       <div className="flex-1 pr-5">
                         <p className={`text-xs font-black ${autoAlignStatus === 'processing' ? 'text-slate-400' : 'text-white'}`}>
-                          {autoAlignStatus === 'processing' ? 'Recalage en cours…' : 'Mode Automatique'}
+                          {autoAlignStatus === 'processing' ? 'Recalage en cours…' : 'Recalage affine'}
                         </p>
                         <p className={`text-[9px] mt-0.5 ${autoAlignStatus === 'processing' ? 'text-slate-400' : 'text-blue-200'}`}>
-                          Transformations affines globales
+                          Transformations affines globales · ⚡ Rapide
                         </p>
                       </div>
                     </button>
@@ -3508,15 +3556,20 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                       </div>
                       <div className="flex-1 min-w-0 pr-5">
                         <div className="flex items-center gap-2">
-                          <p className={`text-xs font-black ${!is3D ? 'text-slate-400' : 'text-white'}`}>Mode Hybride</p>
+                          <p className={`text-xs font-black ${!is3D ? 'text-slate-400' : 'text-white'}`}>Recalage déformable</p>
                           {!is3D && (
                             <span className="text-[8px] font-black uppercase tracking-wider bg-slate-200 text-slate-500 px-1.5 py-0.5 rounded-full">
-                              Verrouillé
+                              3D uniquement
+                            </span>
+                          )}
+                          {is3D && (
+                            <span className="text-[8px] font-black uppercase tracking-wider bg-violet-400/40 text-violet-100 px-1.5 py-0.5 rounded-full">
+                              Recommandé
                             </span>
                           )}
                         </div>
                         <p className={`text-[9px] mt-0.5 ${!is3D ? 'text-slate-400' : 'text-violet-200'}`}>
-                          {is3D ? 'Transformations affines globales + corrections locales' : 'Mode 3D ou Avancé uniquement'}
+                          {is3D ? 'Global + corrections locales · ⏱ ~30s' : '3D uniquement'}
                         </p>
                       </div>
                     </button>
@@ -3530,6 +3583,18 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                       </button>
                     )}
                   </div>
+
+                  {/* Bouton Aide au choix (3D uniquement — en 2D il est dans le RegistrationModeSelector) */}
+                  {is3D && (
+                    <button
+                      onClick={() => { setAssistantObjective(null); setShowModeAssistant(true); }}
+                      disabled={autoAlignStatus === 'processing'}
+                      className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-amber-300 bg-amber-50 px-3 py-2 text-[10px] font-bold text-amber-700 hover:bg-amber-100 hover:border-amber-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <Lightbulb className="w-3.5 h-3.5" />
+                      Aide au choix de mode
+                    </button>
+                  )}
 
                   {/* Modal guide Mode Automatique (3D) */}
                   {showAutoGuide3D && (
@@ -3790,6 +3855,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
             </div>
           </div>
         </div>
+        </div>{/* fin zone scrollable */}
       </aside>
 
       {/* MAIN */}
@@ -3844,7 +3910,8 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
 
           {/* Editor panels (Phase 2) */}
           {phase !== 3 && (
-            <div className={`flex-1 flex gap-4 transition-all duration-700 relative ${showResult?'opacity-0 pointer-events-none absolute inset-4':''}`}>
+            <div className="flex-1 min-h-0 flex flex-col">
+            <div className={`flex-1 min-h-0 flex gap-4 transition-all duration-700 relative ${showResult?'opacity-0 pointer-events-none absolute inset-4':''}`}>
               {(['reference','patient'] as const).map((type)=>{
                 const img=type==='reference'?referenceImage:patientImage;
                 const active=activeImage===type;
@@ -3859,7 +3926,17 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                     <div className="absolute top-3 left-4 z-10 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/95 backdrop-blur border border-slate-200 shadow-lg">
                       <span className="w-1.5 h-1.5 rounded-full" style={{background:color,boxShadow:`0 0 10px ${color}`}}/>
                       <span className="text-[11px] font-bold text-slate-700 tracking-wide uppercase">{label}</span>
-                      {pts>0&&<span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full text-slate-500" style={{background:color+'15'}}>{pts} pts</span>}
+                      {showManualActions ? (
+                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${
+                          pts >= 4 ? 'bg-emerald-50 border-emerald-300 text-emerald-700' :
+                          pts > 0  ? 'bg-amber-50 border-amber-300 text-amber-700' :
+                                     'bg-slate-100 border-slate-200 text-slate-500'
+                        }`}>
+                          {pts} pts{pts >= 4 ? ' ✓' : pts > 0 ? ` (encore ${4 - pts})` : ''}
+                        </span>
+                      ) : (
+                        pts > 0 && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full text-slate-500" style={{background:color+'15'}}>{pts} pts</span>
+                      )}
                     </div>
                     {active&&(
                       <div className="absolute top-3 right-3 z-10">
@@ -3999,6 +4076,50 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                   </div>
                 );
               })}
+            </div>
+
+            {/* ── Barre statut points + toolbar grille (mode manuel uniquement) ── */}
+            {showManualActions && (
+              <div className="shrink-0 flex items-center justify-between gap-3 px-4 py-2 bg-white/90 backdrop-blur border-t border-slate-200 rounded-b-xl mx-0">
+                {/* Compteur Référence */}
+                <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-[11px] font-bold ${refPts>=4?'bg-emerald-50 border-emerald-200 text-emerald-700':'bg-blue-50 border-blue-200 text-blue-700'}`}>
+                  <span className="w-2 h-2 rounded-full bg-blue-500"/>
+                  Référence : <span className="font-black">{refPts}</span> pts
+                  {refPts>=4&&<Check className="w-3 h-3 text-emerald-600"/>}
+                  {refPts>0&&refPts<4&&<span className="text-[9px] opacity-60">({4-refPts} manquant{4-refPts>1?'s':''})</span>}
+                </div>
+
+                {/* Statut global */}
+                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black border ${
+                  pointsStatus==='ready'      ? 'bg-emerald-100 border-emerald-300 text-emerald-800' :
+                  pointsStatus==='unbalanced' ? 'bg-orange-100 border-orange-300 text-orange-700' :
+                  pointsStatus==='partial'    ? 'bg-amber-50 border-amber-200 text-amber-700' :
+                                                'bg-slate-100 border-slate-200 text-slate-500'
+                }`}>
+                  {pointsStatus==='ready'      && <><Check className="w-3 h-3"/>Prêt à recaler</>}
+                  {pointsStatus==='unbalanced' && <>⚠ Déséquilibré ({refPts} / {patPts})</>}
+                  {pointsStatus==='partial'    && <>Encore {Math.max(0,4-Math.min(refPts,patPts))} paire{Math.max(0,4-Math.min(refPts,patPts))>1?'s':''}</>}
+                  {pointsStatus==='empty'      && <>Cliquez sur les images pour placer des points</>}
+                </div>
+
+                {/* Compteur Patient */}
+                <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-[11px] font-bold ${patPts>=4?'bg-emerald-50 border-emerald-200 text-emerald-700':'bg-slate-100 border-slate-200 text-slate-700'}`}>
+                  <span className="w-2 h-2 rounded-full bg-slate-500"/>
+                  Patient : <span className="font-black">{patPts}</span> pts
+                  {patPts>=4&&<Check className="w-3 h-3 text-emerald-600"/>}
+                  {patPts>0&&patPts<4&&<span className="text-[9px] opacity-60">({4-patPts} manquant{4-patPts>1?'s':''})</span>}
+                </div>
+
+                {/* Toggle grille */}
+                <button
+                  onClick={() => setShowGrid(v => !v)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[10px] font-black transition-colors ${showGrid?'bg-blue-100 border-blue-300 text-blue-700':'bg-white border-slate-300 text-slate-500 hover:bg-slate-50'}`}
+                  title="Afficher/masquer la grille (G)"
+                >
+                  <span className="text-xs">⊞</span> Grille
+                </button>
+              </div>
+            )}
             </div>
           )}
 
@@ -4268,7 +4389,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                           <button
                             onClick={() => {
                               const pat = confirmedPanelPatients.patient ?? confirmedPanelPatients.reference;
-                              navigate(`/patients/${pat.id}`);
+                              navigate(`/dashboard/patients/${pat.id}`);
                             }}
                             className="flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-[10px] font-bold text-violet-700 hover:bg-violet-100 transition shrink-0"
                             title="Ouvrir le dossier patient"
@@ -4504,7 +4625,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                             title: 'Valider le recalage ?',
                             message: 'Êtes-vous satisfait du résultat du recalage ?',
                             detail: registrationDimension === 'advanced'
-                              ? 'Le volume recalé sera utilisé pour l\'exploration des zones corticales.'
+                              ? 'Le volume recalé sera sauvegardé automatiquement dans le dossier patient, puis vous accéderez à l\'exploration des zones corticales de Brodmann.'
                               : 'Le volume recalé sera enregistré dans le dossier patient.',
                             confirmLabel: 'Oui, valider',
                             onConfirm: registrationDimension === 'advanced' ? handleValidateAndExplore : handleSaveToPatient,
@@ -4517,13 +4638,6 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                             : <><Check className="h-3.5 w-3.5" /> Valider le recalage</>}
                         </button>
                       </>
-                    )}
-                    {/* ── Après validation 3D : indicateur "Recalage validé" dans le footer ── */}
-                    {!(registrationDimension === '2d' && confirmedPanelPatients.patient) && !showValidationModal && saveToPatientResult && (
-                      <div className="flex items-center gap-1.5 rounded-lg bg-slate-50 border border-slate-200 px-3 py-1.5 text-[10px] font-semibold text-slate-500">
-                        <Check className="h-3.5 w-3.5 text-emerald-500" />
-                        Recalage validé — exports disponibles en haut
-                      </div>
                     )}
                   </div>
                 </div>
@@ -4606,7 +4720,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                             </div>
                             <div>
                               <p className="text-sm font-black text-indigo-700">Valider &amp; Explorer</p>
-                              <p className="mt-1 text-[11px] leading-relaxed text-slate-500">Résultat accepté — identifier les zones corticales sur le volume recalé.</p>
+                              <p className="mt-1 text-[11px] leading-relaxed text-slate-500">Résultat accepté — le volume recalé est sauvegardé automatiquement dans le dossier patient, puis vous accédez aux zones corticales de Brodmann.</p>
                             </div>
                             <button
                               onClick={handleValidateAndExplore}
@@ -4910,8 +5024,8 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                   return (
                     <div className="absolute inset-0 z-[80] flex flex-col bg-slate-50 animate-in fade-in duration-300">
 
-                      {/* Top bar */}
-                      <div className="shrink-0 flex items-center justify-between px-4 py-2.5 bg-white border-b border-slate-200 gap-3">
+                      {/* Top bar — paddingRight réserve l'espace du bouton "Sombre" (fixed right:16px) */}
+                      <div className="shrink-0 flex items-center justify-between px-4 py-2.5 bg-white border-b border-slate-200 gap-3" style={{ paddingRight: 115 }}>
                         {/* Gauche : Retour + Titre */}
                         <div className="flex items-center gap-3 min-w-0">
                           {/* Bouton Retour — même style que les autres */}
@@ -4938,17 +5052,27 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                           </div>
                         </div>
 
-                        {/* Badge auto-save dossier patient */}
+                        {/* Badge auto-save + accès dossier patient */}
                         {autoSavedToPatient && (
-                          <div className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-bold ${
-                            autoSavedToPatient.ok
-                              ? 'bg-emerald-50 border border-emerald-200 text-emerald-700'
-                              : 'bg-rose-50 border border-rose-200 text-rose-600'
-                          }`}>
-                            {autoSavedToPatient.ok ? (
-                              <><Check className="h-3.5 w-3.5" /> Sauvegardé dans le dossier patient</>
-                            ) : (
-                              <><X className="h-3.5 w-3.5" /> Échec de la sauvegarde auto</>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <div className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-bold ${
+                              autoSavedToPatient.ok
+                                ? 'bg-emerald-50 border border-emerald-200 text-emerald-700'
+                                : 'bg-rose-50 border border-rose-200 text-rose-600'
+                            }`}>
+                              {autoSavedToPatient.ok ? (
+                                <><Check className="h-3.5 w-3.5" /> Résultat sauvegardé dans le dossier patient</>
+                              ) : (
+                                <><X className="h-3.5 w-3.5" /> Échec de la sauvegarde auto</>
+                              )}
+                            </div>
+                            {autoSavedToPatient.ok && confirmedPanelPatients.patient && (
+                              <button
+                                onClick={() => navigate(`/dashboard/patients/${confirmedPanelPatients.patient!.id}`)}
+                                className="flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-[10px] font-bold text-violet-700 hover:bg-violet-100 transition shrink-0"
+                              >
+                                <FileText className="h-3.5 w-3.5" /> Voir le dossier patient →
+                              </button>
                             )}
                           </div>
                         )}
@@ -5343,10 +5467,208 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         </div>
       )}
 
+      {/* ── Assistant de choix de mode ── */}
+      {showModeAssistant && (() => {
+        const objectives = [
+          {
+            id: 'fast' as const,
+            icon: <Zap className="w-5 h-5" />,
+            label: 'Analyse rapide',
+            desc: 'Je veux un premier alignement en quelques secondes',
+            color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-200', borderHover: 'hover:border-blue-400',
+            disabled: false,
+          },
+          {
+            id: 'precise' as const,
+            icon: <Microscope className="w-5 h-5" />,
+            label: 'Analyse anatomique précise',
+            desc: 'Je veux le meilleur alignement possible pour une analyse clinique',
+            color: 'text-violet-600', bg: 'bg-violet-50', border: 'border-violet-200', borderHover: 'hover:border-violet-400',
+            disabled: false,
+          },
+          {
+            id: 'cortical' as const,
+            icon: <Map className="w-5 h-5" />,
+            label: 'Projection atlas cérébral',
+            desc: 'Je veux identifier les zones de Brodmann sur le volume recalé',
+            color: is3D ? 'text-emerald-600' : 'text-slate-400', bg: is3D ? 'bg-emerald-50' : 'bg-slate-50', border: is3D ? 'border-emerald-200' : 'border-slate-200', borderHover: is3D ? 'hover:border-emerald-400' : '',
+            disabled: !is3D,
+          },
+          {
+            id: 'manual' as const,
+            icon: <Target className="w-5 h-5" />,
+            label: 'Recalage manuel',
+            desc: 'Je veux placer moi-même les points de correspondance',
+            color: is3D ? 'text-slate-400' : 'text-emerald-600', bg: is3D ? 'bg-slate-50' : 'bg-emerald-50', border: is3D ? 'border-slate-200' : 'border-emerald-200', borderHover: is3D ? '' : 'hover:border-emerald-400',
+            disabled: is3D,
+          },
+        ];
+
+        const recommendations: Record<string, { label: string; justification: string; precision: number; speed: number; action: () => void }> = {
+          fast: {
+            label: 'Recalage affine',
+            justification: is3D
+              ? 'Repositionne le volume entier par transformation affine (rotation, translation, échelle). Idéal pour un premier alignement en quelques secondes.'
+              : 'L\'algorithme MINE aligne les deux images par transformation affine globale. Rapide et efficace pour la plupart des cas 2D.',
+            precision: 3, speed: 5,
+            action: () => { is3D ? handleAutoAlign() : setRegistrationMode('mine'); setShowModeAssistant(false); setAssistantObjective(null); },
+          },
+          precise: {
+            label: is3D ? 'Recalage déformable' : 'Recalage affine',
+            justification: is3D
+              ? 'Combine alignement affine global et corrections déformables locales (VoxelMorph). Chaque structure anatomique s\'ajuste individuellement. Recommandé pour les analyses cliniques.'
+              : 'Pour les images 2D, l\'alignement global IA offre la meilleure précision disponible.',
+            precision: is3D ? 4 : 3, speed: is3D ? 3 : 5,
+            action: () => { is3D ? handleHybridAlign() : setRegistrationMode('mine'); setShowModeAssistant(false); setAssistantObjective(null); },
+          },
+          cortical: {
+            label: 'Recalage déformable',
+            justification: 'Les corrections locales sont essentielles pour projeter précisément les 47 zones corticales de Brodmann sur l\'atlas MNI152.',
+            precision: 4, speed: 3,
+            action: () => { handleHybridAlign(); setShowModeAssistant(false); setAssistantObjective(null); },
+          },
+          manual: {
+            label: 'Recalage manuel',
+            justification: 'Vous placez des points de correspondance anatomique sur les deux images. Idéal si vous maîtrisez précisément les structures à aligner.',
+            precision: 5, speed: 1,
+            action: () => { setRegistrationMode('manual'); setShowModeAssistant(false); setAssistantObjective(null); },
+          },
+        };
+
+        const rec = assistantObjective ? recommendations[assistantObjective] : null;
+
+        const Dots = ({ filled, color }: { filled: number; color: string }) => (
+          <div className="flex gap-0.5">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className={`w-2.5 h-2.5 rounded-full ${i < filled ? color : 'bg-slate-200'}`} />
+            ))}
+          </div>
+        );
+
+        return (
+          <div className="fixed inset-0 z-[9990] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => { setShowModeAssistant(false); setAssistantObjective(null); }} />
+            <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden" style={{ animation: 'fadeInScale 0.2s ease-out' }}>
+
+              {/* Header */}
+              <div className="bg-gradient-to-r from-amber-500 to-orange-500 px-5 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center">
+                    <Lightbulb className="w-4 h-4 text-white" />
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-black uppercase tracking-widest text-amber-100">Assistant</p>
+                    <h3 className="text-sm font-black text-white">Quel est votre objectif ?</h3>
+                  </div>
+                </div>
+                <button onClick={() => { setShowModeAssistant(false); setAssistantObjective(null); }} className="w-7 h-7 rounded-full bg-white/15 hover:bg-white/30 flex items-center justify-center transition">
+                  <X className="w-3.5 h-3.5 text-white" />
+                </button>
+              </div>
+
+              <div className="p-4 space-y-2">
+                {/* Options */}
+                {objectives.map(obj => (
+                  <button
+                    key={obj.id}
+                    onClick={() => !obj.disabled && setAssistantObjective(obj.id)}
+                    disabled={obj.disabled}
+                    className={`w-full text-left flex items-center gap-3 rounded-xl border-2 p-3 transition-all ${
+                      obj.disabled
+                        ? 'opacity-40 cursor-not-allowed border-slate-200 bg-slate-50'
+                        : assistantObjective === obj.id
+                          ? `${obj.border} ${obj.bg} shadow-sm`
+                          : `border-slate-200 bg-white ${obj.borderHover} hover:bg-slate-50`
+                    }`}
+                  >
+                    <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${obj.disabled ? 'bg-slate-100 text-slate-400' : `${obj.bg} ${obj.color}`}`}>
+                      {obj.icon}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-[11px] font-black ${obj.disabled ? 'text-slate-400' : 'text-slate-900'}`}>{obj.label}</p>
+                      <p className={`text-[10px] ${obj.disabled ? 'text-slate-300' : 'text-slate-500'}`}>{obj.disabled ? (is3D ? 'Mode 2D uniquement' : 'Mode 3D uniquement') : obj.desc}</p>
+                    </div>
+                    {assistantObjective === obj.id && <Check className={`w-4 h-4 shrink-0 ${obj.color}`} />}
+                  </button>
+                ))}
+
+                {/* Recommandation */}
+                {rec && (
+                  <div className="mt-3 rounded-xl border-2 border-emerald-300 bg-emerald-50 p-4 space-y-3" style={{ animation: 'fadeInScale 0.15s ease-out' }}>
+                    <div className="flex items-center gap-2">
+                      <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <p className="text-[10px] font-black uppercase tracking-wider text-emerald-700">Mode recommandé</p>
+                    </div>
+                    <p className="text-sm font-black text-slate-900">{rec.label}</p>
+                    <p className="text-[10px] text-slate-600 leading-relaxed">{rec.justification}</p>
+                    <div className="flex gap-4">
+                      <div>
+                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-500 mb-1">Précision</p>
+                        <Dots filled={rec.precision} color="bg-emerald-500" />
+                      </div>
+                      <div>
+                        <p className="text-[9px] font-black uppercase tracking-wider text-slate-500 mb-1">Vitesse</p>
+                        <Dots filled={rec.speed} color="bg-blue-500" />
+                      </div>
+                    </div>
+                    <button
+                      onClick={rec.action}
+                      className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-black py-2.5 transition flex items-center justify-center gap-2"
+                    >
+                      <Check className="w-3.5 h-3.5" /> Utiliser ce mode
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ── Overlay Exploration Corticale (advanced mode, sans navigation) ── */}
       {showExploration && (
-        <div className="fixed inset-0 z-[250]">
-          <ExplorationPage onBack={() => setShowExploration(false)} />
+        <div className="fixed inset-0 z-[250] flex flex-col">
+          {/* Bandeau sauvegarde automatique */}
+          {saveToPatientResult && (
+            <div className={`shrink-0 flex items-center justify-between gap-3 px-5 py-2.5 text-[11px] font-bold z-10 ${
+              saveToPatientResult.ok
+                ? 'bg-emerald-600 text-white'
+                : 'bg-amber-500 text-white'
+            }`} style={{ paddingRight: 130 }}>
+              <div className="flex items-center gap-2">
+                {saveToPatientResult.ok ? (
+                  <>
+                    <Check className="h-4 w-4 shrink-0" />
+                    <span>
+                      Résultat sauvegardé automatiquement dans le dossier patient
+                      {saveToPatientResult.filename && (
+                        <span className="ml-2 font-mono text-[10px] opacity-80">— {saveToPatientResult.filename}</span>
+                      )}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <X className="h-4 w-4 shrink-0" />
+                    <span>Sauvegarde échouée : {saveToPatientResult.error}</span>
+                  </>
+                )}
+              </div>
+              {saveToPatientResult.ok && (confirmedPanelPatients.patient || confirmedPanelPatients.reference) && (
+                <button
+                  onClick={() => {
+                    const pat = confirmedPanelPatients.patient ?? confirmedPanelPatients.reference;
+                    navigate(`/dashboard/patients/${pat.id}`);
+                  }}
+                  className="shrink-0 rounded-lg border border-white/30 bg-white/15 hover:bg-white/25 px-3 py-1 text-[10px] font-black tracking-wide transition"
+                >
+                  Voir le dossier patient →
+                </button>
+              )}
+            </div>
+          )}
+          <div className="flex-1 min-h-0">
+            <ExplorationPage onBack={() => setShowExploration(false)} />
+          </div>
         </div>
       )}
     </div>

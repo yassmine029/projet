@@ -252,6 +252,14 @@ class SegmentationRun(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(blank=True, null=True)
 
+    # Volumétrie hippocampique — remplie lors de la génération du rapport PDF
+    left_volume_mm3  = models.FloatField(null=True, blank=True)
+    right_volume_mm3 = models.FloatField(null=True, blank=True)
+    total_volume_mm3 = models.FloatField(null=True, blank=True)
+    asymmetry_index  = models.FloatField(null=True, blank=True, help_text="Index d'asymétrie en %")
+    normality_index  = models.FloatField(null=True, blank=True, help_text="Index de normalité en %")
+    z_score          = models.FloatField(null=True, blank=True)
+
     def __str__(self):
         return f"Run #{self.id} - Patient {self.patient_id} - {self.model_key}"
 
@@ -327,14 +335,30 @@ class PatientReport(models.Model):
 class Reclamation(models.Model):
     ETAT_CHOICES = [
         ('en_attente', 'En attente'),
-        ('payee', 'Payée'),
-        ('rejetee', 'Rejetée'),
+        ('validee', 'Validée'),
+        ('non_validee', 'Non validée'),
+    ]
+    CATEGORIE_CHOICES = [
+        ('compte', 'Compte & accès'),
+        ('segmentation', 'Segmentation IA'),
+        ('viewer', 'Visualisation'),
+        ('performance', 'Performance'),
+        ('facturation', 'Facturation'),
+        ('autre', 'Autre'),
+    ]
+    PRIORITE_CHOICES = [
+        ('basse', 'Basse'),
+        ('normale', 'Normale'),
+        ('haute', 'Haute'),
+        ('critique', 'Critique'),
     ]
     id = models.BigAutoField(primary_key=True)
     numero = models.CharField(max_length=50, unique=True, blank=True)
     description = models.TextField()
     date = models.DateTimeField(auto_now_add=True)
     etat = models.CharField(max_length=20, choices=ETAT_CHOICES, default='en_attente')
+    categorie = models.CharField(max_length=40, choices=CATEGORIE_CHOICES, default='autre')
+    priorite = models.CharField(max_length=20, choices=PRIORITE_CHOICES, default='normale')
     fichier = models.FileField(upload_to='reclamations/', blank=True, null=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='reclamations')
 

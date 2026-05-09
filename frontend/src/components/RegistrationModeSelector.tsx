@@ -1,5 +1,5 @@
 import React from 'react';
-import { MousePointer2, BrainCircuit } from 'lucide-react';
+import { MousePointer2, BrainCircuit, Lightbulb } from 'lucide-react';
 
 const GuideIcon = () => (
   <img src="/assets/images/creative.png" alt="guide" className="h-10 w-10 object-contain" />
@@ -11,6 +11,7 @@ interface RegistrationModeSelectorProps {
   disabled?: boolean;
   onShowManualGuide?: () => void;
   onShowAutoGuide?: () => void;
+  onShowAssistant?: () => void;
 }
 
 const RegistrationModeSelector: React.FC<RegistrationModeSelectorProps> = ({
@@ -19,13 +20,14 @@ const RegistrationModeSelector: React.FC<RegistrationModeSelectorProps> = ({
   disabled = false,
   onShowManualGuide,
   onShowAutoGuide,
+  onShowAssistant,
 }) => {
   const modes = [
     {
       id: 'manual' as const,
       icon: <MousePointer2 className="w-5 h-5" />,
-      title: 'Manuel',
-      description: 'Précis • Points de contrôle',
+      title: 'Recalage manuel',
+      description: 'Vous guidez point par point · Contrôle total',
       color: 'text-emerald-600',
       bg: 'bg-emerald-50',
       borderSelected: 'border-emerald-500 ring-emerald-500/20',
@@ -35,8 +37,8 @@ const RegistrationModeSelector: React.FC<RegistrationModeSelectorProps> = ({
     {
       id: 'mine' as const,
       icon: <BrainCircuit className="w-5 h-5" />,
-      title: 'Automatique',
-      description: 'Transformations affines globales',
+      title: 'Recalage affine',
+      description: 'Transformations affines globales · ⚡ Rapide',
       color: 'text-purple-600',
       bg: 'bg-purple-50',
       borderSelected: 'border-purple-500 ring-purple-500/20',
@@ -63,7 +65,6 @@ const RegistrationModeSelector: React.FC<RegistrationModeSelectorProps> = ({
               ${disabled ? 'opacity-50 cursor-not-allowed grayscale' : ''}
             `}
           >
-            {/* Icon */}
             <div className={`
               w-10 h-10 rounded-lg flex items-center justify-center shrink-0 transition-colors
               ${selectedMode === mode.id
@@ -74,7 +75,6 @@ const RegistrationModeSelector: React.FC<RegistrationModeSelectorProps> = ({
               {mode.icon}
             </div>
 
-            {/* Text */}
             <div className="flex-1 min-w-0 pr-6">
               <p className={`text-sm font-bold ${selectedMode === mode.id ? 'text-slate-900' : 'text-slate-800'}`}>
                 {mode.title}
@@ -84,13 +84,11 @@ const RegistrationModeSelector: React.FC<RegistrationModeSelectorProps> = ({
               </p>
             </div>
 
-            {/* Selected dot */}
             {selectedMode === mode.id && (
               <div className={`absolute -right-1 -top-1 w-3.5 h-3.5 rounded-full border-2 border-white shadow-sm z-20 ${mode.dot}`} />
             )}
           </button>
 
-          {/* HelpCircle guide button */}
           {mode.onGuide && (
             <button
               onClick={(e) => { e.stopPropagation(); mode.onGuide!(); }}
@@ -102,6 +100,18 @@ const RegistrationModeSelector: React.FC<RegistrationModeSelectorProps> = ({
           )}
         </div>
       ))}
+
+      {/* Aide au choix */}
+      {onShowAssistant && (
+        <button
+          onClick={onShowAssistant}
+          disabled={disabled}
+          className="mt-1 w-full flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-amber-300 bg-amber-50 px-3 py-2 text-[10px] font-bold text-amber-700 hover:bg-amber-100 hover:border-amber-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Lightbulb className="w-3.5 h-3.5" />
+          Aide au choix de mode
+        </button>
+      )}
     </div>
   );
 };

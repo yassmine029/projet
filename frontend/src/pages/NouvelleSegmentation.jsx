@@ -1315,7 +1315,17 @@ export default function NouvelleSegmentation() {
   const npFolderRef = useRef(null);
 
   const [doctorName, setDoctorName] = useState(getDoctorName());
-  const runIdFromQuery = searchParams.get('run');
+  const runIdFromQuery     = searchParams.get('run');
+  const patientIdFromQuery = searchParams.get('patientId');
+
+  // Upload nouvel IRM (suivi longitudinal)
+  const [newIrmFiles, setNewIrmFiles]         = useState([]);
+  const [newIrmDragging, setNewIrmDragging]   = useState(false);
+  const [newIrmUploading, setNewIrmUploading] = useState(false);
+  const [newIrmDone, setNewIrmDone]           = useState(false);
+  const [newIrmError, setNewIrmError]         = useState('');
+  const newIrmFileRef   = useRef(null);
+  const newIrmFolderRef = useRef(null);
 
   useEffect(() => {
     const loadDoctorName = async () => {
@@ -1381,6 +1391,50 @@ export default function NouvelleSegmentation() {
   useEffect(() => {
     fetchPatients();
   }, []);
+
+  // Auto-sélection du patient via ?patientId=X (depuis le suivi longitudinal)
+  useEffect(() => {
+    if (!patientIdFromQuery || patients.length === 0) return;
+    const found = patients.find(p => String(p.id) === String(patientIdFromQuery));
+    if (found && !selectedPatient) {
+      setSelectedPatient(found);
+      setStep(2);
+    }
+  }, [patientIdFromQuery, patients]);
+
+  const handleNewIrmDrop = (e) => {
+    const files = Array.from(e.target?.files || e.dataTransfer?.files || []);
+    setNewIrmDragging(false);
+    if (files.length > 0) setNewIrmFiles(prev => [...prev, ...files]);
+  };
+
+  const handleNewIrmUpload = async () => {
+    if (!newIrmFiles.length || !selectedPatient?.id) return;
+    setNewIrmUploading(true);
+    setNewIrmError('');
+    try {
+      const token = localStorage.getItem('access');
+      const fd = new FormData();
+      newIrmFiles.forEach(f => {
+        fd.append('files', f);
+        fd.append('relative_paths', f.webkitRelativePath || f.name);
+      });
+      await api.post(`/patients/${selectedPatient.id}/mri-files/`, fd, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      setNewIrmDone(true);
+      setNewIrmFiles([]);
+      // Rafraîchir la liste des coupes pour afficher les nouveaux fichiers
+      await fetchPatientSlices();
+    } catch (err) {
+      setNewIrmError(err?.response?.data?.error || "Erreur lors de l'import.");
+    } finally {
+      setNewIrmUploading(false);
+    }
+  };
 
   useEffect(() => {
     if (step !== 2) setSliceMetaModal(null);
@@ -2756,6 +2810,114 @@ export default function NouvelleSegmentation() {
 
             {step === 2 && (
               <div className="space-y-5">
+
+                {/* ── Zone import nouvel IRM (suivi longitudinal) ───────────── */}
+                {patientIdFromQuery && (
+                  <div className="overflow-hidden rounded-2xl border border-violet-200 bg-violet-50 shadow-sm">
+                    {/* En-tête */}
+                    <div className="flex items-center gap-3 border-b border-violet-100 bg-violet-100/60 px-5 py-3.5">
+                      <CalendarDays className="h-5 w-5 text-violet-600 shrink-0" />
+                      <div>
+                        <p className="text-[12px] font-black text-violet-900">Importer un nouvel IRM — Suivi longitudinal</p>
+                        <p className="text-[10px] text-violet-600 font-medium mt-0.5">
+                          Importez les images d'un IRM d'une date différente. Après segmentation, les résultats alimenteront le suivi temporel.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="p-5 space-y-4">
+                      {/* Zone drag & drop */}
+                      {!newIrmDone ? (
+                        <>
+                          <div
+                            onDragOver={(e) => { e.preventDefault(); setNewIrmDragging(true); }}
+                            onDragLeave={() => setNewIrmDragging(false)}
+                            onDrop={(e) => { e.preventDefault(); handleNewIrmDrop(e); }}
+                            className={`rounded-2xl border-2 border-dashed p-6 text-center transition-all cursor-pointer ${
+                              newIrmDragging    ? 'border-violet-400 bg-violet-100 scale-[1.01]' :
+                              newIrmFiles.length > 0 ? 'border-emerald-400 bg-emerald-50' :
+                              'border-violet-200 bg-white hover:border-violet-400 hover:bg-violet-50/50'
+                            }`}
+                            onClick={() => newIrmFileRef.current?.click()}
+                          >
+                            <input ref={newIrmFileRef} type="file" multiple
+                              accept=".nii,.nii.gz,.dcm,.jpg,.jpeg,.png,.tif,.tiff,.bmp"
+                              className="hidden" onChange={handleNewIrmDrop} />
+                            <input ref={newIrmFolderRef} type="file"
+                              accept=".nii,.nii.gz,.dcm,.jpg,.jpeg,.png,.tif,.tiff,.bmp"
+                              className="hidden" onChange={handleNewIrmDrop}
+                              {...{ webkitdirectory: '', directory: '' }} />
+
+                            {newIrmFiles.length > 0 ? (
+                              <div className="flex flex-col items-center gap-2">
+                                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-100">
+                                  <CheckCircle2 className="h-6 w-6 text-emerald-600" />
+                                </div>
+                                <p className="text-sm font-black text-emerald-700">{newIrmFiles.length} fichier{newIrmFiles.length > 1 ? 's' : ''} prêt{newIrmFiles.length > 1 ? 's' : ''}</p>
+                                <p className="text-[11px] text-slate-500">{newIrmFiles.map(f => f.name).slice(0, 3).join(', ')}{newIrmFiles.length > 3 ? ` +${newIrmFiles.length - 3} autres` : ''}</p>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col items-center gap-3">
+                                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-100">
+                                  <CloudUpload className="h-6 w-6 text-violet-500" />
+                                </div>
+                                <div>
+                                  <p className="text-sm font-semibold text-slate-700">Glissez vos fichiers IRM ici</p>
+                                  <p className="mt-0.5 text-xs text-slate-400">NIfTI, DICOM, JPEG, PNG, TIFF — ou cliquez pour parcourir</p>
+                                </div>
+                                <div className="flex gap-2" onClick={e => e.stopPropagation()}>
+                                  <button type="button"
+                                    onClick={() => newIrmFolderRef.current?.click()}
+                                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-600 transition hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700 shadow-sm">
+                                    <FolderOpen className="h-4 w-4" /> Dossier
+                                  </button>
+                                  <button type="button"
+                                    onClick={() => newIrmFileRef.current?.click()}
+                                    className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-violet-700">
+                                    <FileImage className="h-4 w-4" /> Fichiers
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Boutons action */}
+                          <div className="flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={handleNewIrmUpload}
+                              disabled={newIrmFiles.length === 0 || newIrmUploading}
+                              className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-black text-white shadow-sm transition hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {newIrmUploading ? (
+                                <><Loader2 className="h-4 w-4 animate-spin" /> Import en cours…</>
+                              ) : (
+                                <><CloudUpload className="h-4 w-4" /> Importer dans le dossier patient</>
+                              )}
+                            </button>
+                            {newIrmFiles.length > 0 && !newIrmUploading && (
+                              <button type="button" onClick={() => setNewIrmFiles([])}
+                                className="text-[11px] font-semibold text-slate-400 hover:text-slate-600 transition">
+                                Annuler
+                              </button>
+                            )}
+                          </div>
+                          {newIrmError && (
+                            <p className="text-[11px] font-semibold text-red-600">{newIrmError}</p>
+                          )}
+                        </>
+                      ) : (
+                        <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                          <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
+                          <div>
+                            <p className="text-[12px] font-black text-emerald-800">Fichiers importés avec succès</p>
+                            <p className="text-[11px] text-emerald-700 mt-0.5">Les nouvelles coupes apparaissent dans la liste ci-dessous. Sélectionnez-les et lancez la segmentation.</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* ══════════════════════════════════════════════════════════
                     EN-TÊTE ÉTAPE 2 — Redesign unifié

@@ -7,6 +7,8 @@ export default function ReclamationModal({ isOpen, onClose, onReclamationCreated
   const [error, setError] = useState(null);
   const [formData, setFormData] = useState({
     description: '',
+    categorie: 'autre',
+    priorite: 'normale',
   });
   const [fichier, setFichier] = useState(null);
 
@@ -31,6 +33,8 @@ export default function ReclamationModal({ isOpen, onClose, onReclamationCreated
     try {
       const data = new FormData();
       data.append('description', formData.description);
+      data.append('categorie', formData.categorie);
+      data.append('priorite', formData.priorite);
       if (fichier) {
         data.append('fichier', fichier);
       }
@@ -42,7 +46,7 @@ export default function ReclamationModal({ isOpen, onClose, onReclamationCreated
       });
 
       if (res.data && res.data.ok) {
-        setFormData({ description: '' });
+        setFormData({ description: '', categorie: 'autre', priorite: 'normale' });
         setFichier(null);
         onReclamationCreated();
         onClose();
@@ -89,7 +93,41 @@ export default function ReclamationModal({ isOpen, onClose, onReclamationCreated
 
           <form id="create-reclamation-form" onSubmit={handleSubmit} className="space-y-6">
             <div className="grid grid-cols-1 gap-6">
-              
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <label className="block text-sm font-bold text-slate-900 mb-2">Categorie <span className="text-red-500">*</span></label>
+                  <select
+                    name="categorie"
+                    required
+                    value={formData.categorie}
+                    onChange={handleChange}
+                    className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none transition-all focus:border-[#4f6ef7] focus:ring-1 focus:ring-[#4f6ef7]"
+                  >
+                    <option value="compte">Compte & acces</option>
+                    <option value="segmentation">Segmentation IA</option>
+                    <option value="viewer">Visualisation</option>
+                    <option value="performance">Performance</option>
+                    <option value="facturation">Facturation</option>
+                    <option value="autre">Autre</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-slate-900 mb-2">Priorite <span className="text-red-500">*</span></label>
+                  <select
+                    name="priorite"
+                    required
+                    value={formData.priorite}
+                    onChange={handleChange}
+                    className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none transition-all focus:border-[#4f6ef7] focus:ring-1 focus:ring-[#4f6ef7]"
+                  >
+                    <option value="basse">Basse</option>
+                    <option value="normale">Normale</option>
+                    <option value="haute">Haute</option>
+                    <option value="critique">Critique</option>
+                  </select>
+                </div>
+              </div>
 
               {/* Description */}
               <div>

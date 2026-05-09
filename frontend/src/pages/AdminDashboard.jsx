@@ -35,6 +35,9 @@ import {
   rejectAdminAccount,
   rejectAdminTestimonial,
   getAdminSettings,
+  updateAdminSettings,
+  getReclamations,
+  updateReclamation,
 } from '../api';
 
 const AFFILIATION_OPTIONS = [
@@ -75,13 +78,22 @@ export default function Dashboard() {
   const [settingsData, setSettingsData] = useState(null);
   const [analyticsData, setAnalyticsData] = useState(null);
   const [testimonialsData, setTestimonialsData] = useState(null);
+  const [reclamationsData, setReclamationsData] = useState([]);
+  const [reclamationsLoading, setReclamationsLoading] = useState(false);
+  const [reclamationsError, setReclamationsError] = useState('');
   
   // États pour la recherche et les notifications
   const [searchQuery, setSearchQuery] = useState('');
   const [showNotifications, setShowNotifications] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(3);
   const [decisionMessage, setDecisionMessage] = useState('');
   const [decisionError, setDecisionError] = useState('');
+  const [reclamationDecisionError, setReclamationDecisionError] = useState('');
+  const [reclamationConfirm, setReclamationConfirm] = useState({
+    open: false,
+    reclamationId: null,
+    nextStatus: 'validee',
+    actionLabel: 'valider',
+  });
   const [rejectModal, setRejectModal] = useState({ open: false, userId: null, displayName: '' });
   const [rejectReason, setRejectReason] = useState('');
   const [isProcessingDecision, setIsProcessingDecision] = useState(false);
@@ -151,12 +163,26 @@ export default function Dashboard() {
   const reloadAccounts = async () => {
     const acc = await getAdminAccounts();
     setAccountsData(acc.data || null);
-    setUnreadCount(Number(acc?.data?.pending_count || 0));
   };
 
   const reloadTestimonials = async () => {
     const res = await getAdminTestimonials();
     setTestimonialsData(res.data || null);
+  };
+
+  const reloadReclamations = async () => {
+    setReclamationsLoading(true);
+    setReclamationsError('');
+    try {
+      const res = await getReclamations();
+      const list = Array.isArray(res?.data?.reclamations) ? res.data.reclamations : [];
+      setReclamationsData(list);
+    } catch (e) {
+      console.error('Reclamations load failed:', e);
+      setReclamationsError('Impossible de charger les reclamations.');
+    } finally {
+      setReclamationsLoading(false);
+    }
   };
 
   const iconByType = {
@@ -193,13 +219,14 @@ export default function Dashboard() {
   useEffect(() => {
     const load = async () => {
       try {
-        const [ov, acc, hist, setg, ana, tes] = await Promise.allSettled([
+        const [ov, acc, hist, setg, ana, tes, recs] = await Promise.allSettled([
           getAdminOverview(),
           getAdminAccounts(),
           getAdminHistory(),
           getAdminSettings(),
           getAdminAnalytics(),
           getAdminTestimonials(),
+          getReclamations(),
         ]);
         const ovData = ov.status === 'fulfilled' ? (ov.value?.data || null) : null;
         const accData = acc.status === 'fulfilled' ? (acc.value?.data || null) : null;
@@ -207,6 +234,7 @@ export default function Dashboard() {
         const setData = setg.status === 'fulfilled' ? (setg.value?.data || null) : null;
         const anaData = ana.status === 'fulfilled' ? (ana.value?.data || null) : null;
         const tesData = tes.status === 'fulfilled' ? (tes.value?.data || null) : null;
+        const recsData = recs.status === 'fulfilled' ? (recs.value?.data || null) : null;
 
         setOverviewData(ovData);
         setAccountsData(accData);
@@ -214,7 +242,7 @@ export default function Dashboard() {
         setSettingsData(setData);
         setAnalyticsData(anaData);
         setTestimonialsData(tesData);
-        setUnreadCount(Number(accData?.pending_count || 0));
+        setReclamationsData(Array.isArray(recsData?.reclamations) ? recsData.reclamations : []);
       } catch (e) {
         console.error('Admin dashboard load failed:', e);
       }
@@ -243,22 +271,62 @@ export default function Dashboard() {
     setAdminSettingsForm((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const handleSaveSettings = () => {
-    setSettingsSavedNotice('Paramètres administrateur mis à jour localement.');
+  const handleSaveSettings = async () => {
+    try {
+      await updateAdminSettings({
+        security: {
+          two_factor_enabled: adminSettingsForm.twoFactorRequired,
+          enforce_strong_password: adminSettingsForm.forceStrongPassword,
+          lock_after_inactivity: adminSettingsForm.lockAfterInactivity,
+        },
+        notifications: {
+          email_enabled: adminSettingsForm.emailNotifications,
+          push_enabled: adminSettingsForm.pushNotifications,
+          weekly_digest: adminSettingsForm.weeklyDigest,
+          critical_alerts: adminSettingsForm.criticalAlerts,
+        },
+        governance: {
+          manual_account_approval: adminSettingsForm.manualAccountApproval,
+          testimonial_moderation: adminSettingsForm.testimonialModeration,
+          audit_log_retention: adminSettingsForm.auditLogRetention,
+        },
+      });
+      setSettingsSavedNotice('Paramètres administrateur mis à jour.');
+    } catch (e) {
+      setSettingsSavedNotice('Erreur lors de la sauvegarde des paramètres.');
+    }
     setTimeout(() => setSettingsSavedNotice(''), 3000);
   };
 
   const stats = useMemo(() => {
     const s = overviewData?.stats;
     const d = s?.deltas || {};
-    const reclamations = Number(s?.reclamations_ouvertes ?? (historyData?.items || []).filter((it) => String(it?.type || '').toLowerCase().includes('reclamation')).length ?? 0);
+    const openReclamations = reclamationsData.filter((r) => r.etat === 'en_attente').length;
+    const reclamations = Number(s?.reclamations_ouvertes ?? openReclamations ?? 0);
+
+    const now = new Date();
+    const thisMonth = now.getMonth();
+    const thisYear = now.getFullYear();
+    const lastMonth = thisMonth === 0 ? 11 : thisMonth - 1;
+    const lastMonthYear = thisMonth === 0 ? thisYear - 1 : thisYear;
+    const recThisMonth = reclamationsData.filter((r) => {
+      const d = new Date(r.date);
+      return d.getMonth() === thisMonth && d.getFullYear() === thisYear;
+    }).length;
+    const recLastMonth = reclamationsData.filter((r) => {
+      const d = new Date(r.date);
+      return d.getMonth() === lastMonth && d.getFullYear() === lastMonthYear;
+    }).length;
+    const recDelta = recThisMonth - recLastMonth;
+    const recDeltaLabel = recDelta > 0 ? `+${recDelta} ce mois` : recDelta < 0 ? `${recDelta} ce mois` : 'Stable ce mois';
+
     return [
       { label: 'Médecins actifs', value: (s?.patients_actifs ?? 0).toLocaleString('fr-FR'), delta: `+${d.patients_actifs ?? 0}% ce mois`, icon: Users, iconClass: 'text-blue-600 bg-blue-100' },
       { label: "Analyses effectuées ce mois", value: (s?.analyses_totales ?? 0).toLocaleString('fr-FR'), delta: `+${d.analyses_totales ?? 0} ce mois`, icon: Calendar, iconClass: 'text-emerald-600 bg-emerald-100' },
-      { label: "Demandes d'accès en attente", value: reclamations.toLocaleString('fr-FR'), delta: '-2 ce mois', icon: MessageSquare, iconClass: 'text-amber-600 bg-amber-100' },
+      { label: "Réclamations en attente", value: reclamations.toLocaleString('fr-FR'), delta: recDeltaLabel, icon: MessageSquare, iconClass: 'text-amber-600 bg-amber-100' },
       { label: 'Taux de disponibilité système', value: `${s?.taux_precision ?? 94}%`, delta: `+${d.taux_precision ?? 0.3}% ce mois`, icon: TrendingUp, iconClass: 'text-teal-600 bg-teal-100' },
     ];
-  }, [overviewData, historyData]);
+  }, [overviewData, historyData, reclamationsData]);
 
   const historyRows = useMemo(() => {
     const rows = overviewData?.activity || [];
@@ -274,31 +342,51 @@ export default function Dashboard() {
   }, [overviewData]);
 
   const complaintsRows = useMemo(() => {
-    const rows = historyData?.items || [];
-    const extracted = rows.filter((it) => {
-      const txt = `${it?.title || ''} ${it?.subtitle || ''} ${it?.type || ''}`.toLowerCase();
-      return txt.includes('reclamation') || txt.includes('incident') || txt.includes('erreur') || txt.includes('acces') || txt.includes('attente');
-    }).slice(0, 4);
-
-    return extracted.map((it, idx) => {
-      const statusText = String(it?.status || it?.type || 'Moyenne');
+    return reclamationsData.slice(0, 4).map((it, idx) => {
+      const statusText = String(it?.priorite || 'normale');
       const lowered = statusText.toLowerCase();
-      const severityClass = lowered.includes('haute')
+      const severityClass = lowered.includes('critique') || lowered.includes('haute')
         ? 'bg-rose-100 text-rose-700'
         : lowered.includes('basse')
           ? 'bg-emerald-100 text-emerald-700'
           : 'bg-teal-100 text-teal-700';
 
       return {
-        id: `${it?.title || 'reclamation'}-${idx}`,
-        title: it?.title || 'Réclamation',
-        subtitle: it?.subtitle || 'Détails indisponibles',
+        id: `${it?.numero || 'reclamation'}-${idx}`,
+        title: it?.categorie ? `Réclamation ${it.categorie}` : 'Réclamation',
+        subtitle: it?.description || 'Détails indisponibles',
         date: formatDate(it?.date),
         severity: statusText,
         severityClass,
       };
     });
-  }, [historyData]);
+  }, [reclamationsData]);
+
+  const unreadCount = useMemo(() => {
+    const pendingAcc = Number(accountsData?.pending_count || 0);
+    const pendingRecs = reclamationsData.filter((r) => r.etat === 'en_attente').length;
+    const pendingTes = (testimonialsData?.items || []).filter((t) => String(t?.status || '').toLowerCase() === 'pending').length;
+    return pendingAcc + pendingRecs + pendingTes;
+  }, [accountsData, reclamationsData, testimonialsData]);
+
+  const handleReclamationDecision = (reclamationId, nextStatus) => {
+    const actionLabel = nextStatus === 'validee' ? 'valider' : 'rejeter';
+    setReclamationConfirm({ open: true, reclamationId, nextStatus, actionLabel });
+  };
+
+  const confirmReclamationDecision = async () => {
+    const { reclamationId, nextStatus } = reclamationConfirm;
+    if (!reclamationId) return;
+    try {
+      setReclamationDecisionError('');
+      await updateReclamation(reclamationId, { etat: nextStatus });
+      await reloadReclamations();
+    } catch (e) {
+      setReclamationDecisionError(e?.response?.data?.error || 'Erreur lors de la mise a jour de la reclamation.');
+    } finally {
+      setReclamationConfirm({ open: false, reclamationId: null, nextStatus: 'validee', actionLabel: 'valider' });
+    }
+  };
 
   const accounts = useMemo(() => {
     const rows = accountsData?.accounts || [];
@@ -815,14 +903,11 @@ export default function Dashboard() {
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_6px_16px_rgba(15,23,42,0.05)]">
           <h3 className="mb-3 text-2xl font-semibold text-slate-900">Réclamations récentes</h3>
           <div className="space-y-3">
-            {(complaintsRows.length ? complaintsRows : historyRows.slice(0, 4).map((r) => ({
-              id: `fallback-${r.id}`,
-              title: r.subtitle,
-              subtitle: r.title,
-              date: r.time,
-              severity: 'Moyenne',
-              severityClass: 'bg-teal-100 text-teal-700',
-            }))).map((item) => (
+            {reclamationsLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <span className="inline-block h-6 w-6 animate-spin rounded-full border-[3px] border-blue-600 border-t-transparent" />
+              </div>
+            ) : complaintsRows.length > 0 ? complaintsRows.map((item) => (
               <div key={item.id} className="flex items-center justify-between gap-4">
                 <div>
                   <p className="text-base font-semibold text-slate-900">{item.title}</p>
@@ -830,7 +915,13 @@ export default function Dashboard() {
                 </div>
                 <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${item.severityClass}`}>{item.severity}</span>
               </div>
-            ))}
+            )) : (
+              <div className="flex flex-col items-center justify-center py-8 text-center">
+                <MessageSquare className="mb-2 h-8 w-8 text-slate-300" />
+                <p className="text-sm font-semibold text-slate-500">Aucune réclamation</p>
+                <p className="text-xs text-slate-400">Toutes les réclamations ont été traitées.</p>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1403,45 +1494,90 @@ export default function Dashboard() {
           <h3 className="text-xl font-semibold text-slate-900">Module de Gestion des Réclamations</h3>
           <p className="text-sm text-slate-500">Gérez les retours et incidents signalés par le personnel médical</p>
         </div>
-        <div className="flex gap-2">
-          <button className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-md hover:bg-blue-700 transition-colors">
-            <FileText className="h-4 w-4" /> Exporter PDF
-          </button>
-        </div>
+        <div className="flex gap-2" />
       </div>
 
       <div className="grid grid-cols-1 gap-4">
-        {complaintsRows.length > 0 ? complaintsRows.map((c) => (
-          <div key={c.id} className="group relative flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-all hover:shadow-md md:flex-row md:items-center md:justify-between">
-            <div className="flex items-start gap-4">
-              <div className="mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
-                <MessageSquareWarning className="h-5 w-5" />
-              </div>
-              <div>
-                <div className="flex items-center gap-3">
-                  <h4 className="text-base font-bold text-slate-900">{c.title}</h4>
-                  <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${c.severityClass}`}>
-                    {c.severity}
-                  </span>
-                </div>
-                <p className="mt-1 text-sm text-slate-600">{c.subtitle}</p>
-                <div className="mt-2 flex items-center gap-4 text-xs text-slate-400">
-                  <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> {c.date}</span>
-                  <span className="flex items-center gap-1 font-medium text-blue-600">ID: #{c.id.split('-')[1] || '001'}</span>
-                </div>
-              </div>
-            </div>
-            
-            <div className="flex items-center gap-3 border-t border-slate-50 pt-3 md:border-none md:pt-0">
-              <button className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 md:flex-none">
-                Ignorer
-              </button>
-              <button className="flex-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 md:flex-none">
-                Prendre en charge
-              </button>
-            </div>
+        {reclamationDecisionError && (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+            {reclamationDecisionError}
           </div>
-        )) : (
+        )}
+        {reclamationsLoading ? (
+          <div className="flex items-center justify-center rounded-3xl border border-slate-200 bg-white py-14">
+            <span className="inline-block h-8 w-8 animate-spin rounded-full border-[3px] border-blue-600 border-t-transparent" />
+          </div>
+        ) : reclamationsError ? (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+            {reclamationsError}
+          </div>
+        ) : reclamationsData.length > 0 ? reclamationsData.map((c) => {
+          const statusLabel = c.etat === 'validee' ? 'Validée' : c.etat === 'non_validee' ? 'Non validée' : 'En attente';
+          const statusClass = c.etat === 'validee'
+            ? 'bg-emerald-100 text-emerald-700'
+            : c.etat === 'non_validee'
+              ? 'bg-rose-100 text-rose-700'
+              : 'bg-amber-100 text-amber-700';
+          const prioriteClass = c.priorite === 'critique' || c.priorite === 'haute'
+            ? 'bg-rose-50 text-rose-700'
+            : c.priorite === 'basse'
+              ? 'bg-emerald-50 text-emerald-700'
+              : 'bg-slate-100 text-slate-700';
+          const doctorName = c?.user_info?.first_name || c?.user_info?.last_name
+            ? `${c.user_info?.first_name || ''} ${c.user_info?.last_name || ''}`.trim()
+            : c?.user_info?.username || 'Medecin';
+
+          return (
+            <div key={c.id} className="group relative flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-all hover:shadow-md">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div className="flex items-start gap-4">
+                  <div className="mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+                    <MessageSquareWarning className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <h4 className="text-base font-bold text-slate-900">{c.categorie ? `Reclamation ${c.categorie}` : 'Reclamation'}</h4>
+                      <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${prioriteClass}`}>
+                        {c.priorite || 'normale'}
+                      </span>
+                      <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${statusClass}`}>
+                        {statusLabel}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm text-slate-600">{c.description}</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-400">
+                      <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> {formatDate(c.date)}</span>
+                      <span className="flex items-center gap-1 font-medium text-blue-600">#{c.numero || c.id}</span>
+                      <span className="text-slate-500">{doctorName}</span>
+                      {c.fichier_url && (
+                        <a className="text-blue-600 hover:underline" href={c.fichier_url} target="_blank" rel="noreferrer">
+                          Voir piece jointe
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 border-t border-slate-50 pt-3 md:border-none md:pt-0">
+                  <button
+                    className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 md:flex-none disabled:opacity-50"
+                    onClick={() => handleReclamationDecision(c.id, 'non_validee')}
+                    disabled={c.etat !== 'en_attente'}
+                  >
+                    Non validée
+                  </button>
+                  <button
+                    className="flex-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 md:flex-none disabled:opacity-50"
+                    onClick={() => handleReclamationDecision(c.id, 'validee')}
+                    disabled={c.etat !== 'en_attente'}
+                  >
+                    Valider
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        }) : (
           <div className="flex flex-col items-center justify-center rounded-3xl border-2 border-dashed border-slate-200 bg-white/50 py-16 text-center">
             <div className="mb-4 rounded-full bg-slate-100 p-4">
               <MessageSquareWarning className="h-8 w-8 text-slate-400" />
@@ -1451,6 +1587,48 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {reclamationConfirm.open && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-white/60 bg-white/90 p-6 shadow-[0_28px_80px_rgba(15,23,42,0.35)]">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.2em] text-blue-500">Confirmation</p>
+                <h4 className="mt-1 text-lg font-bold text-slate-900">
+                  {reclamationConfirm.actionLabel === 'valider' ? 'Valider la réclamation ?' : 'Rejeter la réclamation ?'}
+                </h4>
+                <p className="mt-2 text-sm text-slate-600">
+                  Cette action marque la réclamation comme <span className="font-semibold text-slate-900">{reclamationConfirm.actionLabel}</span>.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReclamationConfirm({ open: false, reclamationId: null, nextStatus: 'validee', actionLabel: 'valider' })}
+                className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-500 hover:text-slate-700"
+              >
+                Fermer
+              </button>
+            </div>
+
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setReclamationConfirm({ open: false, reclamationId: null, nextStatus: 'validee', actionLabel: 'valider' })}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={confirmReclamationDecision}
+                className="rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-[0_8px_18px_rgba(37,99,235,0.35)] hover:from-blue-700 hover:to-indigo-700"
+              >
+                Confirmer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -1544,14 +1722,11 @@ export default function Dashboard() {
 
               <div className="relative">
                 <button 
-                  onClick={() => {
-                    setShowNotifications(!showNotifications);
-                    if (!showNotifications) setUnreadCount(0);
-                  }}
+                  onClick={() => setShowNotifications(!showNotifications)}
                   className={`relative inline-flex h-9 w-9 items-center justify-center rounded-full border border-blue-100 transition-all hover:bg-blue-50 ${showNotifications ? 'bg-blue-50 text-blue-600' : 'bg-white text-slate-500'}`}
                 >
                   <Bell className="h-4 w-4" />
-                  {unreadCount > 0 && (
+                  {unreadCount > 0 && !showNotifications && (
                     <span className="absolute -right-0.5 -top-0.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white ring-2 ring-white">
                       {unreadCount}
                     </span>

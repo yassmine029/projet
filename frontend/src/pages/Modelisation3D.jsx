@@ -130,10 +130,10 @@ function AIGauge({ value, interpretation }) {
   const valLabel = v <= 10 ? 'Asymétrie non significative' : v <= 20 ? 'Asymétrie modérée' : v <= 30 ? 'Asymétrie marquée' : 'Asymétrie sévère';
 
   const legend = [
-    { range: '0 – 10 %',  label: 'Non significative', dot: 'bg-emerald-400', active: v <= 10 },
-    { range: '10 – 20 %', label: 'Modérée',            dot: 'bg-amber-400',   active: v > 10 && v <= 20 },
-    { range: '20 – 30 %', label: 'Marquée',            dot: 'bg-orange-500',  active: v > 20 && v <= 30 },
-    { range: '> 30 %',    label: 'Sévère',             dot: 'bg-red-500',     active: v > 30 },
+    { range: '0 – 10 %',  label: 'Asymétrie non significative', ref: 'Pas de latéralisation · Normal',          dot: 'bg-emerald-400', active: v <= 10 },
+    { range: '10 – 20 %', label: 'Zone grise — Borderline',      ref: 'Équivoque · corrélation clinique requise', dot: 'bg-amber-400',   active: v > 10 && v <= 20 },
+    { range: '20 – 30 %', label: 'Suspicion MTLE',               ref: 'Sclérose hippocampique légère à modérée', dot: 'bg-orange-500',  active: v > 20 && v <= 30 },
+    { range: '> 30 %',    label: 'Forte évocation de HS / MTS',  ref: 'Argument pour chirurgie épilepsie',       dot: 'bg-red-500',     active: v > 30 },
   ];
 
   return (
@@ -199,15 +199,18 @@ function AIGauge({ value, interpretation }) {
           </div>
         </div>
 
-        {/* Légende en grille */}
-        <div className="mt-5 grid grid-cols-2 gap-1.5">
+        {/* Légende — même format que l'indice de normalisation */}
+        <div className="mt-5 space-y-1.5">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Classification clinique (d'après la littérature)</p>
           {legend.map((item) => (
-            <div key={item.range} className={`flex items-center gap-2 rounded-xl px-3 py-2 transition-all ${
+            <div key={item.range} className={`flex items-center gap-2.5 rounded-xl px-3 py-2 transition-all ${
               item.active ? `${sc.bg} border ${sc.border}` : 'bg-slate-50'
             }`}>
               <span className={`h-2 w-2 shrink-0 rounded-full ${item.dot}`} />
-              <span className={`text-[11px] font-semibold ${item.active ? sc.text : 'text-slate-500'}`}>{item.range}</span>
-              {item.active && <span className={`ml-auto text-[10px] font-black ${sc.text}`}>▲ patient</span>}
+              <span className={`w-20 shrink-0 text-[11px] font-bold tabular-nums ${item.active ? sc.text : 'text-slate-600'}`}>{item.range}</span>
+              <span className={`text-[11px] font-semibold ${item.active ? sc.text : 'text-slate-500'}`}>{item.label}</span>
+              <span className="ml-auto shrink-0 font-mono text-[10px] text-slate-400">{item.ref}</span>
+              {item.active && <span className={`ml-1 shrink-0 text-[10px] font-black ${sc.text}`}>▲</span>}
             </div>
           ))}
         </div>
@@ -1253,6 +1256,8 @@ export default function Modelisation3D() {
       formData.append('doctor_recommendations', JSON.stringify(
         RECOMMENDATIONS.filter((r) => doctorRecommendations.has(r.id)).map((r) => r.label)
       ));
+      const totalVol = modelingResult?.volumes_mm3?.total;
+      if (totalVol) formData.append('total_volume_mm3', String(totalVol));
       const res = await api.post(`/patients/${runInfo.patient}/reports/`, formData, {
         headers: { 'Content-Type': 'multipart/form-data', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       });
@@ -1260,8 +1265,22 @@ export default function Modelisation3D() {
       setArchiveSuccess(newReport);
       setExistingReport({ ...newReport, created_at: res.data.created_at, doctor_name: 'vous', file_url: null, run_id: runInfo?.id });
     } catch (err) {
-      const msg = err?.response?.data?.error || err?.message || 'Erreur lors de l\'archivage.';
-      setArchiveError(msg);
+      // Cas spécial : même IRM déjà enregistré dans le dossier patient (HTTP 409)
+      if (err?.response?.status === 409 && err?.response?.data?.already_saved) {
+        const d = err.response.data;
+        setExistingReport({
+          id: d.existing_report_id,
+          created_at: d.existing_report_date,
+          doctor_name: 'un médecin',
+          file_url: null,
+          run_id: null,
+          same_mri: true,
+        });
+        setArchiveError(d.error || 'Ce résultat est déjà enregistré dans le dossier patient.');
+      } else {
+        const msg = err?.response?.data?.error || err?.message || 'Erreur lors de l\'archivage.';
+        setArchiveError(msg);
+      }
     } finally {
       setArchiving(false);
     }
@@ -1976,7 +1995,11 @@ export default function Modelisation3D() {
                         <div className="min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <p className="text-sm font-bold text-slate-800">Rapport dans le dossier patient</p>
-                            {(existingReport || archiveSuccess) ? (
+                            {existingReport?.same_mri ? (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-100 px-2.5 py-0.5 text-[10px] font-black text-amber-700">
+                                <CheckCircle2 className="h-3 w-3" /> Déjà enregistré
+                              </span>
+                            ) : (existingReport || archiveSuccess) ? (
                               <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-100 px-2.5 py-0.5 text-[10px] font-black text-emerald-700">
                                 <CheckCircle2 className="h-3 w-3" /> Archivé
                               </span>
@@ -1987,7 +2010,11 @@ export default function Modelisation3D() {
                             )}
                           </div>
                           <p className="mt-0.5 text-[11px] text-slate-500">
-                            {existingReport ? (
+                            {existingReport?.same_mri ? (
+                              <span className="text-amber-700 font-semibold">
+                                Un résultat issu du même IRM est déjà enregistré dans le dossier patient (le {existingReport.created_at}). Inutile de l'enregistrer à nouveau.
+                              </span>
+                            ) : existingReport ? (
                               <>Rapport archivé le <strong>{existingReport.created_at}</strong> par Dr. {existingReport.doctor_name}. Visible dans le dossier patient.</>
                             ) : archiveSuccess ? (
                               <>Rapport #{archiveSuccess.id} archivé le <strong>{archiveSuccess.date}</strong> — visible dans le dossier patient.</>
@@ -2027,7 +2054,7 @@ export default function Modelisation3D() {
                         )}
                       </div>
 
-                      {archiveError && (
+                      {archiveError && !existingReport?.same_mri && (
                         <p className="mt-2 text-xs font-semibold text-red-600">{archiveError}</p>
                       )}
                     </div>

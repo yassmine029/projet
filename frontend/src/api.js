@@ -73,6 +73,7 @@ export const getReclamations = () => api.get("/reclamations/");
 export const createReclamation = (formData) => api.post("/reclamations/", formData, {
   headers: { 'Content-Type': 'multipart/form-data' }
 });
+export const updateReclamation = (id, payload) => api.patch(`/reclamations/${id}/`, payload);
 
 export const downloadSegmentationReportPdf = (runId, payload = {}, config = {}) =>
   api.post(`/segmentation-runs/${runId}/report-pdf/`, payload, {
@@ -91,6 +92,7 @@ export const getAdminAccounts = () => api.get('/admin/dashboard/accounts');
 export const createAdminAccount = (payload) => api.post('/admin/dashboard/accounts/create', payload);
 export const getAdminHistory = () => api.get('/admin/dashboard/history');
 export const getAdminSettings = () => api.get('/admin/dashboard/settings');
+export const updateAdminSettings = (data) => api.put('/admin/dashboard/settings', data);
 export const getAdminAnalytics = () => api.get('/admin/dashboard/analytics');
 export const getAdminTestimonials = () => api.get('/admin/dashboard/testimonials');
 export const approveAdminAccount = (userId) => api.post(`/admin/dashboard/accounts/${userId}/approve`);

@@ -4,9 +4,10 @@ import {
   ArrowLeft, Calendar, FileText, Phone, Mail, Stethoscope, Clock, ShieldCheck,
   MapPin, Activity, Star, Plus, Boxes, Layers, ChevronRight, ChevronDown,
   Lock, Eye, Download, Edit3, ArrowLeftRight, Trash2, Hash, User, Search, Filter, ArrowUpDown,
-  HardDrive, FolderTree, Settings, CheckCircle2
+  HardDrive, FolderTree, Settings, CheckCircle2, LineChart, AlertCircle
 } from 'lucide-react';
 import api from '../../api';
+import LongitudinalDashboard from '../../components/LongitudinalDashboard';
 
 // --- UI Sub-components ---
 
@@ -174,7 +175,7 @@ function ResultsSection({ sessions, analysisFiles, resolveFileUrl, formatDate, f
                 const miMatch = fname.match(/MI([\d.]+)/);
                 const miVal   = miMatch ? parseFloat(miMatch[1]) : null;
                 const modeM   = fname.match(/_(2d|3d|advanced)_/i);
-                const mode    = modeM ? ({ '2d':'2D','3d':'3D','advanced':'Avancé' }[modeM[1].toLowerCase()] || '2D') : '2D';
+                const mode    = modeM ? ({ '2d':'2D','3d':'3D','advanced':'3D avec identification des zones' }[modeM[1].toLowerCase()] || '2D') : '2D';
                 const fileUrl = resolveFileUrl(file.file_url || file.file);
                 return (
                   <div key={file.id} className="group flex items-center gap-4 bg-white/80 px-5 py-4 rounded-2xl border border-white hover:border-violet-300 hover:shadow-sm transition-all">
@@ -653,6 +654,8 @@ export default function PatientDetail() {
     return list;
   }, [patient]);
 
+  const [activeTab, setActiveTab] = useState('dossier');
+
   if (loading) return (
     <div className="flex items-center justify-center min-h-[400px]">
       <div className="flex flex-col items-center gap-4">
@@ -736,7 +739,64 @@ export default function PatientDetail() {
         ))}
       </div>
 
+      {/* ── Onglets navigation ── */}
+      <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-2xl w-fit">
+        {[
+          { id: 'dossier',      label: 'Dossier clinique',    icon: FolderTree },
+          { id: 'longitudinal', label: 'Suivi longitudinal',  icon: LineChart,  badge: patient?.segmentation_runs?.length > 1 ? '✦ Nouveau' : null },
+        ].map(({ id, label, icon: Icon, badge }) => (
+          <button
+            key={id}
+            onClick={() => setActiveTab(id)}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-[12px] font-black transition-all duration-200 ${
+              activeTab === id
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <Icon className="w-4 h-4" />
+            {label}
+            {badge && (
+              <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-gradient-to-r from-blue-500 to-violet-500 text-white">
+                {badge}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
       {/* 3. Chronology & Content Section */}
+      {activeTab === 'longitudinal' ? (
+        <div className="grid grid-cols-12 gap-8">
+          <div className="col-span-12 xl:col-span-8">
+            <LongitudinalDashboard patientId={patient.id} patient={patient} />
+          </div>
+          <div className="col-span-12 xl:col-span-4 space-y-6">
+            <div className="bg-white rounded-[32px] border border-slate-200/60 p-6 shadow-sm">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600"><Activity className="w-5 h-5"/></div>
+                <h3 className="text-base font-black text-slate-900">À propos du suivi</h3>
+              </div>
+              <div className="space-y-3 text-[12px] text-slate-600 leading-relaxed">
+                <p>Le suivi longitudinal analyse l'évolution du volume hippocampique à travers les examens successifs.</p>
+                <p>Les volumes sont enregistrés automatiquement lors de la <strong>génération d'un rapport PDF</strong> de segmentation.</p>
+                <div className="mt-4 space-y-2">
+                  {[
+                    { color: 'bg-emerald-400', label: 'Zone verte — volume normal' },
+                    { color: 'bg-amber-400',   label: 'Zone orange — atrophie légère' },
+                    { color: 'bg-rose-400',    label: 'Zone rouge — atrophie sévère' },
+                  ].map((l, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <div className={`w-2.5 h-2.5 rounded-full ${l.color}`}/>
+                      <span className="text-[11px] font-semibold text-slate-600">{l.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
       <div className="grid grid-cols-12 gap-8 relative">
         {/* Timeline Side */}
         <div className="col-span-12 xl:col-span-8 space-y-8">
@@ -1007,6 +1067,7 @@ export default function PatientDetail() {
 
         </div>
       </div>
+      )}
     </div>
   );
 }

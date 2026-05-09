@@ -3304,12 +3304,104 @@ def segmentation_run_report_pdf(request, run_id):
             normative_total_std_mm3=ref_std,
         )
         pdf_data = _build_report_pdf(run, modelisation)
+
+        # Persister les volumes dans le modèle pour le suivi longitudinal
+        try:
+            vols = modelisation.get('volumes_mm3', {}) or {}
+            ci   = modelisation.get('clinical_indices', {}) or {}
+            run.left_volume_mm3  = float(vols.get('left')  or 0) or None
+            run.right_volume_mm3 = float(vols.get('right') or 0) or None
+            run.total_volume_mm3 = float(vols.get('total') or 0) or None
+            run.asymmetry_index  = float(ci.get('asymmetry_index_percent') or 0) or None
+            run.normality_index  = float(ci.get('normality_index_percent') or 0) or None
+            run.z_score          = float(ci.get('z_score') or 0) or None
+            run.save(update_fields=[
+                'left_volume_mm3', 'right_volume_mm3', 'total_volume_mm3',
+                'asymmetry_index', 'normality_index', 'z_score',
+            ])
+        except Exception:
+            pass  # Ne jamais bloquer la génération du PDF pour ça
+
         filename = f"rapport_segmentation_run_{run.id}.pdf"
         response = HttpResponse(pdf_data, content_type='application/pdf')
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
         return response
     except Exception as e:
         return JsonResponse({'ok': False, 'error': f'Echec generation rapport PDF: {str(e)}'}, status=500)
+
+
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def patient_segmentation_history(request, patient_id):
+    """Retourne l'historique volumétrique des runs de segmentation d'un patient.
+    Pour les runs sans volumes, tente de les calculer à la volée depuis les masques."""
+    patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
+    runs = (
+        SegmentationRun.objects
+        .filter(patient=patient, status='done')
+        .prefetch_related('results__mri_file')
+        .order_by('completed_at', 'created_at')
+    )
+
+    data = []
+    run_fingerprints = []   # une empreinte (frozenset d'IDs) par run inclus dans data
+
+    for run in runs:
+        # Calcul à la volée si volumes manquants
+        if run.left_volume_mm3 is None:
+            try:
+                modelisation = run_modelisation_3d(run=run)
+                vols = modelisation.get('volumes_mm3', {}) or {}
+                ci   = modelisation.get('clinical_indices', {}) or {}
+                run.left_volume_mm3  = float(vols.get('left')  or 0) or None
+                run.right_volume_mm3 = float(vols.get('right') or 0) or None
+                run.total_volume_mm3 = float(vols.get('total') or 0) or None
+                run.asymmetry_index  = float(ci.get('asymmetry_index_percent') or 0) or None
+                run.normality_index  = float(ci.get('normality_index_percent') or 0) or None
+                run.z_score          = float(ci.get('z_score') or 0) or None
+                run.save(update_fields=[
+                    'left_volume_mm3', 'right_volume_mm3', 'total_volume_mm3',
+                    'asymmetry_index', 'normality_index', 'z_score',
+                ])
+            except Exception:
+                pass  # Run sans masques valides — on continue
+
+        # N'inclure que les runs avec des volumes calculables
+        if run.left_volume_mm3 is None:
+            continue
+
+        # Empreinte = ensemble des IDs de fichiers IRM utilisés par ce run
+        run_mri_ids = frozenset(r.mri_file_id for r in run.results.all() if r.mri_file_id)
+        run_fingerprints.append(run_mri_ids)
+
+        exam_date = run.completed_at or run.created_at
+        data.append({
+            'id':               run.id,
+            'date':             exam_date.date().isoformat() if exam_date else None,
+            'date_display':     exam_date.strftime('%d/%m/%Y') if exam_date else '—',
+            'model_key':        run.model_key,
+            'left_volume_mm3':  run.left_volume_mm3,
+            'right_volume_mm3': run.right_volume_mm3,
+            'total_volume_mm3': run.total_volume_mm3,
+            'asymmetry_index':  run.asymmetry_index,
+            'normality_index':  run.normality_index,
+            'z_score':          run.z_score,
+            'source_mri_ids':   sorted(run_mri_ids),
+        })
+
+    # all_same_source = vrai si tous les runs ont analysé exactement le même jeu de fichiers IRM
+    unique_fingerprints = set(run_fingerprints)
+    unique_mri_count    = len(unique_fingerprints)
+    all_same_source     = unique_mri_count <= 1 and len(data) > 0
+
+    return JsonResponse({
+        'ok':              True,
+        'history':         data,
+        'count':           len(data),
+        'unique_mri_count': unique_mri_count,
+        'all_same_source': all_same_source,
+    })
 
 
 @api_view(['GET'])
@@ -4898,11 +4990,22 @@ def mri_files_list_upload(request, patient_id: int):
 def reclamations_list_create(request):
     user = request.user
     if request.method == 'GET':
-        queryset = Reclamation.objects.filter(user=user).order_by('-date')
+        if user.is_staff:
+            queryset = Reclamation.objects.select_related('user').order_by('-date')
+        else:
+            queryset = Reclamation.objects.filter(user=user).order_by('-date')
         data = []
         for rec in queryset:
             rec_data = ReclamationSerializer(rec).data
             rec_data['fichier_url'] = rec.fichier.url if rec.fichier else None
+            if user.is_staff:
+                rec_data['user_info'] = {
+                    'id': rec.user_id,
+                    'username': rec.user.username,
+                    'email': rec.user.email,
+                    'first_name': rec.user.first_name,
+                    'last_name': rec.user.last_name,
+                }
             data.append(rec_data)
         return JsonResponse({'ok': True, 'reclamations': data})
 
@@ -4910,9 +5013,23 @@ def reclamations_list_create(request):
         description = request.POST.get('description', '')
         if not description:
             return JsonResponse({'ok': False, 'error': 'description required'}, status=400)
+        categorie = (request.POST.get('categorie') or 'autre').strip().lower()
+        priorite = (request.POST.get('priorite') or 'normale').strip().lower()
+        allowed_categories = {'compte', 'segmentation', 'viewer', 'performance', 'facturation', 'autre'}
+        allowed_priorities = {'basse', 'normale', 'haute', 'critique'}
+        if categorie not in allowed_categories:
+            return JsonResponse({'ok': False, 'error': 'categorie invalide'}, status=400)
+        if priorite not in allowed_priorities:
+            return JsonResponse({'ok': False, 'error': 'priorite invalide'}, status=400)
         fichier = request.FILES.get('fichier', None)
         try:
-            reclamation = Reclamation.objects.create(user=user, description=description, fichier=fichier)
+            reclamation = Reclamation.objects.create(
+                user=user,
+                description=description,
+                categorie=categorie,
+                priorite=priorite,
+                fichier=fichier,
+            )
             rec_data = ReclamationSerializer(reclamation).data
             rec_data['fichier_url'] = reclamation.fichier.url if reclamation.fichier else None
             return JsonResponse({'ok': True, 'reclamation': rec_data}, status=201)
@@ -4925,13 +5042,24 @@ def reclamations_list_create(request):
 def reclamation_detail(request, reclamation_id):
     user = request.user
     try:
-        reclamation = Reclamation.objects.get(id=reclamation_id, user=user)
+        if user.is_staff:
+            reclamation = Reclamation.objects.get(id=reclamation_id)
+        else:
+            reclamation = Reclamation.objects.get(id=reclamation_id, user=user)
     except Reclamation.DoesNotExist:
         return JsonResponse({'ok': False, 'error': 'Reclamation not found'}, status=404)
 
     if request.method == 'GET':
         rec_data = ReclamationSerializer(reclamation).data
         rec_data['fichier_url'] = reclamation.fichier.url if reclamation.fichier else None
+        if user.is_staff:
+            rec_data['user_info'] = {
+                'id': reclamation.user_id,
+                'username': reclamation.user.username,
+                'email': reclamation.user.email,
+                'first_name': reclamation.user.first_name,
+                'last_name': reclamation.user.last_name,
+            }
         return JsonResponse({'ok': True, 'reclamation': rec_data})
 
     if request.method in ['PATCH', 'PUT', 'POST']:
@@ -4946,7 +5074,12 @@ def reclamation_detail(request, reclamation_id):
 
         description = payload.get('description')
         etat = payload.get('etat')
+        categorie = payload.get('categorie')
+        priorite = payload.get('priorite')
         fichier = request.FILES.get('fichier') if hasattr(request, 'FILES') else None
+
+        if not user.is_staff and reclamation.etat != 'en_attente':
+            return JsonResponse({'ok': False, 'error': 'reclamation non modifiable'}, status=400)
 
         if description is not None:
             description = str(description).strip()
@@ -4955,10 +5088,26 @@ def reclamation_detail(request, reclamation_id):
             reclamation.description = description
 
         if etat is not None:
-            allowed = {'en_attente', 'payee', 'rejetee'}
+            if not user.is_staff:
+                return JsonResponse({'ok': False, 'error': 'etat non modifiable'}, status=403)
+            allowed = {'en_attente', 'validee', 'non_validee'}
             if etat not in allowed:
                 return JsonResponse({'ok': False, 'error': 'etat invalide'}, status=400)
             reclamation.etat = etat
+
+        if categorie is not None:
+            categorie = str(categorie).strip().lower()
+            allowed_categories = {'compte', 'segmentation', 'viewer', 'performance', 'facturation', 'autre'}
+            if categorie not in allowed_categories:
+                return JsonResponse({'ok': False, 'error': 'categorie invalide'}, status=400)
+            reclamation.categorie = categorie
+
+        if priorite is not None:
+            priorite = str(priorite).strip().lower()
+            allowed_priorities = {'basse', 'normale', 'haute', 'critique'}
+            if priorite not in allowed_priorities:
+                return JsonResponse({'ok': False, 'error': 'priorite invalide'}, status=400)
+            reclamation.priorite = priorite
 
         if fichier is not None:
             if reclamation.fichier:
@@ -5282,7 +5431,7 @@ def admin_dashboard_analytics(request):
     usage = [usage_map[key] for key in usage_keys]
 
     open_complaints = reclamations_qs.filter(etat='en_attente').count()
-    rejected_complaints = reclamations_qs.filter(etat='rejetee').count()
+    rejected_complaints = reclamations_qs.filter(etat='non_validee').count()
     total_ops = max(1, series_qs.count())
     availability = max(90.0, min(99.9, 100.0 - (open_complaints * 0.35 + rejected_complaints * 0.8)))
     healthy_ops = max(90.0, min(99.9, 100.0 - ((rejected_complaints / total_ops) * 100.0)))
@@ -5617,10 +5766,46 @@ def admin_dashboard_history(request):
     return JsonResponse({'ok': True, 'items': items[:20]})
 
 
-@api_view(['GET'])
+@api_view(['GET', 'PUT'])
 @login_required
 def admin_dashboard_settings(request):
     user = request.user
+
+    user_settings_obj, _ = UserSettings.objects.get_or_create(user=user)
+    admin_prefs = user_settings_obj.settings.get('admin_prefs', {})
+
+    if request.method == 'PUT':
+        if not (user.is_staff or user.is_superuser):
+            return JsonResponse({'ok': False, 'error': 'Accès refusé.'}, status=403)
+        data = request.data if hasattr(request, 'data') else {}
+        security = data.get('security', {})
+        notifications = data.get('notifications', {})
+        governance = data.get('governance', {})
+        admin_prefs.update({
+            'security': {
+                'two_factor_enabled': bool(security.get('two_factor_enabled', admin_prefs.get('security', {}).get('two_factor_enabled', True))),
+                'enforce_strong_password': bool(security.get('enforce_strong_password', admin_prefs.get('security', {}).get('enforce_strong_password', True))),
+                'lock_after_inactivity': bool(security.get('lock_after_inactivity', admin_prefs.get('security', {}).get('lock_after_inactivity', True))),
+            },
+            'notifications': {
+                'email_enabled': bool(notifications.get('email_enabled', admin_prefs.get('notifications', {}).get('email_enabled', True))),
+                'push_enabled': bool(notifications.get('push_enabled', admin_prefs.get('notifications', {}).get('push_enabled', True))),
+                'weekly_digest': bool(notifications.get('weekly_digest', admin_prefs.get('notifications', {}).get('weekly_digest', False))),
+                'critical_alerts': bool(notifications.get('critical_alerts', admin_prefs.get('notifications', {}).get('critical_alerts', True))),
+            },
+            'governance': {
+                'manual_account_approval': bool(governance.get('manual_account_approval', admin_prefs.get('governance', {}).get('manual_account_approval', True))),
+                'testimonial_moderation': bool(governance.get('testimonial_moderation', admin_prefs.get('governance', {}).get('testimonial_moderation', True))),
+                'audit_log_retention': bool(governance.get('audit_log_retention', admin_prefs.get('governance', {}).get('audit_log_retention', True))),
+            },
+        })
+        user_settings_obj.settings['admin_prefs'] = admin_prefs
+        user_settings_obj.save()
+        return JsonResponse({'ok': True, 'message': 'Paramètres mis à jour.'})
+
+    security_prefs = admin_prefs.get('security', {})
+    notif_prefs = admin_prefs.get('notifications', {})
+    gov_prefs = admin_prefs.get('governance', {})
     return JsonResponse({
         'ok': True,
         'profile': {
@@ -5629,15 +5814,22 @@ def admin_dashboard_settings(request):
             'role': 'Super Admin' if user.is_superuser else ('Admin' if user.is_staff else 'Clinicien'),
         },
         'security': {
-            'two_factor': True,
+            'two_factor_enabled': security_prefs.get('two_factor_enabled', True),
+            'enforce_strong_password': security_prefs.get('enforce_strong_password', True),
+            'lock_after_inactivity': security_prefs.get('lock_after_inactivity', True),
             'session_expiration': '30 min',
             'password_rotation': '90 jours',
         },
         'notifications': {
-            'email': True,
-            'push': True,
-            'auto_reports': False,
-            'security_alerts': True,
+            'email_enabled': notif_prefs.get('email_enabled', True),
+            'push_enabled': notif_prefs.get('push_enabled', True),
+            'weekly_digest': notif_prefs.get('weekly_digest', False),
+            'critical_alerts': notif_prefs.get('critical_alerts', True),
+        },
+        'governance': {
+            'manual_account_approval': gov_prefs.get('manual_account_approval', True),
+            'testimonial_moderation': gov_prefs.get('testimonial_moderation', True),
+            'audit_log_retention': gov_prefs.get('audit_log_retention', True),
         },
         'platform': {
             'language': 'Français',
@@ -5678,6 +5870,91 @@ def save_patient_report(request, patient_id):
         except (SegmentationRun.DoesNotExist, ValueError):
             pass
 
+    # Vérifier la redondance avant création
+    if run is not None:
+        # Cas 1 : ce run exact est déjà archivé
+        duplicate_exact = (
+            PatientReport.objects
+            .filter(patient=patient, segmentation_run=run)
+            .order_by('created_at')
+            .first()
+        )
+        if duplicate_exact:
+            return JsonResponse({
+                "ok": False,
+                "already_saved": True,
+                "existing_report_id": duplicate_exact.id,
+                "existing_report_date": duplicate_exact.created_at.strftime("%d/%m/%Y à %H:%M"),
+                "error": (
+                    f"Ce rapport est déjà enregistré dans le dossier patient "
+                    f"(le {duplicate_exact.created_at.strftime('%d/%m/%Y à %H:%M')}). "
+                    f"Inutile de l'enregistrer à nouveau."
+                ),
+            }, status=409)
+
+        # Récupérer le volume total du nouveau run (envoyé par le frontend ou stocké en base)
+        try:
+            new_volume = float(request.POST.get("total_volume_mm3") or 0) or None
+        except (TypeError, ValueError):
+            new_volume = None
+        if new_volume is None and run.total_volume_mm3:
+            new_volume = run.total_volume_mm3
+
+        # Cas 2 : un run différent a analysé les mêmes fichiers IRM (empreinte identique)
+        new_mri_ids = frozenset(
+            SegmentationMaskResult.objects
+            .filter(run=run)
+            .values_list('mri_file_id', flat=True)
+        )
+
+        existing_reports = (
+            PatientReport.objects
+            .filter(patient=patient, segmentation_run__isnull=False)
+            .exclude(segmentation_run=run)
+            .select_related('segmentation_run')
+            .prefetch_related('segmentation_run__results')
+            .order_by('created_at')
+        )
+
+        for existing in existing_reports:
+            existing_run = existing.segmentation_run
+            matched = False
+
+            # Critère A — mêmes fichiers IRM source
+            if new_mri_ids:
+                existing_mri_ids = frozenset(
+                    r.mri_file_id
+                    for r in existing_run.results.all()
+                    if r.mri_file_id
+                )
+                if existing_mri_ids and existing_mri_ids == new_mri_ids:
+                    matched = True
+
+            # Critère B — volumes quasi-identiques (< 1 % d'écart)
+            # couvre le cas : même IRM, prétraitement différent (ex. 124 → 90 coupes)
+            if not matched and new_volume and existing_run.total_volume_mm3:
+                diff_pct = abs(new_volume - existing_run.total_volume_mm3) / existing_run.total_volume_mm3 * 100
+                if diff_pct < 1.0:
+                    matched = True
+
+            if matched:
+                return JsonResponse({
+                    "ok": False,
+                    "already_saved": True,
+                    "existing_report_id": existing.id,
+                    "existing_report_date": existing.created_at.strftime("%d/%m/%Y à %H:%M"),
+                    "error": (
+                        f"Un résultat équivalent est déjà enregistré dans le dossier patient "
+                        f"(rapport du {existing.created_at.strftime('%d/%m/%Y à %H:%M')}). "
+                        f"Inutile de l'enregistrer à nouveau."
+                    ),
+                }, status=409)
+
+        # Stocker le volume dans le run pour les comparaisons futures
+        if new_volume and run.total_volume_mm3 is None:
+            run.total_volume_mm3 = new_volume
+            run.save(update_fields=['total_volume_mm3'])
+
     report = PatientReport.objects.create(
         patient=patient,
         segmentation_run=run,
@@ -5698,17 +5975,46 @@ def save_patient_report(request, patient_id):
 @login_required
 @require_http_methods(["GET"])
 def list_patient_reports(request, patient_id):
-    """Liste les rapports archivés d'un patient."""
+    """Liste les rapports archivés d'un patient, dédupliqués par source IRM."""
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
-    reports = PatientReport.objects.filter(patient=patient).select_related("segmentation_run", "doctor")
+    # Du plus récent au plus ancien : on garde le premier vu pour chaque groupe
+    reports = (
+        PatientReport.objects
+        .filter(patient=patient)
+        .select_related("segmentation_run", "doctor")
+        .prefetch_related("segmentation_run__results")
+        .order_by("-created_at")
+    )
 
+    seen_run_ids   = set()   # dédupliquer par run_id exact
+    seen_mri_fps   = set()   # dédupliquer par empreinte IRM (run différent, même fichiers)
     data = []
+
     for r in reports:
+        run_id = r.segmentation_run_id
+
+        # Dédupliquer par run_id exact
+        if run_id is not None:
+            if run_id in seen_run_ids:
+                continue
+            seen_run_ids.add(run_id)
+
+            # Calculer l'empreinte IRM de ce run
+            mri_fp = frozenset(
+                res.mri_file_id
+                for res in r.segmentation_run.results.all()
+                if res.mri_file_id
+            )
+            if mri_fp:
+                if mri_fp in seen_mri_fps:
+                    continue
+                seen_mri_fps.add(mri_fp)
+
         url = request.build_absolute_uri(r.file.url) if r.file else None
         data.append({
             "id": r.id,
             "created_at": r.created_at.strftime("%d/%m/%Y %H:%M"),
-            "run_id": r.segmentation_run_id,
+            "run_id": run_id,
             "doctor_name": r.doctor.get_full_name() or r.doctor.username if r.doctor else "-",
             "doctor_conclusion": r.doctor_conclusion,
             "doctor_recommendations": r.doctor_recommendations,

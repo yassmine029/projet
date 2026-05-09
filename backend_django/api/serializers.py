@@ -71,9 +71,24 @@ class PatientSerializer(serializers.ModelSerializer):
         return MRIFileSerializer(files, many=True, context=self.context).data
 
     def get_segmentation_runs(self, obj):
-        # Uniquement les runs terminés (status='done') — les pending/running n'ont pas de résultats
-        runs = obj.segmentation_runs.filter(status='done').order_by('-created_at')
-        return SegmentationRunSerializer(runs, many=True, context=self.context).data
+        # Tous les runs terminés, du plus récent au plus ancien
+        runs = list(
+            obj.segmentation_runs
+            .filter(status='done')
+            .prefetch_related('results')
+            .order_by('-created_at')
+        )
+        # Affichage dédupliqué : un seul run par IRM source unique (le plus récent).
+        # Les runs sont conservés en base pour la traçabilité — seul l'affichage est filtré.
+        seen = set()
+        unique = []
+        for run in runs:
+            mri_ids = frozenset(r.mri_file_id for r in run.results.all() if r.mri_file_id)
+            key = mri_ids if mri_ids else frozenset({-run.id})
+            if key not in seen:
+                seen.add(key)
+                unique.append(run)
+        return SegmentationRunSerializer(unique, many=True, context=self.context).data
 
 
 class MRIFileSerializer(serializers.ModelSerializer):

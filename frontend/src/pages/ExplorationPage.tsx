@@ -303,7 +303,7 @@ export default function ExplorationPage({ onBack }: { onBack?: () => void } = {}
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
-    <div className="h-screen flex flex-col bg-[#f0f4f8] text-slate-800 overflow-hidden select-none" onMouseUp={handleMouseUp}>
+    <div className="h-full flex flex-col bg-[#f0f4f8] text-slate-800 overflow-hidden select-none" onMouseUp={handleMouseUp}>
 
       {/* ── Header ── */}
       <header className="shrink-0 flex items-center gap-4 border-b border-slate-200 bg-white px-5 py-3 shadow-sm z-20">

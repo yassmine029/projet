@@ -1,0 +1,58 @@
+# Manually restored: required by 0020_merge_0019_patient_emergency_temp_0019_patient_report
+# (parallel branch with 0019_patient_emergency_temp; both depend on 0018_merge).
+
+import django.db.models.deletion
+from django.conf import settings
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+        ('api', '0018_merge_20260425_1924'),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name='PatientReport',
+            fields=[
+                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                ('file', models.FileField(max_length=500, upload_to='patients_reports/')),
+                ('doctor_conclusion', models.TextField(blank=True, default='')),
+                ('doctor_recommendations', models.JSONField(blank=True, default=list)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                (
+                    'doctor',
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name='patient_reports',
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
+                (
+                    'patient',
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name='reports',
+                        to='api.patient',
+                    ),
+                ),
+                (
+                    'segmentation_run',
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name='reports',
+                        to='api.segmentationrun',
+                    ),
+                ),
+            ],
+            options={
+                'ordering': ['-created_at'],
+            },
+        ),
+    ]

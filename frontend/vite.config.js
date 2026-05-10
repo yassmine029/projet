@@ -28,6 +28,11 @@ export default defineConfig({
         proxyTimeout: 900000,
         rewrite: path => path.replace(/^\/api/, '/api'),
       },
+      '/media': {
+        target: API_TARGET,
+        changeOrigin: true,
+        secure: false,
+      },
       '/ws': {
         target: WS_TARGET,
         ws: true,

@@ -1259,6 +1259,8 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [selectedPatient, setSelectedPatient] = useState(null);
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalizeResult, setFinalizeResult] = useState(null); // { patientId, processedCount }
   const [slices, setSlices] = useState([]);
   const [selectedSlices, setSelectedSlices] = useState([]);
   const [selectedModel, setSelectedModel] = useState('unetpp');
@@ -1332,7 +1334,6 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
   const [newIrmError, setNewIrmError]         = useState('');
   const newIrmFileRef   = useRef(null);
   const newIrmFolderRef = useRef(null);
-  const runIdFromQuery = searchParams.get('run');
 
   useEffect(() => {
     if (userProp == null || typeof userProp !== 'object') return;
@@ -1564,9 +1565,9 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
 
   useEffect(() => {
     if (step !== 3 || !isLaunching) return undefined;
-    // Durée estimée : ~0.5s par coupe, on cible 90% en ce temps-là
+    // Durée réelle ~25s max — on cible 90% en ce temps-là
     const nSlices = Math.max(10, selectedSlices.length);
-    const targetMs = nSlices * 500; // ex: 91 coupes → ~45s pour atteindre 90%
+    const targetMs = Math.min(25000, Math.max(5000, nSlices * 66));
     const tickMs  = Math.max(100, Math.round(targetMs / 45)); // 45 ticks de 2% = 90%
     const interval = setInterval(() => {
       setProgress((current) => {
@@ -2951,40 +2952,6 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                   </>
                 )}
 
-                {/* ── Footer ─────────────────────────────────────────────── */}
-                <div className="mt-4 -mx-6 -mb-6 px-6 py-4 bg-white border-t border-slate-100 flex items-center justify-between">
-                  <p className="text-sm text-slate-500">Étape <strong>1</strong> sur 3</p>
-                  <div className="flex items-center gap-2">
-                    <button type="button" onClick={() => navigate(-1)}
-                      className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
-                      Annuler
-                    </button>
-                    {isEmergencySession ? (
-                      <button
-                        type="button"
-                        onClick={submitEmergencyStaging}
-                        disabled={npSubmitting || emergencyFiles.length === 0}
-                        className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-5 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {npSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CloudUpload className="h-4 w-4" />}
-                        {npSubmitting ? 'Import…' : 'Importer et continuer'}
-                        <ChevronRight className="h-4 w-4" />
-                      </button>
-                    ) : patientSelectMode === 'existing' ? (
-                      <button type="button" disabled={!selectedPatient} onClick={() => setStep(2)}
-                        className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2 text-sm font-bold text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
-                        Confirmer le patient
-                        <ChevronRight className="h-4 w-4" />
-                      </button>
-                    ) : (
-                      <button type="button" onClick={npHandleSubmit} disabled={npSubmitting}
-                        className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2 text-sm font-bold text-white shadow-sm transition hover:from-blue-700 hover:to-indigo-700 disabled:opacity-60">
-                        {npSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
-                        {npSubmitting ? 'Création…' : 'Créer et continuer'}
-                      </button>
-                    )}
-                  </div>
-                </div>
 
               </div>
             )}
@@ -4581,7 +4548,14 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                   className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
                   Annuler
                 </button>
-                {patientSelectMode === 'existing' ? (
+                {isEmergencySession ? (
+                  <button type="button" onClick={submitEmergencyStaging} disabled={npSubmitting || emergencyFiles.length === 0}
+                    className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-5 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    {npSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CloudUpload className="h-4 w-4" />}
+                    {npSubmitting ? 'Import…' : 'Importer et continuer'}
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                ) : patientSelectMode === 'existing' ? (
                   <button type="button" disabled={!selectedPatient} onClick={() => setStep(2)}
                     className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2 text-sm font-bold text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
                     Confirmer le patient
@@ -4709,7 +4683,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                 <Zap className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
                 <p className="text-[11px] leading-relaxed text-slate-600">
                   <span className="font-bold text-slate-700">Durée estimée : </span>
-                  environ {Math.max(1, Math.ceil(selectedSlices.length / 10))} min selon la charge serveur.
+                  environ {Math.min(25, Math.max(5, Math.ceil(selectedSlices.length / 20)))} secondes selon la charge serveur.
                   L'analyse s'exécute en arrière-plan — vous pouvez suivre la progression en temps réel à l'étape suivante.
                 </p>
               </div>
@@ -4811,6 +4785,56 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
       ) : null}
 
       {/* ══════════════════════════════════════════════════════════════
+          MODAL — Sauvegarde confirmée (sans reconstruction 3D)
+      ══════════════════════════════════════════════════════════════ */}
+      {finalizeResult && (
+        <div className="fixed inset-0 z-[280] flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-[3px]">
+          <div className="w-full max-w-sm overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+            <div className="bg-gradient-to-r from-teal-600 to-emerald-600 px-6 py-5 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/20">
+                <CheckCircle2 className="h-5 w-5 text-white" />
+              </div>
+              <div>
+                <p className="text-base font-black text-white">Résultats enregistrés</p>
+                <p className="text-[12px] text-teal-100">Sauvegardé dans le dossier patient</p>
+              </div>
+            </div>
+            <div className="px-6 py-5 space-y-3">
+              <div className="rounded-xl border border-teal-100 bg-teal-50 px-4 py-3 flex items-center gap-3">
+                <FolderOpen className="h-5 w-5 text-teal-600 shrink-0" />
+                <div>
+                  <p className="text-sm font-bold text-slate-800">
+                    {finalizeResult.processedCount > 0
+                      ? `${finalizeResult.processedCount} coupe${finalizeResult.processedCount > 1 ? 's' : ''} enregistrée${finalizeResult.processedCount > 1 ? 's' : ''}`
+                      : 'Résultats de segmentation enregistrés'}
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Masques et métriques disponibles dans le dossier patient</p>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-400 text-center">La reconstruction 3D et le rapport PDF peuvent être générés ultérieurement.</p>
+            </div>
+            <div className="border-t border-slate-100 px-6 py-4 flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setFinalizeResult(null)}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 transition"
+              >
+                Rester ici
+              </button>
+              <button
+                type="button"
+                onClick={() => { setFinalizeResult(null); navigate(`/dashboard/patients/${finalizeResult.patientId}`); }}
+                className="inline-flex items-center gap-2 rounded-xl bg-teal-600 px-4 py-2 text-sm font-bold text-white hover:bg-teal-700 transition"
+              >
+                <FolderOpen className="h-4 w-4" /> Voir le dossier patient
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/*
+      ══════════════════════════════════════════════════════════════
           MODAL — Confirmation validation finale & reconstruction 3D
       ══════════════════════════════════════════════════════════════ */}
       {validateConfirmOpen && (
@@ -4822,119 +4846,86 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
           onClick={() => setValidateConfirmOpen(false)}
         >
           <div
-            className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+            className="w-full max-w-lg overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* ── En-tête gradient émeraude ── */}
-            <div className="relative overflow-hidden bg-gradient-to-r from-emerald-700 via-emerald-600 to-teal-600 px-6 py-5">
-              <span className="absolute -right-6 -top-6 h-28 w-28 rounded-full bg-white/10 pointer-events-none" />
-              <span className="absolute right-14 -bottom-4 h-16 w-16 rounded-full bg-white/10 pointer-events-none" />
+            {/* ── En-tête ── */}
+            <div className="relative overflow-hidden bg-gradient-to-r from-slate-800 to-slate-700 px-6 py-5">
+              <span className="absolute -right-6 -top-6 h-28 w-28 rounded-full bg-white/5 pointer-events-none" />
               <div className="relative flex items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/20 shadow-inner">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15">
                   <CheckCircle2 className="h-5 w-5 text-white" />
                 </div>
                 <div>
                   <h2 id="validate-confirm-title" className="text-base font-black text-white">
-                    Valider la segmentation ?
+                    Segmentation validée — que souhaitez-vous faire ?
                   </h2>
-                  <p className="mt-0.5 text-[12px] text-emerald-100">
-                    Cette action finalise l'analyse et lance la reconstruction 3D
+                  <p className="mt-0.5 text-[12px] text-slate-300">
+                    {reviewStats.validated} coupe{reviewStats.validated > 1 ? 's' : ''} validée{reviewStats.validated > 1 ? 's' : ''} · {getPatientName(selectedPatient || {})}
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* ── Corps ── */}
-            <div className="px-6 py-5 space-y-4">
-
-              {/* Question centrale */}
-              <div className="rounded-xl border-2 border-emerald-200 bg-emerald-50 px-4 py-3.5">
-                <p className="text-sm font-bold text-emerald-900 leading-relaxed">
-                  Êtes-vous sûr de vouloir valider cette segmentation et passer à la reconstruction 3D ?
+            {/* ── Avertissement coupes en attente ── */}
+            {reviewStats.pending > 0 && (
+              <div className="mx-6 mt-4 flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                  <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+                <p className="text-[11px] text-amber-700">
+                  <span className="font-bold">{reviewStats.pending} coupe{reviewStats.pending > 1 ? 's' : ''} non examinée{reviewStats.pending > 1 ? 's' : ''}</span> — elles seront incluses telles quelles.
                 </p>
-                <p className="mt-1 text-xs text-emerald-700">
-                  Une fois validée, la segmentation sera transmise au module de modélisation volumétrique.
-                </p>
               </div>
+            )}
 
-              {/* Récapitulatif */}
-              <div className="grid grid-cols-2 gap-2">
-                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Patient</p>
-                  <p className="mt-0.5 truncate text-sm font-bold text-slate-800">{getPatientName(selectedPatient || {})}</p>
-                  {selectedPatient?.dossier_number && (
-                    <p className="font-mono text-[11px] text-slate-500">{selectedPatient.dossier_number}</p>
-                  )}
-                </div>
-                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Modèle utilisé</p>
-                  <p className="mt-0.5 text-sm font-bold text-slate-800">
-                    {runSummary?.model_version || modelKeyToDisplayName(runSummary?.model_key) || 'Modèle 1'}
-                  </p>
-                  <p className="text-[11px] text-slate-500">Segmentation hippocampe</p>
-                </div>
-                <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">Coupes validées</p>
-                  <p className="mt-0.5 text-2xl font-black tabular-nums text-emerald-700">{reviewStats.validated}</p>
-                  <p className="text-[11px] text-emerald-500">sur {reviewStats.total} coupes traitées</p>
-                </div>
-                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Statut</p>
-                  {reviewStats.rejected > 0 && (
-                    <p className="mt-0.5 text-[11px] font-semibold text-red-600">
-                      {reviewStats.rejected} coupe{reviewStats.rejected > 1 ? 's' : ''} rejetée{reviewStats.rejected > 1 ? 's' : ''}
-                    </p>
-                  )}
-                  {reviewStats.pending > 0 && (
-                    <p className="text-[11px] font-semibold text-amber-600">
-                      {reviewStats.pending} coupe{reviewStats.pending > 1 ? 's' : ''} en attente
-                    </p>
-                  )}
-                  {reviewStats.pending === 0 && reviewStats.rejected === 0 && (
-                    <p className="mt-0.5 text-[11px] font-bold text-emerald-600">Toutes validées</p>
-                  )}
-                </div>
-              </div>
+            {/* ── Deux options ── */}
+            <div className="px-6 py-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
 
-              {/* Avertissement si coupes non examinées */}
-              {reviewStats.pending > 0 && (
-                <div className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-                  <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
-                    <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
-                  </svg>
-                  <div>
-                    <p className="text-xs font-bold text-amber-800">
-                      {reviewStats.pending} coupe{reviewStats.pending > 1 ? 's' : ''} non examinée{reviewStats.pending > 1 ? 's' : ''}
-                    </p>
-                    <p className="mt-0.5 text-[11px] leading-relaxed text-amber-700">
-                      Vous n'avez pas encore statué sur toutes les coupes. La validation inclura ces coupes telles quelles.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Ce qui se passe ensuite */}
-              <div className="flex items-start gap-2.5 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
-                <Brain className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
-                <div>
-                  <p className="text-xs font-bold text-blue-800">Prochaine étape : Reconstruction 3D</p>
-                  <p className="mt-0.5 text-[11px] leading-relaxed text-blue-700">
-                    Les masques de segmentation validés seront assemblés en un volume 3D de l'hippocampe, visualisable et exportable.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* ── Footer ── */}
-            <div className="flex flex-col-reverse gap-2 border-t border-slate-100 bg-white px-6 py-4 sm:flex-row sm:justify-end">
+              {/* Option A — Résultats uniquement */}
               <button
                 type="button"
-                onClick={() => setValidateConfirmOpen(false)}
-                className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                onClick={async () => {
+                  const rid = effectiveRunId;
+                  if (!Number.isFinite(rid) || rid <= 0) return;
+                  setFinalizing(true);
+                  try {
+                    const token = localStorage.getItem('access');
+                    const res = await api.post(
+                      `/segmentation-runs/${rid}/finalize/`,
+                      {},
+                      { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+                    );
+                    const patientId = res.data?.patient_id || selectedPatient?.id;
+                    setFinalizeResult({ patientId, processedCount: res.data?.processed_count ?? 0 });
+                  } catch {
+                    // Le run est déjà sauvegardé — on navigue quand même
+                    const patientId = selectedPatient?.id;
+                    setFinalizeResult({ patientId, processedCount: 0 });
+                  } finally {
+                    setFinalizing(false);
+                    setValidateConfirmOpen(false);
+                  }
+                }}
+                disabled={finalizing}
+                className="group flex flex-col items-start rounded-2xl border-2 border-slate-200 bg-white p-5 text-left transition-all hover:border-blue-400 hover:shadow-lg hover:shadow-blue-50 active:scale-[0.98]"
               >
-                Non, continuer l'examen
+                <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-blue-100 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                  <FolderOpen className="h-5 w-5" />
+                </div>
+                <p className="text-sm font-black text-slate-800 leading-tight">Enregistrer les résultats</p>
+                <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">
+                  Les métriques et masques de segmentation sont sauvegardés dans le dossier patient. Pas de reconstruction 3D ni de rapport PDF.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-1">
+                  {['Métriques', 'Masques', 'Dossier patient'].map(t => (
+                    <span key={t} className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-bold text-slate-500">{t}</span>
+                  ))}
+                </div>
               </button>
+
+              {/* Option B — Reconstruction 3D + Rapport */}
               <button
                 type="button"
                 onClick={() => {
@@ -4943,10 +4934,34 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                   if (!Number.isFinite(rid) || rid <= 0) return;
                   navigate(`/segmentation/modelisation?run=${rid}`);
                 }}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white shadow-md shadow-emerald-200 transition hover:bg-emerald-700"
+                className="group flex flex-col items-start rounded-2xl border-2 border-emerald-300 bg-gradient-to-br from-emerald-50 to-white p-5 text-left transition-all hover:border-emerald-500 hover:shadow-lg hover:shadow-emerald-100 active:scale-[0.98]"
               >
-                <CheckCircle2 className="h-4 w-4" />
-                Oui, valider et passer à la reconstruction 3D
+                <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-sm">
+                  <Brain className="h-5 w-5" />
+                </div>
+                <div className="flex items-center gap-2 mb-1">
+                  <p className="text-sm font-black text-slate-800 leading-tight">Reconstruction 3D + Rapport</p>
+                  <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[9px] font-black text-white">Recommandé</span>
+                </div>
+                <p className="text-[11px] leading-relaxed text-slate-500">
+                  Génère le volume 3D de l'hippocampe, calcule les métriques volumétriques et permet de rédiger le rapport clinique PDF.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-1">
+                  {['Volume 3D', 'Métriques', 'Rapport PDF', 'Dossier patient'].map(t => (
+                    <span key={t} className="rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-bold text-emerald-700">{t}</span>
+                  ))}
+                </div>
+              </button>
+            </div>
+
+            {/* ── Footer ── */}
+            <div className="border-t border-slate-100 bg-slate-50 px-6 py-3 flex justify-start">
+              <button
+                type="button"
+                onClick={() => setValidateConfirmOpen(false)}
+                className="text-sm font-semibold text-slate-500 hover:text-slate-700 transition-colors"
+              >
+                ← Continuer l'examen
               </button>
             </div>
           </div>

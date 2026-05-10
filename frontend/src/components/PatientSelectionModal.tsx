@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   X, Search, User, FileText, Box, Filter, Loader2, ChevronRight, Lock,
-  Upload, FolderOpen, File, CheckCircle2, Database,
+  Upload, FolderOpen, File, CheckCircle2, Database, RefreshCw,
 } from 'lucide-react';
 
 interface Patient {
@@ -14,6 +14,9 @@ interface Patient {
   has_2d: boolean;
   has_nifti: boolean;
   slices_count: number;
+  has_registration?: boolean;
+  last_registration_date?: string | null;
+  registration_count?: number;
 }
 
 interface PatientSelectionModalProps {
@@ -25,6 +28,11 @@ interface PatientSelectionModalProps {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+function formatShortDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -63,7 +71,7 @@ const PatientSelectionModal: React.FC<PatientSelectionModalProps> = ({
   const [patients, setPatients]   = useState<Patient[]>([]);
   const [loading, setLoading]     = useState(true);
   const [search, setSearch]       = useState('');
-  const [filter, setFilter]       = useState<'all' | '2d' | '3d'>('all');
+  const [filter, setFilter]       = useState<'all' | '2d' | '3d' | 'registered' | 'unregistered'>('all');
 
   // Tab state
   const [activeTab, setActiveTab] = useState<'db' | 'local'>('db');
@@ -119,7 +127,9 @@ const PatientSelectionModal: React.FC<PatientSelectionModalProps> = ({
     const matchesFilter =
       filter === 'all' ||
       (filter === '2d' && p.has_2d) ||
-      (filter === '3d' && p.has_nifti);
+      (filter === '3d' && p.has_nifti) ||
+      (filter === 'registered' && p.has_registration) ||
+      (filter === 'unregistered' && !p.has_registration);
     return matchesSearch && matchesFilter;
   });
 
@@ -251,22 +261,27 @@ const PatientSelectionModal: React.FC<PatientSelectionModalProps> = ({
             {/* Toolbar */}
             <div className="border-b border-slate-200/60 bg-slate-50/50 px-8 py-5">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-2 p-1 rounded-2xl bg-slate-200/50 w-fit">
+                <div className="flex flex-wrap items-center gap-1.5">
                   {[
-                    { id: 'all', label: 'Tous', icon: <Filter className="w-3.5 h-3.5" /> },
-                    { id: '2d',  label: 'Avec images 2D',    icon: <FileText className="w-3.5 h-3.5" /> },
-                    { id: '3d',  label: 'Avec volume NIfTI', icon: <Box className="w-3.5 h-3.5" /> },
+                    { id: 'all',          label: 'Tous' },
+                    { id: '2d',           label: 'Images 2D' },
+                    { id: '3d',           label: 'Volume NIfTI' },
+                    { id: 'registered',   label: 'Recalés' },
+                    { id: 'unregistered', label: 'Non recalés' },
                   ].map(opt => (
                     <button
                       key={opt.id}
                       onClick={() => setFilter(opt.id as any)}
-                      className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all duration-300 ${
+                      className={`px-3.5 py-1.5 rounded-full text-[11px] font-bold transition-all duration-200 border ${
                         filter === opt.id
-                          ? 'bg-white text-blue-700 shadow-sm scale-105'
-                          : 'text-slate-500 hover:text-slate-700 hover:bg-white/50'
+                          ? opt.id === 'registered'
+                            ? 'bg-teal-600 text-white border-teal-600 shadow-sm'
+                            : opt.id === 'unregistered'
+                              ? 'bg-slate-600 text-white border-slate-600 shadow-sm'
+                              : 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                          : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700'
                       }`}
                     >
-                      {opt.icon}
                       {opt.label}
                     </button>
                   ))}
@@ -305,12 +320,18 @@ const PatientSelectionModal: React.FC<PatientSelectionModalProps> = ({
                         <button
                           onClick={() => !blocked && onSelectPatient(patient)}
                           disabled={blocked}
-                          className={`w-full relative flex flex-col items-start rounded-3xl border-2 p-5 text-left transition-all duration-300 ${
+                          className={`w-full relative flex flex-col items-start rounded-3xl border-2 p-5 text-left transition-all duration-300 overflow-hidden ${
                             blocked
                               ? 'border-slate-100 bg-slate-50/80 opacity-50 cursor-not-allowed'
-                              : 'border-slate-100 bg-white hover:-translate-y-1 hover:border-blue-200 hover:bg-blue-50/30 hover:shadow-[0_20px_40px_-12px_rgba(37,99,235,0.1)] active:scale-95 cursor-pointer'
+                              : patient.has_registration
+                                ? 'border-teal-200 bg-white hover:-translate-y-1 hover:border-teal-400 hover:shadow-[0_20px_40px_-12px_rgba(20,184,166,0.15)] active:scale-95 cursor-pointer'
+                                : 'border-slate-100 bg-white hover:-translate-y-1 hover:border-blue-200 hover:bg-blue-50/30 hover:shadow-[0_20px_40px_-12px_rgba(37,99,235,0.1)] active:scale-95 cursor-pointer'
                           }`}
                         >
+                          {/* Accent bar gauche pour les patients déjà recalés */}
+                          {patient.has_registration && !blocked && (
+                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-teal-400 rounded-l-3xl" />
+                          )}
                           {blocked && (
                             <div className="absolute top-3 right-3 flex h-7 w-7 items-center justify-center rounded-xl bg-slate-200 text-slate-400">
                               <Lock className="h-3.5 w-3.5" />
@@ -356,6 +377,20 @@ const PatientSelectionModal: React.FC<PatientSelectionModalProps> = ({
                               </span>
                             )}
                           </div>
+
+                          {/* Historique de recalage — ligne discrète */}
+                          {patient.has_registration && !blocked && (
+                            <div className="mt-4 pt-3 border-t border-teal-100 w-full flex items-center justify-between">
+                              <span className="text-[10px] font-semibold text-teal-600">
+                                {patient.registration_count === 1 ? '1 recalage' : `${patient.registration_count} recalages`}
+                              </span>
+                              {patient.last_registration_date && (
+                                <span className="text-[10px] text-slate-400">
+                                  Dernier : {formatShortDate(patient.last_registration_date)}
+                                </span>
+                              )}
+                            </div>
+                          )}
 
                           {!blocked && (
                             <div className="absolute top-4 right-4 opacity-0 transition-all duration-300 group-hover:opacity-100 group-hover:translate-x-1">

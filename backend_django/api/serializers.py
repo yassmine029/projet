@@ -125,11 +125,7 @@ class MRIFileSerializer(serializers.ModelSerializer):
         return file_url
 
     def get_preview_url(self, obj):
-        request = self.context.get('request')
-        url = f'/api/mri-files/{obj.id}/preview/'
-        if request:
-            return request.build_absolute_uri(url)
-        return url
+        return f'/api/mri-files/{obj.id}/preview/'
 
 
 def _model_key_to_label(key: str):
@@ -186,9 +182,13 @@ class SegmentationMaskResultSerializer(serializers.ModelSerializer):
 class SegmentationRunSerializer(serializers.ModelSerializer):
     results = SegmentationMaskResultSerializer(many=True, read_only=True)
     model_version = serializers.SerializerMethodField(read_only=True)
+    has_3d_reconstruction = serializers.SerializerMethodField(read_only=True)
 
     def get_model_version(self, obj):
         return _model_key_to_label(getattr(obj, 'model_key', '') or '') or 'Modèle inconnu'
+
+    def get_has_3d_reconstruction(self, obj):
+        return obj.total_volume_mm3 is not None or obj.left_volume_mm3 is not None
 
     class Meta:
         model = SegmentationRun
@@ -205,6 +205,10 @@ class SegmentationRunSerializer(serializers.ModelSerializer):
             'error_message',
             'created_at',
             'completed_at',
+            'left_volume_mm3',
+            'right_volume_mm3',
+            'total_volume_mm3',
+            'has_3d_reconstruction',
             'results',
         )
 

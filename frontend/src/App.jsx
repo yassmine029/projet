@@ -1,5 +1,5 @@
 import React from 'react'
-import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
+import { Routes, Route, Navigate, Outlet, useNavigate } from 'react-router-dom'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { Moon, Sun } from 'lucide-react'
 
@@ -281,48 +281,6 @@ export default function App() {
     return <div style={{ padding: 40 }}>Vérification session...</div>
   }
 
-  const handleNavigate = (page) => {
-    if (page.startsWith('/')) {
-      window.location.pathname = user ? page : '/login'
-      return
-    }
-    if (page === 'dashboard') { window.location.pathname = '/dashboard'; return }
-    if (page === 'login') { window.location.pathname = '/login'; return }
-    if (page === 'registration') { window.location.pathname = user ? '/registration' : '/login'; return }
-    window.location.pathname = '/'
-  }
-
-  const handleLogout = async () => {
-    try {
-      await logout()
-    } catch (e) {
-      console.error(e)
-    } finally {
-      setUser(null)
-      window.location.pathname = '/'
-    }
-  }
-
-  const handleAuthNavigate = (page) => {
-    if (page === 'login') {
-      window.location.pathname = '/login'
-      return
-    }
-    if (page === 'forgot-password') {
-      window.location.pathname = '/forgot-password'
-      return
-    }
-    if (page === 'reset-password') {
-      window.location.pathname = '/reset-password'
-      return
-    }
-    if (page === 'activate-account') {
-      window.location.pathname = '/activate-account'
-      return
-    }
-    window.location.pathname = '/login'
-  }
-
   return (
     <>
       <ThemeToggle />
@@ -334,7 +292,7 @@ export default function App() {
         />
         <Route
           path="/login"
-          element={user ? <Navigate to="/" replace /> : <Login onLogin={setUser} />}
+          element={user ? <Navigate to="/" replace /> : <Login onLogin={persistUserAndSet} />}
         />
         <Route
           path="/forgot-password"
@@ -376,17 +334,6 @@ export default function App() {
           path="/admin/*"
           element={(user || devBypassAdmin) ? <AdminDashboard /> : <Navigate to="/login" replace />}
         />
-        <Route
-          path="/registration"
-          element={
-            user
-              ? <RegistrationPage user={user} accessToken={null} onNavigate={handleNavigate} />
-              : <Navigate to="/login" replace />
-          }
-        />
-        {/* ── Public: Landing + Login ── */}
-        <Route path="/" element={<LandingPage user={user} onNavigate={handleNavigate} onLogout={handleLogout} />} />
-        <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login onLogin={setUser} />} />
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/terms" element={<TermsPage />} />
 

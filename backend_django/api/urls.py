@@ -120,6 +120,7 @@ urlpatterns = [
         views.segmentation_run_resegment_masks,
         name='segmentation_run_resegment_masks',
     ),
+    path('segmentation-runs/<int:run_id>/finalize/', views.segmentation_run_finalize, name='segmentation_run_finalize'),
     path('segmentation-runs/<int:run_id>/modelisation-3d/', views.segmentation_run_modelisation_3d, name='segmentation_run_modelisation_3d'),
     path('segmentation-runs/<int:run_id>/report-pdf/', views.segmentation_run_report_pdf, name='segmentation_run_report_pdf'),
     path('patients/<int:patient_id>/segmentation-history/', views.patient_segmentation_history, name='patient_segmentation_history'),

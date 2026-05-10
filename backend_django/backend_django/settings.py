@@ -104,15 +104,6 @@ MEDIA_ROOT = os.getenv('MEDIA_ROOT', str(Path.home() / 'recalage_uploads'))
 os.makedirs(MEDIA_ROOT, exist_ok=True)
 MEDIA_URL = '/media/'
 
-<<<<<<< HEAD
-CORS_ALLOW_ALL_ORIGINS = False
-CORS_ALLOWED_ORIGINS = [
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-]
-=======
 # Ne pas combiner ALLOW_ALL_ORIGINS + CREDENTIALS : le navigateur refuse les cookies de session.
 CORS_ALLOW_ALL_ORIGINS = False
 
@@ -127,14 +118,13 @@ def _local_frontend_origins():
 
 
 CORS_ALLOWED_ORIGINS = _local_frontend_origins()
->>>>>>> origin/nadine
 
 CORS_ALLOW_CREDENTIALS = True
 
 # Requis pour les POST avec session depuis le front (Django 4+)
 CSRF_TRUSTED_ORIGINS = list(CORS_ALLOWED_ORIGINS)
 
-# Session cookie : rester cohérent avec l’URL du front (préférer http://localhost:5173, pas 127.0.0.1 mélangé).
+# Session cookie : rester cohérent avec l'URL du front (préférer http://localhost:5173, pas 127.0.0.1 mélangé).
 SESSION_COOKIE_SAMESITE = 'Lax'
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SECURE = os.getenv('SESSION_COOKIE_SECURE', '0') == '1'
@@ -200,20 +190,16 @@ NNUNET_MODEL_PATH = (
     or (_nnunet_final_default if os.path.exists(_nnunet_final_default) else None)
     or (_nnunet_v2_default if os.path.exists(_nnunet_v2_default) else None)
     or _nnunet_legacy_default
-<<<<<<< HEAD
-)
-=======
 )
 
 # Recalage MINE (2D + 3D) : si True, aucun repli CPU — erreur explicite sans CUDA/MPS.
 # Défaut 1 (GPU obligatoire). Mettre MINE_FORCE_GPU=0 pour autoriser le CPU (dev sans GPU).
 MINE_FORCE_GPU = os.getenv('MINE_FORCE_GPU', '1').strip().lower() in ('1', 'true', 'yes')
 
-# Carte des régions pour l’identification et les intensités : api.official_atlas (Nilearn, Harvard–Oxford).
-# Sujet de référence d’intensité (une seule exécution du script runscript).
+# Carte des régions pour l'identification et les intensités : api.official_atlas (Nilearn, Harvard–Oxford).
+# Sujet de référence d'intensité (une seule exécution du script runscript).
 REFERENCE_INTENSITY_NIFTI_SOURCE = os.getenv(
     'REFERENCE_INTENSITY_NIFTI_SOURCE',
-    r'C:\Users\Asus\Desktop\reference_intensité\sujet1.nii',
+    r'C:\Users\yassm\Desktop\donnée 3d\registration 3d\sujet1.nii',
 )
 REFERENCE_INTENSITY_NOM = os.getenv('REFERENCE_INTENSITY_NOM', 'sujet1')
->>>>>>> origin/nadine

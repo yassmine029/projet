@@ -22,7 +22,7 @@ import OrientationPanel from '../components/viewer/OrientationPanel';
 import PatientSelectionModal from '../components/PatientSelectionModal';
 
 const GuideIcon = () => (
-  <img src="/assets/images/creative.png" alt="guide" className="h-6 w-6 object-contain" />
+  <img src="/assets/images/creative.png" alt="guide" className="h-8 w-8 object-contain" />
 );
 
 type Page = string;
@@ -232,6 +232,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const [pickerPatientFiles, setPickerPatientFiles] = useState<any[]>([]);
   const [pickerFilesLoading, setPickerFilesLoading] = useState(false);
   const [pickerSearch, setPickerSearch] = useState('');
+  const [pickerRegFilter, setPickerRegFilter] = useState<'all' | 'registered' | 'unregistered'>('all');
   // Tracks which patient was confirmed for each panel (to prevent duplicate selection)
   const [confirmedPanelPatients, setConfirmedPanelPatients] = useState<{ reference: any | null; patient: any | null }>({ reference: null, patient: null });
 
@@ -2387,16 +2388,15 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   // ✅ Déclencher showResult quand l'overlay ferme (autoAlignStatus revient à idle)
   useEffect(() => {
     if (pendingShowResult && autoAlignStatus === 'idle') {
-      console.log('✅ pendingShowResult + idle → showing result');
       setPendingShowResult(false);
       setShowResult(true);
       setShowValidationModal(false);
       setVisMode('overlay');
-      setTimeout(() => { console.log('🎨 Draw 1'); drawResultImages(); }, 100);
-      setTimeout(() => { console.log('🎨 Draw 2'); drawResultImages(); }, 400);
-      setTimeout(() => { console.log('🎨 Draw 3'); drawResultImages(); }, 800);
+      setTimeout(() => drawResultImages(), 100);
+      setTimeout(() => drawResultImages(), 400);
+      setTimeout(() => drawResultImages(), 800);
     }
-  }, [pendingShowResult, autoAlignStatus, drawResultImages]);
+  }, [pendingShowResult, autoAlignStatus, drawResultImages, registrationDimension]);
 
   const loadPanelFull = useCallback((key: 'ref' | 'patient', idx: number) => {
     const panel = key === 'ref' ? 'reference' : 'patient';
@@ -3234,31 +3234,6 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         },
         levels: 2,
       },
-      {
-        id: 'advanced' as const,
-        step: '03',
-        icon: <BrainCircuit className="h-6 w-6" />,
-        title: 'Recalage Avancé',
-        subtitle: 'Flux clinique complet + Brodmann',
-        desc: "Recalage 3D patient→atlas MNI152 suivi d'une identification interactive des 47 aires de Brodmann avec coordonnées MNI et visualisation 3D des régions corticales.",
-        tags: ['Atlas MNI152', 'MINE 3D / Hybride', '47 zones Brodmann', 'Coordonnées MNI', 'Visualisation 3D'],
-        accent: {
-          card: 'border-2 border-violet-500 bg-gradient-to-br from-violet-600 to-purple-700',
-          iconWrap: 'bg-white/20 text-white border border-white/30',
-          tag: 'bg-white/20 text-white border border-white/25',
-          step: 'text-white/20',
-          title: 'text-white',
-          subtitle: 'text-violet-200',
-          desc: 'text-white/80',
-          footer: 'border-white/20',
-          dot: 'bg-white',
-          dotOff: 'bg-white/25',
-          badgeText: 'Expert',
-          cta: 'text-white',
-          hover: 'hover:shadow-violet-400/40',
-        },
-        levels: 3,
-      },
     ];
 
     return (
@@ -3308,13 +3283,13 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         </div>
 
         {/* ── CARDS section ── */}
-        <div className="mx-auto max-w-5xl px-6 pb-12 pt-8">
+        <div className="mx-auto max-w-3xl px-6 pb-12 pt-8">
           <p className="text-center text-[10px] font-black uppercase tracking-[0.25em] text-slate-400 mb-8">
             Sélectionnez votre flux clinique
           </p>
 
           {/* Cards */}
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
             {FLOWS.map((flow) => (
               <button
                 key={flow.id}
@@ -3535,52 +3510,6 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
           </div>
         </div>
 
-        {/* Compteur de points (uniquement en manuel) */}
-        {showManualActions&&(
-          <div className="px-4 py-2 border-b border-slate-200">
-            <div className="flex gap-1.5 mb-1.5">
-              <div className="flex-1 flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
-                <span className="w-1 h-1 rounded-full bg-blue-500"/><span className="text-[10px] text-blue-400 font-bold">Référence</span>
-                <span className="ml-auto text-xs font-black text-blue-400">{refPts}</span>
-              </div>
-              <div className="flex-1 flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-slate-100 border border-slate-200">
-                <span className="w-1 h-1 rounded-full bg-slate-600"/><span className="text-[10px] text-slate-700 font-bold">Patient</span>
-                <span className="ml-auto text-xs font-black text-slate-700">{patPts}</span>
-              </div>
-            </div>
-            <div className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[10px] font-bold ${pointsStatus==='ready'?'bg-emerald-100 border border-emerald-300 text-emerald-700':pointsStatus==='unbalanced'?'bg-orange-100 border border-orange-300 text-orange-700':pointsStatus==='partial'?'bg-blue-100 border border-blue-300 text-blue-700':'bg-slate-100 border border-slate-300 text-slate-600'}`}>
-              {pointsStatus==='ready'?'✅ Prêt':pointsStatus==='unbalanced'?`⚠️ ${refPts}/${patPts}`:pointsStatus==='partial'?`Encore ${Math.max(0, 4 - Math.min(refPts, patPts))} paire(s)`:'Clic pour ajouter des points'}
-            </div>
-
-            <div className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-2 py-2">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[10px] font-bold text-blue-700">Grille de repère</span>
-                <button
-                  onClick={() => setShowGrid(v => !v)}
-                  className={`rounded-md px-2 py-1 text-[9px] font-black uppercase tracking-wide transition-colors ${showGrid ? 'bg-blue-100 text-blue-700 border border-blue-300' : 'bg-white text-slate-500 border border-slate-300'}`}
-                  title="Afficher ou masquer la grille (G)"
-                >
-                  {showGrid ? 'ON' : 'OFF'}
-                </button>
-              </div>
-              <div className="mt-2 flex items-center gap-2">
-                <span className="text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-600">Pas</span>
-                <input
-                  type="range"
-                  min="16"
-                  max="80"
-                  step="4"
-                  value={gridSize}
-                  onChange={e => setGridSize(Number(e.target.value))}
-                  className="h-1 w-full rounded-full appearance-none cursor-pointer bg-slate-200 accent-blue-500"
-                  disabled={!showGrid}
-                />
-                <span className="w-9 text-right text-[9px] font-bold text-blue-700">{gridSize}</span>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Mode selector or Phase 3 Info */}
         <div className="px-3 py-2.5 border-b border-slate-200">
           {phase === 3 ? (
@@ -3732,7 +3661,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                     </button>
                     <button
                       onClick={e => { e.stopPropagation(); setShowAutoGuide3D(true); }}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 z-10 text-white/60 hover:text-white transition-colors"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 z-10 rounded-full bg-white hover:bg-slate-100 p-1 transition-all shadow-md"
                       title="Guide d'utilisation"
                     >
                       <GuideIcon />
@@ -3775,7 +3704,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                     {is3D && (
                       <button
                         onClick={e => { e.stopPropagation(); setShowHybridGuide(true); }}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 z-10 text-white/60 hover:text-white transition-colors"
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 z-10 rounded-full bg-white hover:bg-slate-100 p-1 transition-all shadow-md"
                         title="Guide d'utilisation"
                       >
                         <GuideIcon />
@@ -4797,14 +4726,14 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                               title: 'Valider le recalage ?',
                               message: `Appliquer le recalage à toutes les coupes IRM de ${dbPatient.nom} ${dbPatient.prenom} ?`,
                               detail: 'La transformation calculée sera appliquée à chaque image de la série du patient.',
-                              confirmLabel: 'Oui, valider',
+                              confirmLabel: 'Oui, valider et appliquer à toute la série',
                               onConfirm: handleApplyToSeries,
                             });
                           }}
                           disabled={applyingToSeries || autoAlignStatus === 'processing'}
                           className="flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 transition"
                         >
-                          {applyingToSeries ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Traitement…</> : <><Check className="h-3.5 w-3.5" /> Valider le recalage</>}
+                          {applyingToSeries ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Traitement…</> : <><Check className="h-3.5 w-3.5" /> Valider et appliquer à toute la série</>}
                         </button>
                       </>
                     )}
@@ -4825,15 +4754,27 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                           <X className="h-3.5 w-3.5" /> Rejeter le recalage
                         </button>
                         <button
-                          onClick={() => setConfirmDialog({
-                            title: 'Valider le recalage ?',
-                            message: 'Êtes-vous satisfait du résultat du recalage ?',
-                            detail: registrationDimension === 'advanced'
+                          onClick={() => {
+                            const dbPat = confirmedPanelPatients.patient ?? confirmedPanelPatients.reference;
+                            const alreadyReg = dbPat?.has_registration;
+                            const regCount   = dbPat?.registration_count ?? 0;
+                            const lastDate   = dbPat?.last_registration_date
+                              ? new Date(dbPat.last_registration_date).toLocaleDateString('fr-FR')
+                              : null;
+                            const warningLine = alreadyReg
+                              ? `⚠️ Ce patient a déjà ${regCount} recalage${regCount > 1 ? 's' : ''} enregistré${regCount > 1 ? 's' : ''}${lastDate ? ` (dernier : ${lastDate})` : ''}. Un nouveau résultat sera ajouté à son historique.`
+                              : null;
+                            const baseDetail = registrationDimension === 'advanced'
                               ? 'Le volume recalé sera sauvegardé automatiquement dans le dossier patient, puis vous accéderez à l\'exploration des zones corticales de Brodmann.'
-                              : 'Le volume recalé sera enregistré dans le dossier patient.',
-                            confirmLabel: 'Oui, valider',
-                            onConfirm: registrationDimension === 'advanced' ? handleValidateAndExplore : handleSaveToPatient,
-                          })}
+                              : 'Le volume recalé sera enregistré dans le dossier patient.';
+                            setConfirmDialog({
+                              title: 'Valider le recalage ?',
+                              message: 'Êtes-vous satisfait du résultat du recalage ?',
+                              detail: warningLine ? `${warningLine}\n\n${baseDetail}` : baseDetail,
+                              confirmLabel: 'Oui, valider',
+                              onConfirm: registrationDimension === 'advanced' ? handleValidateAndExplore : handleSaveToPatient,
+                            });
+                          }}
                           disabled={autoAlignStatus === 'processing' || savingToPatient}
                           className="flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 transition"
                         >
@@ -4942,20 +4883,20 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                             </button>
                           </div>
                         ) : (
-                          <div className="flex flex-col gap-3 p-5">
-                            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-blue-50 border border-blue-100">
-                              <Download className="h-5 w-5 text-blue-600" />
+                          <div className="flex flex-col gap-3 p-5 bg-emerald-50/40">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-100 border border-emerald-200">
+                              <Check className="h-5 w-5 text-emerald-600" />
                             </div>
                             <div>
-                              <p className="text-sm font-black text-blue-700">Accepter &amp; Exporter</p>
-                              <p className="mt-1 text-[11px] leading-relaxed text-slate-500">Résultat validé — télécharger les images et les métriques.</p>
+                              <p className="text-sm font-black text-emerald-700">Valider le recalage</p>
+                              <p className="mt-1 text-[11px] leading-relaxed text-slate-500">Résultat accepté — le volume recalé est enregistré dans le dossier patient.</p>
                             </div>
                             <button
-                              onClick={() => { setShowValidationModal(false); exportResults(); }}
-                              disabled={autoAlignStatus === 'processing'}
-                              className="mt-auto w-full rounded-xl border border-blue-300 bg-blue-600 py-2 text-[11px] font-black text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-45"
+                              onClick={() => { setShowValidationModal(false); handleSaveToPatient(); }}
+                              disabled={autoAlignStatus === 'processing' || savingToPatient}
+                              className="mt-auto w-full rounded-xl border border-emerald-400 bg-emerald-600 py-2 text-[11px] font-black text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-45"
                             >
-                              Exporter →
+                              {savingToPatient ? 'Enregistrement…' : 'Valider →'}
                             </button>
                           </div>
                         )}
@@ -5420,7 +5361,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
 
               {/* ── Left: patient list ── */}
               <div className="w-72 flex-shrink-0 flex flex-col border-r border-slate-100 bg-slate-50/50">
-                <div className="p-4 border-b border-slate-100">
+                <div className="p-4 border-b border-slate-100 space-y-3">
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                     <input
@@ -5431,7 +5372,26 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                       className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 placeholder:text-slate-400"
                     />
                   </div>
-                  <p className="mt-2 text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em]">
+                  <div className="flex gap-1.5">
+                    {([['all', 'Tous'], ['registered', 'Recalés'], ['unregistered', 'Non recalés']] as const).map(([id, label]) => (
+                      <button
+                        key={id}
+                        onClick={() => setPickerRegFilter(id)}
+                        className={`flex-1 py-1 rounded-lg text-[10px] font-bold transition-all border ${
+                          pickerRegFilter === id
+                            ? id === 'registered'
+                              ? 'bg-teal-600 text-white border-teal-600'
+                              : id === 'unregistered'
+                                ? 'bg-slate-500 text-white border-slate-500'
+                                : 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600 hover:border-slate-300'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em]">
                     {allPatientsLoading ? 'Chargement…' : `${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length} patient${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length !== 1 ? 's' : ''} compatible${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length !== 1 ? 's' : ''}`}
                   </p>
                 </div>
@@ -5447,7 +5407,11 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                       .filter(p => {
                         const compatible = is3D ? p.has_nifti : p.has_2d;
                         const matchSearch = `${p.nom} ${p.prenom} ${p.num_dossier}`.toLowerCase().includes(pickerSearch.toLowerCase());
-                        return compatible && matchSearch;
+                        const matchReg =
+                          pickerRegFilter === 'all' ||
+                          (pickerRegFilter === 'registered' && p.has_registration) ||
+                          (pickerRegFilter === 'unregistered' && !p.has_registration);
+                        return compatible && matchSearch && matchReg;
                       })
                       .map(p => {
                         const isSelected = pickerSelectedPatient?.id === p.id;
@@ -5464,7 +5428,9 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                                   ? 'bg-slate-50 border border-slate-100 opacity-50 cursor-not-allowed'
                                   : isSelected
                                     ? (panelPickerOpen === 'reference' ? 'bg-blue-600 text-white shadow-md' : 'bg-emerald-600 text-white shadow-md')
-                                    : 'bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50/50 text-slate-700'
+                                    : p.has_registration
+                                      ? 'bg-white border border-teal-200 hover:border-teal-400 hover:bg-teal-50/40 text-slate-700 border-l-[3px] border-l-teal-400'
+                                      : 'bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50/50 text-slate-700'
                               }`}
                             >
                               <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${
@@ -5480,10 +5446,19 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                                 }`}>
                                   {p.nom} {p.prenom}
                                 </p>
-                                <p className={`text-[10px] font-mono mt-0.5 ${
+                                <p className={`text-[10px] font-mono mt-0.5 flex items-center gap-1.5 ${
                                   isUsedByOtherPanel ? 'text-slate-300' : isSelected ? 'text-white/70' : 'text-slate-400'
                                 }`}>
                                   {p.num_dossier} · {p.age ? `${p.age} ans` : '—'}
+                                  {p.has_registration && !isUsedByOtherPanel && (
+                                    <>
+                                      <span className={isSelected ? 'text-white/40' : 'text-slate-300'}>·</span>
+                                      <span className={`flex items-center gap-1 ${isSelected ? 'text-teal-200' : 'text-teal-500'}`}>
+                                        <span className="w-1.5 h-1.5 rounded-full bg-current inline-block" />
+                                        {p.registration_count === 1 ? '1 recalage' : `${p.registration_count} recalages`}
+                                      </span>
+                                    </>
+                                  )}
                                 </p>
                               </div>
                               {isUsedByOtherPanel
@@ -5649,8 +5624,8 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
 
               {/* Detail */}
               {confirmDialog.detail && (
-                <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
-                  <p className="text-xs leading-relaxed text-blue-800">{confirmDialog.detail}</p>
+                <div className={`mt-4 rounded-xl border px-4 py-3 ${confirmDialog.detail.startsWith('⚠️') ? 'border-amber-200 bg-amber-50' : 'border-blue-100 bg-blue-50'}`}>
+                  <p className={`text-xs leading-relaxed whitespace-pre-line ${confirmDialog.detail.startsWith('⚠️') ? 'text-amber-800' : 'text-blue-800'}`}>{confirmDialog.detail}</p>
                 </div>
               )}
 

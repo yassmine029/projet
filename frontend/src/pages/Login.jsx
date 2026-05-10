@@ -405,7 +405,7 @@ export default function Login({ onLogin }) {
         localStorage.removeItem('login_blocked_until')
         setSuccessMessage('Connexion réussie ! Redirection...')
         onLogin(r.data.user)
-        setTimeout(() => { window.location.href = '/' }, 500)
+        navigate('/dashboard', { replace: true })
       } else {
         const errorType = r.data?.error_type
         const errMsg = r.data?.error || 'Identifiants invalides'

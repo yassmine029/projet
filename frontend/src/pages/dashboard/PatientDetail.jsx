@@ -4,7 +4,8 @@ import {
   ArrowLeft, Calendar, FileText, Phone, Mail, Stethoscope, Clock, ShieldCheck,
   MapPin, Activity, Star, Plus, Boxes, Layers, ChevronRight, ChevronDown,
   Lock, Eye, Download, Edit3, ArrowLeftRight, Trash2, Hash, User, Search, Filter, ArrowUpDown,
-  HardDrive, FolderOpen, FolderTree, Settings, CheckCircle2, LineChart, AlertCircle
+  HardDrive, FolderOpen, FolderTree, Settings, CheckCircle2, LineChart, AlertCircle,
+  Brain, Box
 } from 'lucide-react';
 import api from '../../api';
 import LongitudinalDashboard from '../../components/LongitudinalDashboard';
@@ -128,6 +129,86 @@ function ResultsSection({ sessions, analysisFiles, resolveFileUrl, formatDate, f
             )}
           </div>
 
+          {/* ── Résumé segmentations ── */}
+          {sessions.length > 0 && (filter === 'all' || filter === 'segmentation') && (() => {
+            const sorted = [...sessions].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            const lastDate = sorted[0]?.created_at ? formatDate(sorted[0].created_at) : null;
+            const models = [...new Set(sorted.map(s => s.model_version).filter(Boolean))];
+            return (
+              <div className="mb-5 flex items-stretch gap-3 rounded-2xl border border-violet-200 bg-gradient-to-r from-violet-50 to-white overflow-hidden">
+                <div className="w-1 bg-violet-400 shrink-0" />
+                <div className="flex flex-1 flex-wrap items-center gap-x-6 gap-y-2 py-3 pr-4">
+                  <div>
+                    <p className="text-[9px] font-black uppercase tracking-[0.18em] text-violet-500 mb-0.5">Segmentations effectuées</p>
+                    <p className="text-xl font-black text-violet-800 leading-none">{sessions.length}</p>
+                  </div>
+                  {lastDate && (
+                    <div className="border-l border-violet-200 pl-6">
+                      <p className="text-[9px] font-black uppercase tracking-[0.18em] text-violet-500 mb-0.5">Dernière analyse</p>
+                      <p className="text-sm font-bold text-slate-700">{lastDate}</p>
+                    </div>
+                  )}
+                  {models.length > 0 && (
+                    <div className="border-l border-violet-200 pl-6">
+                      <p className="text-[9px] font-black uppercase tracking-[0.18em] text-violet-500 mb-0.5">Modèles utilisés</p>
+                      <p className="text-sm font-bold text-slate-700">{models.join(' · ')}</p>
+                    </div>
+                  )}
+                  <div className="ml-auto flex items-center gap-1.5 self-center">
+                    {sorted.slice(0, 5).map((s, i) => (
+                      <div key={s.id} title={s.created_at ? formatDate(s.created_at) : ''}
+                        className={`rounded-full border-2 border-white shadow-sm ${i === 0 ? 'w-3 h-3 bg-violet-500' : 'w-2.5 h-2.5 bg-violet-200'}`} />
+                    ))}
+                    {sessions.length > 5 && <span className="text-[9px] font-bold text-violet-400">+{sessions.length - 5}</span>}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ── Résumé recalages ── */}
+          {recalageAll.length > 0 && (filter === 'all' || filter === 'recalage') && (() => {
+            const dated = recalageAll.filter(f => f.uploaded_at).sort((a, b) => new Date(b.uploaded_at) - new Date(a.uploaded_at));
+            const lastDate = dated[0] ? formatDate(dated[0].uploaded_at) : null;
+            const miValues = recalageAll.map(f => {
+              const m = (f.original_filename || '').match(/MI([\d.]+)/);
+              return m ? parseFloat(m[1]) : null;
+            }).filter(v => v !== null);
+            const bestMI = miValues.length ? Math.max(...miValues) : null;
+            return (
+              <div className="mb-5 flex items-stretch gap-3 rounded-2xl border border-teal-200 bg-gradient-to-r from-teal-50 to-white overflow-hidden">
+                <div className="w-1 bg-teal-400 shrink-0" />
+                <div className="flex flex-1 flex-wrap items-center gap-x-6 gap-y-2 py-3 pr-4">
+                  <div>
+                    <p className="text-[9px] font-black uppercase tracking-[0.18em] text-teal-500 mb-0.5">Recalages effectués</p>
+                    <p className="text-xl font-black text-teal-800 leading-none">{recalageAll.length}</p>
+                  </div>
+                  {lastDate && (
+                    <div className="border-l border-teal-200 pl-6">
+                      <p className="text-[9px] font-black uppercase tracking-[0.18em] text-teal-500 mb-0.5">Dernier recalage</p>
+                      <p className="text-sm font-bold text-slate-700">{lastDate}</p>
+                    </div>
+                  )}
+                  {bestMI !== null && (
+                    <div className="border-l border-teal-200 pl-6">
+                      <p className="text-[9px] font-black uppercase tracking-[0.18em] text-teal-500 mb-0.5">Meilleure qualité (MI)</p>
+                      <p className={`text-sm font-black ${bestMI >= 0.5 ? 'text-emerald-600' : bestMI >= 0.3 ? 'text-amber-600' : 'text-red-500'}`}>
+                        {bestMI.toFixed(3)}
+                      </p>
+                    </div>
+                  )}
+                  <div className="ml-auto flex items-center gap-1.5 self-center">
+                    {dated.slice(0, 5).map((f, i) => (
+                      <div key={f.id} title={formatDate(f.uploaded_at)}
+                        className={`rounded-full border-2 border-white shadow-sm ${i === 0 ? 'w-3 h-3 bg-teal-500' : 'w-2.5 h-2.5 bg-teal-200'}`} />
+                    ))}
+                    {recalageAll.length > 5 && <span className="text-[9px] font-bold text-teal-400">+{recalageAll.length - 5}</span>}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {totalCount === 0 ? (
             <div className="py-10 text-center bg-white/50 rounded-2xl border border-dashed border-emerald-200">
               <Activity className="w-8 h-8 text-emerald-200 mx-auto mb-3" />
@@ -214,11 +295,13 @@ function ResultsSection({ sessions, analysisFiles, resolveFileUrl, formatDate, f
 
 function SessionCard({ session }) {
   const [isOpen, setIsOpen] = useState(false);
+  const navigate = useNavigate();
   const totalFiles = (session.groups || []).reduce((acc, g) => acc + (g.files?.length || 0), 0);
   const groupCount = (session.groups || []).length;
+  const has3D = Boolean(session.has_3d_reconstruction);
 
   return (
-    <div className="bg-white/80 rounded-2xl border border-white hover:border-emerald-200 hover:shadow-sm transition-all overflow-hidden">
+    <div className={`bg-white/80 rounded-2xl border hover:shadow-sm transition-all overflow-hidden ${has3D ? 'border-white hover:border-emerald-200' : 'border-amber-100 hover:border-amber-300'}`}>
       {/* Collapsed header — toujours visible */}
       <div
         className="flex items-center gap-4 px-5 py-4 cursor-pointer select-none group"
@@ -245,6 +328,47 @@ function SessionCard({ session }) {
           ${isOpen ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-emerald-50 text-emerald-700 border-emerald-200 group-hover:bg-emerald-100'}`}>
           {isOpen ? <><ChevronDown className="w-3.5 h-3.5" /> Masquer</> : <><ChevronRight className="w-3.5 h-3.5" /> Voir les fichiers</>}
         </button>
+      </div>
+
+      {/* Indicateur reconstruction 3D */}
+      <div className={`mx-4 mb-3 flex items-center justify-between gap-3 rounded-xl px-4 py-2.5 ${
+        has3D
+          ? 'bg-emerald-50 border border-emerald-200'
+          : 'bg-amber-50 border border-amber-200'
+      }`}>
+        <div className="flex items-center gap-2">
+          {has3D
+            ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            : <Box className="w-4 h-4 text-amber-500 shrink-0" />
+          }
+          <div>
+            <p className={`text-[11px] font-black ${has3D ? 'text-emerald-700' : 'text-amber-700'}`}>
+              {has3D ? 'Reconstruction 3D effectuée' : 'Reconstruction 3D non effectuée'}
+            </p>
+            {has3D && session.total_volume_mm3 && (
+              <p className="text-[10px] text-emerald-600">Volume total : {Math.round(session.total_volume_mm3)} mm³</p>
+            )}
+            {!has3D && (
+              <p className="text-[10px] text-amber-600">Seuls les masques de segmentation sont disponibles</p>
+            )}
+          </div>
+        </div>
+        {!has3D && session.run_id && (
+          <button
+            onClick={(e) => { e.stopPropagation(); navigate(`/segmentation/modelisation?run=${session.run_id}`); }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 text-white text-[10px] font-black hover:bg-amber-600 transition-all shadow-sm shrink-0"
+          >
+            <Brain className="w-3.5 h-3.5" /> Lancer la reconstruction 3D
+          </button>
+        )}
+        {has3D && session.run_id && (
+          <button
+            onClick={(e) => { e.stopPropagation(); navigate(`/segmentation/modelisation?run=${session.run_id}`); }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-300 bg-white text-emerald-700 text-[10px] font-bold hover:bg-emerald-600 hover:text-white transition-all shrink-0"
+          >
+            <Brain className="w-3.5 h-3.5" /> Voir les résultats 3D
+          </button>
+        )}
       </div>
 
       {/* Détails dépliés */}
@@ -630,12 +754,15 @@ export default function PatientDetail() {
       
       return {
         id: run.id,
+        run_id: run.id,
         session_num: `Rapport d'Analyse #${run.id}`,
         date: formatDate(run.created_at),
         time: new Date(run.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
         author: fullName,
         role: runner.specialty || (runner.is_staff ? 'Administrateur' : 'Praticien'),
         is_new: run.status === 'running' || (new Date() - new Date(run.created_at)) < 86400000,
+        has_3d_reconstruction: Boolean(run.has_3d_reconstruction),
+        total_volume_mm3: run.total_volume_mm3 ?? null,
         groups: [
           {
             type: 'segmentation',

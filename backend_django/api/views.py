@@ -461,7 +461,37 @@ def _get_warp_from_tform(tform, upload_dir, target_size=(512, 512)):
       - Procrustes: {"rotation": ..., "scale": ..., "translation": ...}
     """
     method = tform.get('method', '')
-    w, h = target_size
+
+    def _norm_size(value):
+        if isinstance(value, (list, tuple)) and len(value) == 2:
+            return (int(value[0]), int(value[1]))
+        return None
+
+    base_size = _norm_size(tform.get('target_size')) or target_size
+    w, h = int(base_size[0]), int(base_size[1])
+    ref_size = _norm_size(tform.get('ref_size')) or base_size
+    pat_size = _norm_size(tform.get('pat_size'))
+
+    def _scaled_affine(M, ref_sz, pat_sz):
+        ref_w, ref_h = ref_sz
+        pat_w, pat_h = pat_sz
+        S_pat = np.array([
+            [w / float(max(pat_w, 1)), 0, 0],
+            [0, h / float(max(pat_h, 1)), 0],
+            [0, 0, 1],
+        ], dtype=np.float64)
+        S_ref = np.array([
+            [w / float(max(ref_w, 1)), 0, 0],
+            [0, h / float(max(ref_h, 1)), 0],
+            [0, 0, 1],
+        ], dtype=np.float64)
+        M3 = np.array([
+            [M[0, 0], M[0, 1], M[0, 2]],
+            [M[1, 0], M[1, 1], M[1, 2]],
+            [0, 0, 1],
+        ], dtype=np.float64)
+        M_scaled = np.linalg.inv(S_ref) @ M3 @ S_pat
+        return M_scaled[:2, :].astype(np.float32)
 
     if method == 'mine':
         transform_file = tform.get('transform_file', '')
@@ -485,10 +515,25 @@ def _get_warp_from_tform(tform, upload_dir, target_size=(512, 512)):
         H_px = N2P @ H @ P2N
 
         def warp_fn(img):
-            if img.shape[:2] != (h, w):
-                img = cv2.resize(img, target_size, interpolation=cv2.INTER_LINEAR)
+            src_h, src_w = img.shape[:2]
+            use_pat = pat_size or (src_w, src_h)
+            use_ref = ref_size or base_size
+            if (src_w, src_h) != use_pat:
+                img = cv2.resize(img, use_pat, interpolation=cv2.INTER_LINEAR)
+
+            S_out = np.array([
+                [w / float(max(use_ref[0], 1)), 0, 0],
+                [0, h / float(max(use_ref[1], 1)), 0],
+                [0, 0, 1],
+            ], dtype=np.float64)
+            S_in = np.array([
+                [w / float(max(use_pat[0], 1)), 0, 0],
+                [0, h / float(max(use_pat[1], 1)), 0],
+                [0, 0, 1],
+            ], dtype=np.float64)
+            H_scaled = np.linalg.inv(S_in) @ H_px @ S_out
             # MINE H maps dst→src (inverse mapping) — use WARP_INVERSE_MAP
-            return cv2.warpPerspective(img, H_px, target_size,
+            return cv2.warpPerspective(img, H_scaled, use_ref,
                                        flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
                                        borderMode=cv2.BORDER_CONSTANT,
                                        borderValue=0)
@@ -496,9 +541,13 @@ def _get_warp_from_tform(tform, upload_dir, target_size=(512, 512)):
         M = np.array(tform['M'], dtype=np.float32)
 
         def warp_fn(img):
-            if img.shape[:2] != (h, w):
-                img = cv2.resize(img, target_size, interpolation=cv2.INTER_LINEAR)
-            return cv2.warpAffine(img, M, target_size,
+            src_h, src_w = img.shape[:2]
+            use_pat = pat_size or (src_w, src_h)
+            use_ref = ref_size or base_size
+            if (src_w, src_h) != use_pat:
+                img = cv2.resize(img, use_pat, interpolation=cv2.INTER_LINEAR)
+            M_scaled = _scaled_affine(M, use_ref, use_pat)
+            return cv2.warpAffine(img, M_scaled, use_ref,
                                   flags=cv2.INTER_LINEAR,
                                   borderMode=cv2.BORDER_CONSTANT,
                                   borderValue=0)
@@ -506,9 +555,13 @@ def _get_warp_from_tform(tform, upload_dir, target_size=(512, 512)):
         M = affine_from_tform(tform)
 
         def warp_fn(img):
-            if img.shape[:2] != (h, w):
-                img = cv2.resize(img, target_size, interpolation=cv2.INTER_LINEAR)
-            return cv2.warpAffine(img, M, target_size,
+            src_h, src_w = img.shape[:2]
+            use_pat = pat_size or (src_w, src_h)
+            use_ref = ref_size or base_size
+            if (src_w, src_h) != use_pat:
+                img = cv2.resize(img, use_pat, interpolation=cv2.INTER_LINEAR)
+            M_scaled = _scaled_affine(M, use_ref, use_pat)
+            return cv2.warpAffine(img, M_scaled, use_ref,
                                   flags=cv2.INTER_LINEAR,
                                   borderMode=cv2.BORDER_CONSTANT,
                                   borderValue=0)
@@ -1022,6 +1075,8 @@ def login_view(request):
             return JsonResponse({'ok': False, 'error': 'Mot de passe incorrect', 'error_type': 'invalid_password'}, status=401)
 
         login(request, user)
+        # Ensure normal login clears any leftover emergency session flag.
+        request.session.pop('emergency_access', None)
         request.session['username'] = user.username
 
         profile = DoctorProfile.objects.filter(user=user).first()
@@ -1431,6 +1486,14 @@ def align(request):
         tform = {'M': M.tolist()}
         print(f"Yassmine RANSAC OK — inliers: {int(inliers.sum()) if inliers is not None else '?'} for job_id: {job_id}")
 
+    # Store sizes to scale transforms back to original resolution later
+    tform = dict(tform)
+    tform.update({
+        'ref_size': [int(ref_w0), int(ref_h0)],
+        'pat_size': [int(pat_w0), int(pat_h0)],
+        'target_size': [int(target_w), int(target_h)],
+    })
+
     warped = cv2.warpAffine(pat, M, (512, 512), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
     if job_id not in JOBS:
         JOBS[job_id] = {
@@ -1488,6 +1551,14 @@ def align(request):
         else:
             tform = {'M': M.tolist()}
             print(f"Yassmine RANSAC OK — inliers: {int(inliers.sum()) if inliers is not None else '?'} for job_id: {job_id}")
+
+        # Store sizes to scale transforms back to original resolution later
+        tform = dict(tform)
+        tform.update({
+            'ref_size': [int(ref_w0), int(ref_h0)],
+            'pat_size': [int(pat_w0), int(pat_h0)],
+            'target_size': [int(target_w), int(target_h)],
+        })
 
         warped = cv2.warpAffine(pat, M, (512, 512), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
         if job_id not in JOBS:
@@ -1615,6 +1686,11 @@ def auto_align(request):
             print(f"Yassmine now the auto_align FAILED - image files not found on disk")
             return JsonResponse({'error': 'image files not found'}, status=404)
 
+        ref_img = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
+        pat_img = cv2.imread(pat_path, cv2.IMREAD_GRAYSCALE)
+        ref_h0, ref_w0 = ref_img.shape[:2] if ref_img is not None else (0, 0)
+        pat_h0, pat_w0 = pat_img.shape[:2] if pat_img is not None else (0, 0)
+
         job_dir = os.path.join(UPLOAD_DIR, job_id)
         auto_dir = os.path.join(job_dir, 'auto_registration')
 
@@ -1699,7 +1775,10 @@ def auto_align(request):
             "transform_type": transform_type,
             "transform_file": os.path.relpath(transform_path, UPLOAD_DIR) if transform_path else None,
             "warped_file": os.path.relpath(warped_path, UPLOAD_DIR),
-            "metrics": metrics
+            "metrics": metrics,
+            "ref_size": [int(ref_w0), int(ref_h0)],
+            "pat_size": [int(pat_w0), int(pat_h0)],
+            "target_size": [512, 512],
         }
 
         try:
@@ -1793,7 +1872,7 @@ def upload_series(request):
             'message': "Tu dois faire l'alignement d'abord. Clique sur 'Aligner' pour calculer la transformation."
         }, status=404)
 
-    M = affine_from_tform(tform)
+    warp_fn = _get_warp_from_tform(tform, UPLOAD_DIR)
 
     upload_dir = os.path.join(UPLOAD_DIR, job_id, 'series')
     if os.path.exists(upload_dir):
@@ -2591,15 +2670,54 @@ def mri_file_preview(request, file_id):
     if not abs_path or not os.path.exists(abs_path):
         return JsonResponse({'ok': False, 'error': 'Fichier introuvable.'}, status=404)
 
+    name_lower = abs_path.lower()
+
+    # Pour les images classiques, on sert le fichier directement sans ré-encodage
+    if name_lower.endswith(('.jpg', '.jpeg')):
+        with open(abs_path, 'rb') as f:
+            return HttpResponse(f.read(), content_type='image/jpeg')
+    if name_lower.endswith('.png'):
+        with open(abs_path, 'rb') as f:
+            return HttpResponse(f.read(), content_type='image/png')
+    if name_lower.endswith(('.bmp', '.tiff', '.tif')):
+        image = read_gray_image(abs_path)
+        if image is None:
+            return JsonResponse({'ok': False, 'error': 'Impossible de lire l\'image.'}, status=500)
+        image_u8 = np.clip(image, 0, 255).astype(np.uint8)
+        ok, encoded = cv2.imencode('.png', image_u8)
+        if not ok:
+            return JsonResponse({'ok': False, 'error': 'Echec encodage preview PNG.'}, status=500)
+        return HttpResponse(encoded.tobytes(), content_type='image/png')
+
+    # Pour les NIfTI : extraire la coupe axiale centrale
+    if name_lower.endswith('.nii') or name_lower.endswith('.nii.gz'):
+        try:
+            import nibabel as nib
+            img = nib.load(abs_path)
+            data = img.get_fdata()
+            if data.ndim == 4:
+                data = data[..., 0]
+            mid = data.shape[2] // 2
+            slice_2d = data[:, :, mid]
+            slice_2d = np.rot90(slice_2d)
+            vmin, vmax = np.percentile(slice_2d[slice_2d > 0], [1, 99]) if slice_2d.any() else (0, 1)
+            slice_norm = np.clip((slice_2d - vmin) / max(vmax - vmin, 1e-6), 0, 1)
+            slice_u8 = (slice_norm * 255).astype(np.uint8)
+            ok, encoded = cv2.imencode('.png', slice_u8)
+            if not ok:
+                return JsonResponse({'ok': False, 'error': 'Echec encodage NIfTI preview.'}, status=500)
+            return HttpResponse(encoded.tobytes(), content_type='image/png')
+        except Exception as e:
+            return JsonResponse({'ok': False, 'error': f'Lecture NIfTI échouée : {e}'}, status=500)
+
+    # Fallback générique
     image = read_gray_image(abs_path)
     if image is None:
-        return JsonResponse({'ok': False, 'error': 'Impossible de lire l\'image.'}, status=500)
-
+        return JsonResponse({'ok': False, 'error': 'Format non supporté pour preview.'}, status=415)
     image_u8 = np.clip(image, 0, 255).astype(np.uint8)
     ok, encoded = cv2.imencode('.png', image_u8)
     if not ok:
         return JsonResponse({'ok': False, 'error': 'Echec encodage preview PNG.'}, status=500)
-
     return HttpResponse(encoded.tobytes(), content_type='image/png')
 
 
@@ -3623,6 +3741,33 @@ def _build_report_pdf(run, modelisation):
 @api_view(['POST'])
 @authentication_classes([CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
+def segmentation_run_finalize(request, run_id):
+    """Finalise un run de segmentation sans reconstruction 3D.
+    Vérifie que le run est bien status='done' et retourne les infos de base
+    pour confirmation côté frontend."""
+    run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
+    if run.status not in ('done', 'running'):
+        return JsonResponse({'ok': False, 'error': 'Run introuvable ou déjà échoué.'}, status=400)
+
+    if run.status == 'running':
+        run.status = 'done'
+        run.completed_at = timezone.now()
+        run.save(update_fields=['status', 'completed_at'])
+
+    return JsonResponse({
+        'ok': True,
+        'run_id': run.id,
+        'patient_id': run.patient_id,
+        'processed_count': run.processed_count or 0,
+        'model_key': run.model_key or '',
+        'completed_at': run.completed_at.isoformat() if run.completed_at else None,
+    })
+
+
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
 def segmentation_run_report_pdf(request, run_id):
     run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
     if run.status != 'done':
@@ -3852,8 +3997,7 @@ def apply_tform_to_series(request):
                     img = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)
                     if img is None:
                         continue
-                    img = cv2.resize(img, (512, 512))
-                    warped = cv2.warpAffine(img, M, (512, 512))
+                    warped = warp_fn(img)
                     temp_img_path = os.path.join(temp_dir, filename)
                     cv2.imwrite(temp_img_path, warped)
                     zipf.write(temp_img_path, filename)
@@ -4006,7 +4150,6 @@ def apply_to_patient_series(request):
                     img = cv2.imread(mri.file.path, cv2.IMREAD_GRAYSCALE)
                     if img is None:
                         return None
-                    img = cv2.resize(img, (512, 512), interpolation=cv2.INTER_LINEAR)
                     out_path = os.path.join(ref_dir, f'ref_{mri.id}_{mri.original_filename}')
                     cv2.imwrite(out_path, img)
                     thumb = cv2.resize(img, (THUMB_SIZE, THUMB_SIZE), interpolation=cv2.INTER_AREA)
@@ -4959,19 +5102,23 @@ def _dashboard_patient_payload(patient):
     mri_files = list(patient.mri_files.all())
     slices_count = len(mri_files)
     last_exam = None
-    
+
     has_2d = False
     has_nifti = False
-    
+
     extensions_2d = {'.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp'}
     extensions_nifti = {'.nii', '.gz'}
-    
+
+    registration_files = []
+
     for f in mri_files:
         fname = f.original_filename.lower()
         if any(fname.endswith(ext) for ext in extensions_2d):
             has_2d = True
         if any(fname.endswith(ext) for ext in extensions_nifti):
             has_nifti = True
+        if f.file_type == 'analysis':
+            registration_files.append(f)
 
     age = None
     if patient.date_naissance:
@@ -4979,11 +5126,17 @@ def _dashboard_patient_payload(patient):
         age = today.year - patient.date_naissance.year - ((today.month, today.day) < (patient.date_naissance.month, patient.date_naissance.day))
 
     if slices_count > 0:
-        # Use latest uploaded MRI file as last exam proxy for dashboard cards.
         dated_rows = [row for row in mri_files if row.uploaded_at]
         if dated_rows:
             last_row = max(dated_rows, key=lambda row: row.uploaded_at)
             last_exam = last_row.uploaded_at.isoformat()
+
+    has_registration = len(registration_files) > 0
+    last_registration_date = None
+    if has_registration:
+        dated_reg = [r for r in registration_files if r.uploaded_at]
+        if dated_reg:
+            last_registration_date = max(dated_reg, key=lambda r: r.uploaded_at).uploaded_at.isoformat()
 
     return {
         'id': patient.id,
@@ -4999,6 +5152,9 @@ def _dashboard_patient_payload(patient):
         'slices_count': slices_count,
         'last_exam': last_exam,
         'created_at': patient.created_at.isoformat() if patient.created_at else None,
+        'has_registration': has_registration,
+        'last_registration_date': last_registration_date,
+        'registration_count': len(registration_files),
     }
 
 

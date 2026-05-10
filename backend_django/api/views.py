@@ -91,9 +91,6 @@ from .serializers import (
     PatientImageSerializer, OrientationSerializer
 )
 # auto_registration (ANTs) supprimé — MINE uniquement
-from .mine_registration import run_mine_registration
-from .segmentation_inference import run_segmentation_on_files
-from .modelisation_3d import run_modelisation_3d, parse_spacing, parse_reference_values
 
 # Setup logging - just flush stdout for real-time output
 sys.stdout.flush()
@@ -1629,6 +1626,8 @@ def auto_align(request):
         def on_progress(pct: int, msg: str):
             _emit_registration_progress(job_id, pct, 'optimisation', msg)
         
+        from .mine_registration import run_mine_registration
+
         result = run_mine_registration(
             ref_path,
             pat_path,
@@ -2200,6 +2199,29 @@ def project_brodmann(request):
     return HttpResponse(buf.tobytes(), content_type='image/png')
 
 
+def _brodmann_reference_nom_band_for_age(age_years):
+    """
+    Âge du patient -> ReferenceIntensity.nom (sujet1..sujet5) + libellé tranche.
+    Retourne (nom, libelle_fr, erreur_detail) ; si erreur_detail est non vide, rejeter la requête.
+    """
+    if age_years is None:
+        return None, None, (
+            'La date de naissance du patient est absente sur la fiche dossier. '
+            "Renseignez-la pour comparer aux normes d'intensité par tranche d'âge."
+        )
+    if age_years < 16:
+        return 'sujet1', 'moins de 16 ans (référence jeune adulte)', None
+    if 16 <= age_years <= 24:
+        return 'sujet1', '16-24 ans', None
+    if 25 <= age_years <= 54:
+        return 'sujet2', '25-54 ans', None
+    if 55 <= age_years <= 64:
+        return 'sujet3', '55-64 ans', None
+    if 65 <= age_years <= 75:
+        return 'sujet4', '65-75 ans', None
+    return 'sujet5', 'plus de 75 ans', None
+
+
 @api_view(['GET'])
 @authentication_classes([CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
@@ -2212,11 +2234,13 @@ def brodmann_intensity(request):
       zone_number (int) : indice Harvard–Oxford (identification).
       analyse_id (int, optionnel) : volume archivé (modèle Analyse).
       job_id (str, optionnel) : session de recalage (même volume que les coupes affichées).
+      patient_id (int, requis avec job_id) : dossier patient pour l'âge -> sujet1..sujet5.
 
     Fournir analyse_id ou job_id ; si les deux sont présents, analyse_id est utilisé.
 
     Réponse : sommes brutes, ratio brut (souvent non interprétable), et champs
     ratio_relative_percent / moyennes par zone lorsque le fichier IRM du sujet de référence est lisible.
+    reference_nom / reference_age_band_fr / patient_age_years selon la tranche.
     """
     qp = request.query_params
     analyse_raw = qp.get('analyse_id')
@@ -2247,13 +2271,53 @@ def brodmann_intensity(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # ── Référence d'intensité : lecture BDD uniquement (pas de NIfTI) ───────
-    ref_row = ReferenceIntensity.objects.order_by('-date_creation').first()
+    # ── Patient lié (âge -> référence sujet1 .. sujet5) ───────────────────────
+    analyse = None
+    if use_analyse:
+        analyse = get_object_or_404(
+            Analyse.objects.select_related('patient'),
+            pk=analyse_id,
+            patient__doctor=request.user,
+        )
+        patient_for_age = analyse.patient
+    else:
+        patient_pid_raw = (qp.get('patient_id') or '').strip()
+        if not patient_pid_raw:
+            return Response(
+                {
+                    'detail': (
+                        "Indiquez le patient (patient_id) pour choisir la référence "
+                        "d'intensité selon l'âge."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            patient_pid = int(patient_pid_raw)
+        except (TypeError, ValueError):
+            return Response(
+                {'detail': 'patient_id invalide.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        patient_for_age = get_object_or_404(
+            Patient,
+            pk=patient_pid,
+            doctor=request.user,
+        )
+
+    age_years = _compute_age(getattr(patient_for_age, 'date_naissance', None))
+    ref_nom, ref_band_fr, age_err = _brodmann_reference_nom_band_for_age(age_years)
+    if age_err:
+        return Response({'detail': age_err}, status=status.HTTP_400_BAD_REQUEST)
+
+    ref_row = ReferenceIntensity.objects.filter(nom=ref_nom).first()
     if ref_row is None:
         return Response(
             {
-                'detail': 'Aucune ReferenceIntensity en base. Exécuter : '
-                'python manage.py runscript setup_reference_intensity',
+                'detail': (
+                    f'Aucune référence d\'intensité « {ref_nom} » en base pour la tranche « {ref_band_fr} ». '
+                    'Enregistrez ce sujet via setup_reference_intensity (REFERENCE_INTENSITY_NOM).'
+                ),
             },
             status=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
@@ -2261,7 +2325,12 @@ def brodmann_intensity(request):
     key = str(zone_number)
     if key not in (ref_row.brodmann_intensities or {}):
         return Response(
-            {'detail': f'Zone {zone_number} absente du JSON de référence (relancer runscript setup_reference_intensity si besoin).'},
+            {
+                'detail': (
+                    f'Zone {zone_number} absente pour la référence {ref_nom} '
+                    '(relancer setup_reference_intensity pour ce sujet si besoin).'
+                ),
+            },
             status=status.HTTP_404_NOT_FOUND,
         )
     somme_reference = float(ref_row.brodmann_intensities[key])
@@ -2278,11 +2347,6 @@ def brodmann_intensity(request):
         )
 
     if use_analyse:
-        analyse = get_object_or_404(
-            Analyse.objects.select_related('patient'),
-            pk=analyse_id,
-            patient__doctor=request.user,
-        )
         try:
             patient_path = analyse.mri_registered.path
         except Exception:
@@ -2434,6 +2498,9 @@ def brodmann_intensity(request):
         'reference_brain_mean': reference_brain_mean,
         'patient_relative_index': patient_rel_index,
         'reference_relative_index': reference_rel_index,
+        'reference_nom': ref_nom,
+        'reference_age_band_fr': ref_band_fr,
+        'patient_age_years': age_years,
     })
 
 
@@ -2657,6 +2724,7 @@ def launch_patient_segmentation(request, patient_id):
     )
 
     try:
+        from .segmentation_inference import run_segmentation_on_files
         results = run_segmentation_on_files(mri_files, model_key=model, threshold=threshold)
 
         created_results = []
@@ -2914,6 +2982,7 @@ def segmentation_run_resegment_masks(request, run_id):
     mri_files = [row.mri_file for row in mask_rows]
 
     try:
+        from .segmentation_inference import run_segmentation_on_files
         results = run_segmentation_on_files(mri_files, model_key=model, threshold=float(run.threshold))
     except FileNotFoundError as e:
         return JsonResponse({'ok': False, 'error': str(e)}, status=500)
@@ -2969,6 +3038,8 @@ def segmentation_run_modelisation_3d(request, run_id):
     structure = str(request.data.get('structure') or 'both').strip().lower()
     quality = str(request.data.get('quality') or 'standard').strip().lower()
     smoothing = str(request.data.get('smoothing') or 'low').strip().lower()
+
+    from .modelisation_3d import run_modelisation_3d, parse_spacing, parse_reference_values
 
     spacing = parse_spacing(
         {
@@ -3631,6 +3702,8 @@ def segmentation_run_report_pdf(request, run_id):
     structure = str(request.data.get('structure') or 'both').strip().lower()
     quality = str(request.data.get('quality') or 'standard').strip().lower()
     smoothing = str(request.data.get('smoothing') or 'low').strip().lower()
+    from .modelisation_3d import run_modelisation_3d, parse_spacing, parse_reference_values
+
     spacing = parse_spacing(
         {
             'spacing_z': request.data.get('spacing_z'),
@@ -4306,7 +4379,6 @@ def emergency_stage_patient(request):
         return JsonResponse({'ok': False, 'error': 'Au moins un fichier est requis.'}, status=400)
 
     dossier_number = _next_dossier_number()
-    from datetime import date as _date
 
     try:
         with transaction.atomic():
@@ -4314,7 +4386,7 @@ def emergency_stage_patient(request):
                 dossier_number=dossier_number,
                 nom='Urgence',
                 prenom='Import',
-                date_naissance=_date(1990, 1, 1),
+                date_naissance=None,
                 sexe='M',
                 doctor=request.user,
                 emergency_temp=True,
@@ -4980,8 +5052,10 @@ def patients_list_create(request):
                 return JsonResponse({'ok': False, 'error': 'Format de date invalide (attendu : YYYY-MM-DD).'}, status=400)
 
         date_naissance_val = (raw_data.get('date_naissance') or '').strip()
-        if not date_naissance_val:
-            return JsonResponse({'ok': False, 'error': 'La date de naissance est obligatoire.'}, status=400)
+        date_naissance_for_model = None
+        if date_naissance_val:
+            from datetime import date as _date
+            date_naissance_for_model = _date.fromisoformat(date_naissance_val)
 
         sexe_val = (raw_data.get('sexe') or '').strip()
         if sexe_val not in ('M', 'F'):
@@ -4997,7 +5071,7 @@ def patients_list_create(request):
             'dossier_number': dossier_number,
             'nom': (raw_data.get('nom') or 'Patient').strip(),
             'prenom': (raw_data.get('prenom') or dossier_number).strip(),
-            'date_naissance': date_naissance_val,
+            'date_naissance': date_naissance_for_model,
             'sexe': sexe_val,
             'telephone': raw_data.get('telephone') or None,
             'email': raw_data.get('email') or None,

@@ -64,6 +64,9 @@ interface BrodmannIntensityPayload {
   reference_brain_mean?: number | null;
   patient_relative_index?: number;
   reference_relative_index?: number | null;
+  reference_nom?: string;
+  reference_age_band_fr?: string;
+  patient_age_years?: number | null;
 }
 
 export function RegistrationPage({ user, accessToken, onNavigate }: RegistrationPageProps) {
@@ -286,6 +289,11 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const splitDragRef       = useRef(false);
   const superpositionPanelRef = useRef<HTMLDivElement>(null);
 
+  const brodmannPatientIdForIntensity = React.useMemo(() => {
+    const p = confirmedPanelPatients.patient ?? confirmedPanelPatients.reference;
+    return typeof p?.id === 'number' && !Number.isNaN(p.id) ? p.id : null;
+  }, [confirmedPanelPatients.patient, confirmedPanelPatients.reference]);
+
   const loadBrodmannIntensity = useCallback(
     async (zoneNumber: number) => {
       const useJob = brodmannAnalyseId == null && jobId;
@@ -296,6 +304,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         const { data } = await getBrodmannIntensity({
           analyseId: brodmannAnalyseId ?? undefined,
           jobId: useJob ? jobId : undefined,
+          patientId: brodmannAnalyseId != null ? undefined : brodmannPatientIdForIntensity ?? undefined,
           zoneNumber,
         });
         setBrodmannIntensityStats(data as BrodmannIntensityPayload);
@@ -310,7 +319,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         setBrodmannIntensityLoading(false);
       }
     },
-    [brodmannAnalyseId, jobId]
+    [brodmannAnalyseId, jobId, brodmannPatientIdForIntensity]
   );
 
   /** Recalcule les intensités quand la zone ou l’analyse MNI devient disponible (évite le clic « trop tôt » avant la fin du chargement auto de l’id). */
@@ -4279,6 +4288,19 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                     loading={brodmannIntensityLoading}
                     error={brodmannIntensityError}
                     analyseAvailable={brodmannAnalyseId != null || (jobId != null && jobId !== '')}
+                    referenceLabel={
+                      brodmannIntensityStats?.reference_nom
+                        ? `Référence (${brodmannIntensityStats.reference_nom}${
+                            brodmannIntensityStats.reference_age_band_fr
+                              ? `, ${brodmannIntensityStats.reference_age_band_fr}`
+                              : ''
+                          }${
+                            brodmannIntensityStats.patient_age_years != null
+                              ? ` — patient ${brodmannIntensityStats.patient_age_years} ans`
+                              : ''
+                          })`
+                        : 'Référence (selon âge du patient)'
+                    }
                   />
                   <BrodmannZone3D
                     labelId={zone?.id ?? null}

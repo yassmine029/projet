@@ -72,12 +72,13 @@ export const projectBrodmann = (atlasJobId, atlasRelpath, patientJobId, patientR
     atlasJobId, atlasRelpath, patientJobId, patientRelpath, x, y, tolerance
   }, { responseType: "blob" });
 
-/** Sommes d'intensité Brodmann : volume MNI patient (Analyse ou session job_id) vs ReferenceIntensity en BDD */
-export const getBrodmannIntensity = ({ analyseId, jobId, zoneNumber }) => {
+/** Sommes d'intensité Brodmann : volume MNI patient (Analyse ou session job_id) vs ReferenceIntensity en BDD (sujet1..5 selon âge) */
+export const getBrodmannIntensity = ({ analyseId, jobId, patientId, zoneNumber }) => {
   const params = { zone_number: zoneNumber };
   if (analyseId != null && analyseId !== '') params.analyse_id = analyseId;
   const j = jobId != null ? String(jobId).trim() : '';
   if (j) params.job_id = j;
+  if (patientId != null && patientId !== "") params.patient_id = patientId;
   if (params.analyse_id == null && !params.job_id) {
     return Promise.reject(new Error('analyseId ou jobId requis'));
   }

@@ -88,6 +88,9 @@ interface BrodmannIntensityPayload {
   reference_brain_mean?: number | null;
   patient_relative_index?: number;
   reference_relative_index?: number | null;
+  reference_nom?: string;
+  reference_age_band_fr?: string;
+  patient_age_years?: number | null;
 }
 
 export type ExplorationPageProps = {
@@ -210,6 +213,7 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
         const { data } = await getBrodmannIntensity({
           analyseId: brodmannAnalyseId ?? undefined,
           jobId: useJob ? jobId : undefined,
+          patientId: brodmannAnalyseId != null ? undefined : explorerPatientId ?? undefined,
           zoneNumber,
         });
         setBrodmannIntensityStats(data as BrodmannIntensityPayload);
@@ -224,7 +228,7 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
         setBrodmannIntensityLoading(false);
       }
     },
-    [brodmannAnalyseId, jobId]
+    [brodmannAnalyseId, jobId, explorerPatientId]
   );
 
   useEffect(() => {
@@ -610,6 +614,19 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
               loading={brodmannIntensityLoading}
               error={brodmannIntensityError}
               analyseAvailable={brodmannAnalyseId != null || (jobId != null && jobId !== '')}
+              referenceLabel={
+                brodmannIntensityStats?.reference_nom
+                  ? `Référence (${brodmannIntensityStats.reference_nom}${
+                      brodmannIntensityStats.reference_age_band_fr
+                        ? `, ${brodmannIntensityStats.reference_age_band_fr}`
+                        : ''
+                    }${
+                      brodmannIntensityStats.patient_age_years != null
+                        ? ` — patient ${brodmannIntensityStats.patient_age_years} ans`
+                        : ''
+                    })`
+                  : 'Référence (selon âge du patient)'
+              }
             />
           </div>
 

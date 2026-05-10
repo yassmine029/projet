@@ -5,8 +5,43 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 # Réduit la fragmentation VRAM sur petites cartes (ex. 2 Go).
 $env:PYTORCH_CUDA_ALLOC_CONF = 'expandable_segments:True'
 
-$torchCk = & "$here\.venv\Scripts\python.exe" -c "import torch; print('PyTorch', torch.__version__, '| cuda.is_available=', torch.cuda.is_available(), '| device_count=', torch.cuda.device_count() if torch.cuda.is_available() else 0)" 2>&1
-Write-Host "[run-dev] $torchCk"
+# Charge les variables de .env (DB_*, EMAIL_*, etc.) pour éviter les erreurs de connexion locale.
+$envFile = Join-Path $here '.env'
+if (Test-Path $envFile) {
+    Get-Content $envFile | ForEach-Object {
+        $line = $_.Trim()
+        if (-not $line -or $line.StartsWith('#')) { return }
+        $parts = $line -split '=', 2
+        if ($parts.Count -ne 2) { return }
+        $k = $parts[0].Trim()
+        $v = $parts[1].Trim().Trim('"').Trim("'")
+        if ($k) {
+            [Environment]::SetEnvironmentVariable($k, $v, 'Process')
+        }
+    }
+    Write-Host "[run-dev] Variables chargees depuis .env"
+}
+
+# Le check torch peut parfois se figer sur certaines configs GPU/driver.
+# On l'encapsule dans un job avec timeout pour ne jamais bloquer le lancement serveur.
+$torchScript = "import torch; print('PyTorch', torch.__version__, '| cuda.is_available=', torch.cuda.is_available(), '| device_count=', torch.cuda.device_count() if torch.cuda.is_available() else 0)"
+$torchJob = Start-Job -ScriptBlock {
+    param([string]$pythonExe, [string]$script)
+    & $pythonExe -c $script 2>&1
+} -ArgumentList "$here\.venv\Scripts\python.exe", $torchScript
+
+if (Wait-Job -Job $torchJob -Timeout 12) {
+    $torchCk = ((Receive-Job -Job $torchJob) | Out-String).Trim()
+    if ($torchCk) {
+        Write-Host "[run-dev] $torchCk"
+    } else {
+        Write-Host "[run-dev] Torch check terminé (sortie vide)."
+    }
+} else {
+    Stop-Job -Job $torchJob -ErrorAction SilentlyContinue | Out-Null
+    Write-Host "[run-dev] Torch check timeout (>12s). Démarrage du serveur sans blocage..." -ForegroundColor Yellow
+}
+Remove-Job -Job $torchJob -Force -ErrorAction SilentlyContinue | Out-Null
 
 function Test-PortHasListener {
     param([int]$Port)

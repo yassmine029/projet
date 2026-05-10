@@ -15,8 +15,6 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from rest_framework.decorators import api_view
 from .utils.volume_utils import extract_slice, MAX_FILE_SIZE_BYTES
-from .volume_mine_3d_registration import run_mine_3d_nifti
-from .volume_mine_3d_hybrid import run_mine_3d_hybrid
 
 try:
     from asgiref.sync import async_to_sync
@@ -39,6 +37,17 @@ except Exception:
 
 VOLUMES_CACHE: Dict[str, dict] = {}
 JOBS_ROOT_DIR = os.path.join(tempfile.gettempdir(), 'visionmed_volume_jobs')
+
+
+def _get_volume_registration_fns():
+    """
+    Lazy import des moteurs MINE 3D.
+    Evite de bloquer le demarrage Django si torch/cuda met du temps a s'initialiser.
+    """
+    from .volume_mine_3d_registration import run_mine_3d_nifti
+    from .volume_mine_3d_hybrid import run_mine_3d_hybrid
+
+    return run_mine_3d_nifti, run_mine_3d_hybrid
 
 
 def _emit_registration_progress(job_id: str, progress: int, stage: str, message: str, status: str = 'processing'):
@@ -2646,6 +2655,7 @@ def mine_register_nifti_for_reference_pipeline(
         affine=VOLUMES_CACHE['atlas'].get('affine'),
     )
 
+    run_mine_3d_nifti, run_mine_3d_hybrid = _get_volume_registration_fns()
     _reg_fn = run_mine_3d_hybrid if use_hybrid else run_mine_3d_nifti
     _hybrid_kwargs: Dict[str, Any] = dict(base=16, max_disp=0.05) if use_hybrid else {}
     result = _reg_fn(
@@ -2787,6 +2797,7 @@ def auto_align_volume(request):
             def _on_p2p_progress(tp, msg):
                 _emit_registration_progress(job_id, 12 + int(max(0, min(100, int(tp))) * 0.80), 'optimisation', msg)
 
+            run_mine_3d_nifti, run_mine_3d_hybrid = _get_volume_registration_fns()
             _reg_fn_p2p = run_mine_3d_hybrid if use_hybrid else run_mine_3d_nifti
             _hybrid_kwargs_p2p = dict(base=16, max_disp=0.05) if use_hybrid else {}
             result_p2p = _reg_fn_p2p(
@@ -3027,6 +3038,7 @@ def auto_align_volume(request):
             overall = 12 + int(max(0, min(100, int(train_progress))) * 0.80)
             _emit_registration_progress(job_id, overall, 'optimisation', msg)
 
+        run_mine_3d_nifti, run_mine_3d_hybrid = _get_volume_registration_fns()
         _reg_fn = run_mine_3d_hybrid if use_hybrid else run_mine_3d_nifti
         _hybrid_kwargs = dict(base=16, max_disp=0.05) if use_hybrid else {}
         result = _reg_fn(

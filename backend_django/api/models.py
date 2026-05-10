@@ -198,7 +198,7 @@ class Patient(models.Model):
     dossier_number = models.CharField(max_length=50, unique=True, validators=[dossier_number_regex])
     nom = models.CharField(max_length=100)
     prenom = models.CharField(max_length=100)
-    date_naissance = models.DateField()
+    date_naissance = models.DateField(blank=True, null=True)
     sexe = models.CharField(max_length=1, choices=SEX_CHOICES)
     telephone = models.CharField(max_length=30, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)

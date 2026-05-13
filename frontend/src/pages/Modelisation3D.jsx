@@ -35,8 +35,7 @@ function StatusBadge({ tone, label }) {
 function getAiStatus(value) {
   const v = Math.abs(Number(value || 0));
   if (v <= 10) return { label: 'Normal', tone: 'ok', shortRule: '<= 10%' };
-  if (v <= 20) return { label: 'Alerte', tone: 'warn', shortRule: '10-20%' };
-  return { label: 'Eleve', tone: 'danger', shortRule: '> 20%' };
+  return { label: 'Asymétrie significative', tone: 'danger', shortRule: '> 10%' };
 }
 
 function getNiStatus(value) {
@@ -116,24 +115,40 @@ function InfoPopover({ title, formula, variables, clinicalContext, threshold }) 
   );
 }
 
-function AIGauge({ value, interpretation }) {
+function AIGauge({ value, interpretation, leftVol, rightVol }) {
   const v = Math.abs(Number(value || 0));
   const status = getAiStatus(v);
-  const percent = clamp(v / 40, 0, 1);
+  // Jauge sur 30% max, seuil à 10%
+  const percent = clamp(v / 30, 0, 1);
+  const thresholdPct = (10 / 30) * 100;
 
-  const sc = status.tone === 'ok'
+  const isNormal = v <= 10;
+  const sc = isNormal
     ? { text: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-200', strip: 'from-emerald-400 to-emerald-500', ring: 'ring-emerald-200' }
-    : status.tone === 'warn'
-      ? { text: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-200', strip: 'from-amber-400 to-orange-400', ring: 'ring-amber-200' }
-      : { text: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200', strip: 'from-red-500 to-rose-600', ring: 'ring-red-200' };
+    : { text: 'text-red-600',     bg: 'bg-red-50',     border: 'border-red-200',     strip: 'from-red-500 to-rose-600',       ring: 'ring-red-200'     };
 
-  const valLabel = v <= 10 ? 'Asymétrie non significative' : v <= 20 ? 'Asymétrie modérée' : v <= 30 ? 'Asymétrie marquée' : 'Asymétrie sévère';
+  // Côté atrophié = celui dont le volume est inférieur
+  const lv = Number(leftVol || 0);
+  const rv = Number(rightVol || 0);
+  const atrophySide = !isNormal && lv > 0 && rv > 0
+    ? (lv < rv ? 'gauche' : 'droit')
+    : null;
 
   const legend = [
-    { range: '0 – 10 %',  label: 'Asymétrie non significative', ref: 'Pas de latéralisation · Normal',          dot: 'bg-emerald-400', active: v <= 10 },
-    { range: '10 – 20 %', label: 'Zone grise — Borderline',      ref: 'Équivoque · corrélation clinique requise', dot: 'bg-amber-400',   active: v > 10 && v <= 20 },
-    { range: '20 – 30 %', label: 'Suspicion MTLE',               ref: 'Sclérose hippocampique légère à modérée', dot: 'bg-orange-500',  active: v > 20 && v <= 30 },
-    { range: '> 30 %',    label: 'Forte évocation de HS / MTS',  ref: 'Argument pour chirurgie épilepsie',       dot: 'bg-red-500',     active: v > 30 },
+    {
+      range: '0 – 10 %',
+      label: 'Asymétrie non significative',
+      ref: 'Pas de latéralisation · Normal',
+      dot: 'bg-emerald-400',
+      active: isNormal,
+    },
+    {
+      range: '> 10 %',
+      label: atrophySide ? `Atrophie hippocampique ${atrophySide}` : 'Atrophie hippocampique',
+      ref: 'Réduction unilatérale significative',
+      dot: 'bg-red-500',
+      active: !isNormal,
+    },
   ];
 
   return (
@@ -154,38 +169,39 @@ function AIGauge({ value, interpretation }) {
         <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-3.5 py-2.5">
           <div className="flex items-start justify-between gap-2">
             <p className="text-[11px] leading-relaxed text-slate-600">
-              L'IA détermine quel lobe temporal est responsable des crises en quantifiant la
-              <span className="font-semibold text-slate-800"> réduction unilatérale du volume hippocampique</span>.
-              La plupart des patients MTLE présentent une réduction significative du côté du foyer épileptogène,
-              cohérente avec les études précédentes sur la volumétrie hippocampique.
+              L'IA quantifie la <span className="font-semibold text-slate-800">réduction unilatérale du volume hippocampique</span>.
+              Un IA &gt; 10 % indique une atrophie significative du côté dont le volume est inférieur
+              (Cendes et al., 1993 · Free et al., 1995).
             </p>
             <InfoPopover
               title="Indice d'Asymétrie (IA) — MTLE"
               formula="IA = |R − L| / ((R + L) / 2) × 100"
               variables="R : volume hippocampe droit (mm³) · L : volume hippocampe gauche (mm³). Résultat exprimé en pourcentage."
-              threshold="Un seuil de 10 % est utilisé pour considérer l'asymétrie comme significative (différenciation MTLE / sujets sains). Plusieurs études proposent un seuil de 10 à 15 %. L'IA calculé atteint un niveau de précision comparable à l'évaluation radiologique visuelle."
-              clinicalContext="Étude menée sur 15 sujets MTLE (10 MTLE confirmés, 1 non déclaré, 4 normaux). L'IA a été généré pour chaque sujet à partir des volumes droit et gauche calculés par segmentation DL. Note : les problèmes de latéralisation peuvent affecter la fiabilité de l'indice (Seghier et al.)."
+              threshold="Seuil clinique : 10 %. Au-delà, l'asymétrie est considérée significative — atrophie du côté au volume inférieur (Cendes et al. 1993, Free et al. 1995)."
+              clinicalContext="Classification simplifiée en 2 catégories : normale (≤ 10 %) et atrophie significative (> 10 %). Le côté atrophié est déterminé par comparaison directe des volumes gauche et droit."
             />
           </div>
         </div>
 
-        {/* Valeur + jauge */}
+        {/* Valeur + jauge 2 couleurs */}
         <div className="mt-5 flex items-center gap-5">
           <div className={`flex h-20 w-20 shrink-0 flex-col items-center justify-center rounded-2xl border-2 ${sc.border} ${sc.bg} ring-4 ${sc.ring}`}>
             <span className={`text-2xl font-black tabular-nums leading-none ${sc.text}`}>{v.toFixed(2)}</span>
             <span className={`mt-0.5 text-[11px] font-bold ${sc.text}`}>%</span>
           </div>
           <div className="flex-1 min-w-0">
-            <p className={`text-sm font-bold ${sc.text}`}>{valLabel}</p>
-            <p className="text-[10px] text-slate-400 mt-0.5">Seuil normal : &lt; 10 % · Seuil MTLE : &gt; 20 %</p>
+            <p className={`text-sm font-bold ${sc.text}`}>
+              {isNormal ? 'Asymétrie non significative' : atrophySide ? `Atrophie hippocampique ${atrophySide}` : 'Atrophie hippocampique'}
+            </p>
+            <p className="text-[10px] text-slate-400 mt-0.5">Seuil de significativité : 10 %</p>
             <div className="mt-3">
               <div className="relative h-4 w-full overflow-hidden rounded-full shadow-inner">
+                {/* 2 zones : vert 0-10%, rouge 10-30% */}
                 <div className="flex h-full w-full rounded-full">
-                  <div className="h-full w-1/4 bg-emerald-400" />
-                  <div className="h-full w-1/4 bg-amber-400" />
-                  <div className="h-full w-1/4 bg-orange-500" />
-                  <div className="h-full w-1/4 bg-red-500" />
+                  <div className="h-full bg-emerald-400" style={{ width: `${thresholdPct}%` }} />
+                  <div className="h-full flex-1 bg-red-500" />
                 </div>
+                {/* Marqueur valeur */}
                 <div
                   className="absolute top-1/2 z-10 h-6 w-1.5 -translate-y-1/2 rounded-sm border-2 border-white bg-slate-900 shadow-lg transition-[left] duration-500 ease-out"
                   style={{ left: `clamp(0px, calc(${percent * 100}% - 3px), calc(100% - 6px))` }}
@@ -193,13 +209,13 @@ function AIGauge({ value, interpretation }) {
                 />
               </div>
               <div className="mt-1 flex justify-between px-0.5 text-[9px] font-medium text-slate-400">
-                <span>0%</span><span>10%</span><span>20%</span><span>30%</span><span>40%</span>
+                <span>0%</span><span>10%</span><span>20%</span><span>30%</span>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Légende — même format que l'indice de normalisation */}
+        {/* Légende 2 lignes */}
         <div className="mt-5 space-y-1.5">
           <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Classification clinique (d'après la littérature)</p>
           {legend.map((item) => (
@@ -1487,57 +1503,36 @@ export default function Modelisation3D({ user = null }) {
                   </div>
                 </div>
 
-                {/* Spacing voxel */}
-                <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3.5">
-                  <label className="inline-flex cursor-pointer items-center gap-2.5">
-                    <input
-                      type="checkbox"
-                      name="knowsSpacing"
-                      checked={standardMode.knowsSpacing}
-                      onChange={handleChange}
-                      className="h-4 w-4 rounded border-slate-300 accent-blue-600"
-                    />
-                    <span className="text-sm font-semibold text-slate-700">Je connais le spacing voxel</span>
-                    <span className="text-[11px] text-slate-400">— dimensions physiques des pixels IRM (mm)</span>
-                  </label>
+                {/* Résolution voxel */}
+                <div className={`rounded-xl border transition-colors ${standardMode.knowsSpacing ? 'border-blue-200 bg-blue-50/40' : 'border-slate-200 bg-slate-50'}`}>
+                  <div className="flex items-center justify-between px-4 py-3.5">
+                    <div>
+                      <p className="text-sm font-bold text-slate-800">Résolution voxel IRM</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">Précisez les dimensions spatiales des voxels en mm</p>
+                    </div>
+                    <label className="relative inline-flex cursor-pointer items-center">
+                      <input
+                        type="checkbox"
+                        name="knowsSpacing"
+                        checked={standardMode.knowsSpacing}
+                        onChange={handleChange}
+                        className="sr-only peer"
+                      />
+                      <div className="h-5 w-9 rounded-full bg-slate-300 peer-checked:bg-blue-600 transition-colors after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow after:transition-all peer-checked:after:translate-x-4" />
+                    </label>
+                  </div>
                   {standardMode.knowsSpacing && (
-                    <div className="mt-3 grid grid-cols-3 gap-3">
-                      {[['spacingX','X'],['spacingY','Y'],['spacingZ','Z']].map(([name, axis]) => (
+                    <div className="border-t border-blue-100 px-4 pb-4 pt-3 grid grid-cols-3 gap-3">
+                      {[['spacingX', 'X — Largeur'], ['spacingY', 'Y — Hauteur'], ['spacingZ', 'Z — Épaisseur']].map(([name, label]) => (
                         <div key={name}>
-                          <label className="mb-1 block text-[10px] font-bold uppercase tracking-widest text-slate-400">Spacing {axis} (mm)</label>
-                          <input name={name} value={standardMode[name]} onChange={handleChange}
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20" />
+                          <label className="mb-1.5 block text-[10px] font-black uppercase tracking-widest text-slate-400">{label}</label>
+                          <div className="relative">
+                            <input name={name} value={standardMode[name]} onChange={handleChange}
+                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 pr-10 text-sm text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20" />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400">mm</span>
+                          </div>
                         </div>
                       ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Référence normative */}
-                <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3.5">
-                  <label className="inline-flex cursor-pointer items-center gap-2.5">
-                    <input
-                      type="checkbox"
-                      name="useCustomReference"
-                      checked={standardMode.useCustomReference}
-                      onChange={handleChange}
-                      className="h-4 w-4 rounded border-slate-300 accent-blue-600"
-                    />
-                    <span className="text-sm font-semibold text-slate-700">Référence normative personnalisée</span>
-                    <span className="text-[11px] text-slate-400">— pour le calcul NI / Z-score</span>
-                  </label>
-                  {standardMode.useCustomReference && (
-                    <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                      <div>
-                        <label className="mb-1 block text-[10px] font-bold uppercase tracking-widest text-slate-400">Volume moyen de référence (mm³)</label>
-                        <input name="normativeTotalMeanMm3" value={standardMode.normativeTotalMeanMm3} onChange={handleChange}
-                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20" />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-[10px] font-bold uppercase tracking-widest text-slate-400">Écart-type de référence (mm³)</label>
-                        <input name="normativeTotalStdMm3" value={standardMode.normativeTotalStdMm3} onChange={handleChange}
-                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20" />
-                      </div>
                     </div>
                   )}
                 </div>
@@ -1775,7 +1770,12 @@ export default function Modelisation3D({ user = null }) {
 
                   <div className="rounded-2xl border border-slate-200/60 bg-white p-6 shadow-card">
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                      <AIGauge value={aiValue} interpretation={mtleMeaning || aiMeaning} />
+                      <AIGauge
+                        value={aiValue}
+                        interpretation={mtleMeaning || aiMeaning}
+                        leftVol={modelingResult?.volumes_mm3?.left}
+                        rightVol={modelingResult?.volumes_mm3?.right}
+                      />
                       <NIGauge value={niValue} interpretation={niMeaning} />
                     </div>
 
@@ -2014,7 +2014,7 @@ export default function Modelisation3D({ user = null }) {
                           <p className="mt-0.5 text-[11px] text-slate-500">
                             {existingReport?.same_mri ? (
                               <span className="text-amber-700 font-semibold">
-                                Un résultat issu du même IRM est déjà enregistré dans le dossier patient (le {existingReport.created_at}). Inutile de l'enregistrer à nouveau.
+                                Ce modèle a déjà analysé cet IRM — rapport du {existingReport.created_at} déjà archivé. Utilisez un modèle différent pour une nouvelle analyse.
                               </span>
                             ) : existingReport ? (
                               <>Rapport archivé le <strong>{existingReport.created_at}</strong> par Dr. {existingReport.doctor_name}. Visible dans le dossier patient.</>

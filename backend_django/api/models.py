@@ -198,7 +198,7 @@ class Patient(models.Model):
     dossier_number = models.CharField(max_length=50, unique=True, validators=[dossier_number_regex])
     nom = models.CharField(max_length=100)
     prenom = models.CharField(max_length=100)
-    date_naissance = models.DateField()
+    date_naissance = models.DateField(blank=True, null=True)
     sexe = models.CharField(max_length=1, choices=SEX_CHOICES)
     telephone = models.CharField(max_length=30, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
@@ -234,9 +234,44 @@ class MRIFile(models.Model):
     image_width = models.PositiveIntegerField(null=True, blank=True)
     image_height = models.PositiveIntegerField(null=True, blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
+    # UUID partagé par tous les fichiers uploadés dans la même session (même IRM).
+    # Permet de distinguer l'IRM initial des IRM de suivi longitudinal.
+    acquisition_id = models.UUIDField(null=True, blank=True, db_index=True)
 
     def __str__(self):
         return f"{self.original_filename} for {self.patient.dossier_number}"
+
+
+class VolumeRegistrationJob(models.Model):
+    STATUS_CHOICES = [
+        ('uploaded', 'Uploadé'),
+        ('processing', 'En cours'),
+        ('pending_validation', 'En attente de validation'),
+        ('validated', 'Validé'),
+        ('rejected', 'Rejeté'),
+    ]
+
+    job_id = models.UUIDField(default=uuid.uuid4, unique=True, db_index=True)
+    patient = models.ForeignKey(
+        Patient, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='volume_jobs'
+    )
+    user = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True,
+        related_name='volume_jobs'
+    )
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='uploaded')
+    patient_volume_path = models.CharField(max_length=512, blank=True)
+    registered_volume_path = models.CharField(max_length=512, blank=True)
+    registration_metrics = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"VolumeJob {self.job_id} ({self.status})"
 
 
 class ReferenceIntensity(models.Model):

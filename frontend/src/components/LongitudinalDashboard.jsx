@@ -7,10 +7,18 @@ import {
 import {
   TrendingDown, TrendingUp, Minus, Activity, Brain,
   Calendar, AlertTriangle, ChevronRight, Loader2, BarChart2,
-  Info, ImagePlus, PlusCircle,
+  Info, ImagePlus, PlusCircle, Cpu,
 } from 'lucide-react';
 import api from '../api';
 import ClinicalAISummary from './ClinicalAISummary';
+
+// ── Configuration des modèles ──────────────────────────────────────────────────
+const MODEL_CONFIG = {
+  unetpp:    { label: 'Modèle 1', short: 'M1', cls: 'bg-blue-100 text-blue-700 border-blue-200',    dot: 'bg-blue-500' },
+  nnunet:    { label: 'Modèle 2', short: 'M2', cls: 'bg-violet-100 text-violet-700 border-violet-200', dot: 'bg-violet-500' },
+  swinunetr: { label: 'Modèle 3', short: 'M3', cls: 'bg-emerald-100 text-emerald-700 border-emerald-200', dot: 'bg-emerald-500' },
+};
+const modelCfg = (key) => MODEL_CONFIG[key] || { label: key || 'Modèle', short: '?', cls: 'bg-slate-100 text-slate-600 border-slate-200', dot: 'bg-slate-400' };
 
 // ── Plages normatives ──────────────────────────────────────────────────────────
 const NORM_LEFT_MIN  = 2100;
@@ -148,6 +156,30 @@ function ProjectionCard({ label, value }) {
   );
 }
 
+// ── Zone d'import nouveau IRM ──────────────────────────────────────────────────
+function ImportZone({ patientId }) {
+  const navigate = useNavigate();
+  return (
+    <button
+      onClick={() => navigate(`/segmentation/nouvelle?patientId=${patientId}`)}
+      className="w-full group rounded-2xl border-2 border-dashed border-violet-300 bg-violet-50/50 hover:border-violet-500 hover:bg-violet-50 transition-all p-8 flex flex-col items-center gap-3 cursor-pointer"
+    >
+      <div className="w-14 h-14 rounded-2xl bg-violet-100 group-hover:bg-violet-200 flex items-center justify-center transition-colors">
+        <ImagePlus className="w-7 h-7 text-violet-600" />
+      </div>
+      <div className="text-center">
+        <p className="text-sm font-black text-violet-800 mb-1">Importer un nouveau volume IRM</p>
+        <p className="text-[11px] text-violet-600/70 leading-relaxed max-w-xs">
+          Sélectionnez un nouvel IRM acquis à une date différente pour activer le suivi longitudinal
+        </p>
+      </div>
+      <span className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-5 py-2 text-[11px] font-black text-white shadow-sm group-hover:bg-violet-700 transition-colors">
+        <PlusCircle className="w-4 h-4" /> Lancer une nouvelle segmentation
+      </span>
+    </button>
+  );
+}
+
 // ── Bouton "Nouvel IRM" ────────────────────────────────────────────────────────
 function NouvelIrmButton({ patientId }) {
   const navigate = useNavigate();
@@ -162,26 +194,8 @@ function NouvelIrmButton({ patientId }) {
   );
 }
 
-// ── Bannière source unique (même IRM) ──────────────────────────────────────────
-function SameSourceBanner({ runCount, patientId }) {
-  return (
-    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 flex gap-4">
-      <div className="shrink-0 w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center">
-        <Info className="w-5 h-5 text-amber-600" />
-      </div>
-      <div className="flex-1">
-        <p className="text-sm font-black text-amber-800 mb-1">Analyses issues du même IRM</p>
-        <p className="text-[12px] text-amber-700 leading-relaxed mb-3">
-          Les {runCount} analyse{runCount > 1 ? 's' : ''} disponible{runCount > 1 ? 's' : ''} pour ce patient
-          {runCount > 1
-            ? ' ont été effectuées sur les mêmes images IRM. Les valeurs affichées sont identiques — il ne s\'agit pas d\'une évolution réelle au cours du temps.'
-            : ' a été effectuée sur un seul jeu d\'images IRM.'}
-        </p>
-        <NouvelIrmButton patientId={patientId} />
-      </div>
-    </div>
-  );
-}
+// ── État "suivi longitudinal inactif" (1 seul IRM disponible) ─────────────────
+
 
 // ── Composant principal ────────────────────────────────────────────────────────
 export default function LongitudinalDashboard({ patientId, patient }) {
@@ -203,28 +217,47 @@ export default function LongitudinalDashboard({ patientId, patient }) {
       .finally(() => setLoading(false));
   }, [patientId]);
 
-  // Renforcer la détection côté client : volumes quasi-identiques = même IRM
-  const effectiveSameSource = allSameSource || detectSameSourceFrontend(history);
+  // Dédupliquer par acquisition_id : un run représentatif par IRM (le plus récent)
+  const uniqueAcquisitions = useMemo(() => {
+    const byAcq = {};
+    history.forEach(r => {
+      const key = r.acquisition_id || String(r.id);
+      if (!byAcq[key] || new Date(r.date) > new Date(byAcq[key].date)) {
+        byAcq[key] = r;
+      }
+    });
+    return Object.values(byAcq).sort((a, b) => new Date(a.date) - new Date(b.date));
+  }, [history]);
+
+  // Regrouper tous les runs par acquisition (pour le tableau multi-modèles)
+  const groupedByAcquisition = useMemo(() => {
+    const groups = {};
+    history.forEach(r => {
+      const key = r.acquisition_id || String(r.id);
+      if (!groups[key]) groups[key] = { key, date: r.date, date_display: r.date_display, variants: [] };
+      groups[key].variants.push(r);
+    });
+    return Object.values(groups).sort((a, b) => new Date(b.date) - new Date(a.date));
+  }, [history]);
+
+  const effectiveSameSource = allSameSource || detectSameSourceFrontend(uniqueAcquisitions);
 
   const stats = useMemo(() => {
     if (effectiveSameSource) return null;
-    const s = computeStats(history);
-    // Vélocité biologiquement impossible → données incohérentes, ne pas afficher
+    const s = computeStats(uniqueAcquisitions);
     if (s && Math.abs(s.mmMonth) > MAX_PLAUSIBLE_VELOCITY_MM_MONTH) return null;
     return s;
-  }, [history, effectiveSameSource]);
+  }, [uniqueAcquisitions, effectiveSameSource]);
 
   const chartData = useMemo(() =>
-    [...history]
-      .sort((a, b) => new Date(a.date) - new Date(b.date))
-      .map(r => ({
-        date:      r.date_display,
-        gauche:    r.left_volume_mm3  ? Math.round(r.left_volume_mm3)  : null,
-        droit:     r.right_volume_mm3 ? Math.round(r.right_volume_mm3) : null,
-        total:     r.total_volume_mm3 ? Math.round(r.total_volume_mm3) : null,
-        asymétrie: r.asymmetry_index  ? Math.abs(r.asymmetry_index)    : null,
-      })),
-    [history]
+    uniqueAcquisitions.map(r => ({
+      date:      r.date_display,
+      gauche:    r.left_volume_mm3  ? Math.round(r.left_volume_mm3)  : null,
+      droit:     r.right_volume_mm3 ? Math.round(r.right_volume_mm3) : null,
+      total:     r.total_volume_mm3 ? Math.round(r.total_volume_mm3) : null,
+      asymétrie: r.asymmetry_index  ? Math.abs(r.asymmetry_index)    : null,
+    })),
+    [uniqueAcquisitions]
   );
 
   if (loading) return (
@@ -240,39 +273,87 @@ export default function LongitudinalDashboard({ patientId, patient }) {
     </div>
   );
 
-  if (history.length === 0) return (
-    <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50/50 p-12 text-center">
-      <div className="w-16 h-16 rounded-3xl bg-blue-50 flex items-center justify-center mx-auto mb-4">
-        <Activity className="w-8 h-8 text-blue-400" />
+  // Suivi longitudinal réel : au moins 2 IRM distincts
+  const hasRealLongitudinal = uniqueAcquisitions.length >= 2 && !effectiveSameSource;
+
+  // Dernier run (IRM le plus récent) pour le snapshot
+  const lastRun = uniqueAcquisitions.length > 0
+    ? uniqueAcquisitions[uniqueAcquisitions.length - 1]
+    : null;
+
+  // Cas : pas de volumes enregistrés OU 1 seul IRM → même message + zone d'import
+  if (history.length === 0 || !hasRealLongitudinal) {
+    const hasVolumes = history.length > 0 && history.some(r => r.has_volumes !== false && r.total_volume_mm3);
+    return (
+      <div className="space-y-5">
+        {/* Bannière principale */}
+        <div className="rounded-2xl border-2 border-violet-200 bg-gradient-to-br from-violet-50 to-slate-50 p-6">
+          <div className="flex items-start gap-4">
+            <div className="shrink-0 w-12 h-12 rounded-2xl bg-violet-100 flex items-center justify-center">
+              <Activity className="w-6 h-6 text-violet-500" />
+            </div>
+            <div className="flex-1">
+              <p className="text-[10px] font-black uppercase tracking-widest text-violet-400 mb-1">Suivi longitudinal</p>
+              <h4 className="text-base font-black text-slate-800 mb-2">
+                {hasVolumes ? 'Un seul IRM disponible — suivi inactif' : 'Aucun volume enregistré'}
+              </h4>
+              <p className="text-[12px] text-slate-500 leading-relaxed">
+                {hasVolumes
+                  ? <>Toutes vos analyses ont été réalisées sur le <strong className="text-slate-700">même IRM source</strong>. Le suivi longitudinal compare les volumes sur des acquisitions IRM à des <strong className="text-violet-700">dates différentes</strong>. Pour activer l'évolution temporelle et la vélocité d'atrophie, importez un <strong className="text-violet-700">nouveau volume IRM</strong> de ce patient.</>
+                  : <>Générez un rapport PDF depuis la page de segmentation pour enregistrer les volumes, puis importez un <strong className="text-violet-700">second IRM</strong> à une date différente pour activer le suivi longitudinal.</>
+                }
+              </p>
+
+              {/* Snapshot des résultats actuels si volumes disponibles */}
+              {hasVolumes && lastRun && (
+                <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {[
+                    { label: 'Hippocampe gauche', value: lastRun.left_volume_mm3  ? Math.round(lastRun.left_volume_mm3)  : null, unit: 'mm³', color: 'text-blue-700',    bg: 'bg-blue-50 border-blue-100' },
+                    { label: 'Hippocampe droit',  value: lastRun.right_volume_mm3 ? Math.round(lastRun.right_volume_mm3) : null, unit: 'mm³', color: 'text-violet-700',  bg: 'bg-violet-50 border-violet-100' },
+                    { label: 'Volume total',      value: lastRun.total_volume_mm3 ? Math.round(lastRun.total_volume_mm3) : null, unit: 'mm³', color: 'text-emerald-700', bg: 'bg-emerald-50 border-emerald-100' },
+                    { label: 'Asymétrie (IA)',    value: lastRun.asymmetry_index  ? Math.abs(lastRun.asymmetry_index).toFixed(1) : null, unit: '%', color: lastRun.asymmetry_index && Math.abs(lastRun.asymmetry_index) > 10 ? 'text-red-600' : 'text-slate-700', bg: 'bg-slate-50 border-slate-100' },
+                  ].map(({ label, value, unit, color, bg }) => (
+                    <div key={label} className={`rounded-xl border ${bg} p-2.5`}>
+                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">{label}</p>
+                      {value !== null
+                        ? <p className={`text-base font-black tabular-nums ${color} leading-none`}>{value}<span className="text-[10px] font-semibold ml-1 text-slate-400">{unit}</span></p>
+                        : <p className="text-sm font-semibold text-slate-300">—</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Zone d'import */}
+        <ImportZone patientId={patientId} />
+
+        {hasVolumes && (
+          <p className="text-center text-[10px] text-slate-400 italic">
+            Les résultats ci-dessus seront utilisés comme point de départ dès qu'un second IRM sera analysé.
+          </p>
+        )}
       </div>
-      <h4 className="text-base font-black text-slate-700 mb-2">Aucun suivi volumétrique disponible</h4>
-      <p className="text-sm text-slate-400 max-w-sm mx-auto leading-relaxed">
-        Les volumes hippocampiques sont enregistrés automatiquement lors de la génération d'un rapport PDF de segmentation.
-      </p>
-    </div>
-  );
+    );
+  }
 
   return (
     <div className="space-y-6">
 
-      {/* ── Bannière même IRM ──────────────────────────────────────────────── */}
-      {effectiveSameSource && <SameSourceBanner runCount={history.length} patientId={patientId} />}
-
       {/* ── Résumé IA clinique ─────────────────────────────────────────────── */}
-      <ClinicalAISummary history={history} patient={patient} allSameSource={effectiveSameSource} />
+      <ClinicalAISummary history={history} patient={patient} allSameSource={false} />
 
       {/* ── KPIs rapides ───────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="rounded-2xl bg-white border border-slate-100 shadow-sm p-4">
           <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Examens</p>
           <p className="text-3xl font-black text-slate-900">{history.length}</p>
-          <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
-            {effectiveSameSource ? 'sur le même IRM' : 'sessions analysées'}
-          </p>
+          <p className="text-[10px] text-slate-400 font-semibold mt-0.5">IRM distincts analysés</p>
         </div>
 
-        {/* Vélocité & projections : uniquement si plusieurs IRM distincts */}
-        {stats && !effectiveSameSource && (
+        {/* Vélocité & projections */}
+        {stats && (
           <>
             <VelocityCard stats={stats} />
             <ProjectionCard label="Projection 6 mois"  value={stats.proj6m} />
@@ -280,26 +361,8 @@ export default function LongitudinalDashboard({ patientId, patient }) {
           </>
         )}
 
-        {/* Cas : 1 seul run (ou même IRM) → invite à ajouter une séquence */}
-        {(effectiveSameSource || (!stats && history.length <= 1)) && (
-          <div className="col-span-3 rounded-2xl bg-blue-50 border border-blue-100 p-4 flex items-start gap-3">
-            <Brain className="w-5 h-5 shrink-0 mt-0.5 text-blue-500" />
-            <div className="flex-1">
-              <p className="text-[12px] font-bold text-blue-700 leading-snug">
-                {effectiveSameSource
-                  ? `Résultats actuels (${history.length} analyse${history.length > 1 ? 's' : ''} — même IRM)`
-                  : 'Un second examen est nécessaire pour calculer la vélocité d\'atrophie et les projections.'}
-              </p>
-              <p className="text-[11px] mt-1 text-blue-600 font-medium leading-snug mb-3">
-                Importez un IRM d'une autre date pour obtenir une comparaison temporelle réelle.
-              </p>
-              <NouvelIrmButton patientId={patientId} />
-            </div>
-          </div>
-        )}
-
-        {/* Cas : plusieurs IRM mais délai trop court pour stats (<0.5 mois) */}
-        {!effectiveSameSource && !stats && history.length > 1 && (
+        {/* Plusieurs IRM mais délai trop court */}
+        {!stats && history.length > 1 && (
           <div className="col-span-3 rounded-2xl bg-slate-50 border border-slate-200 p-4 flex items-center gap-3 text-slate-600">
             <Info className="w-5 h-5 shrink-0" />
             <p className="text-[12px] font-semibold">
@@ -382,44 +445,58 @@ export default function LongitudinalDashboard({ patientId, patient }) {
         </div>
       )}
 
-      {/* ── Tableau des sessions ────────────────────────────────────────────── */}
+      {/* ── Tableau des sessions groupé par IRM + modèle ──────────────────── */}
       <div className="rounded-3xl bg-white border border-slate-100 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-3">
           <BarChart2 className="w-5 h-5 text-blue-500" />
-          <h4 className="text-sm font-black text-slate-900">
-            {effectiveSameSource ? 'Analyses effectuées (même IRM)' : 'Détail des examens'}
-          </h4>
+          <h4 className="text-sm font-black text-slate-900">Détail des examens</h4>
+          <span className="ml-auto text-[10px] font-bold text-slate-400">{uniqueAcquisitions.length} IRM · {history.length} analyse{history.length > 1 ? 's' : ''}</span>
         </div>
-        <div className="divide-y divide-slate-50">
-          {[...history].sort((a, b) => new Date(b.date) - new Date(a.date)).map((run, i) => {
-            const isOk = run.total_volume_mm3 >= NORM_TOTAL_MIN;
-            return (
-              <div key={run.id} className="flex items-center gap-4 px-6 py-4 hover:bg-slate-50/60 transition-colors">
-                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-[11px] font-black ${isOk ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-600'}`}>
-                  {history.length - i}
+        <div className="divide-y divide-slate-100">
+          {groupedByAcquisition.map((group, gi) => (
+            <div key={group.key} className="px-6 py-4">
+              {/* En-tête du groupe IRM */}
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+                  <span className="text-[10px] font-black text-slate-500">{groupedByAcquisition.length - gi}</span>
                 </div>
-                <div className="flex items-center gap-1.5 text-slate-500 shrink-0">
-                  <Calendar className="w-3.5 h-3.5" />
-                  <span className="text-[11px] font-bold">{run.date_display}</span>
-                </div>
-                <div className="flex-1 grid grid-cols-3 gap-2">
-                  {[['Gauche', run.left_volume_mm3, NORM_LEFT_MIN], ['Droit', run.right_volume_mm3, NORM_RIGHT_MIN], ['Total', run.total_volume_mm3, NORM_TOTAL_MIN]].map(([lbl, val, min]) => (
-                    <div key={lbl} className="text-center">
-                      <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">{lbl}</p>
-                      <p className={`text-[13px] font-black ${val < min ? 'text-rose-600' : 'text-slate-900'}`}>
-                        {val ? `${Math.round(val)} mm³` : '—'}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-                <div className="shrink-0">
-                  <span className={`text-[9px] font-black px-2 py-1 rounded-full uppercase tracking-wide ${isOk ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
-                    {isOk ? '✓ Normal' : '⚠ Bas'}
-                  </span>
-                </div>
+                <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                <span className="text-[12px] font-black text-slate-700">IRM du {group.date_display}</span>
+                <span className="text-[10px] text-slate-400 font-medium ml-1">
+                  · {group.variants.length} analyse{group.variants.length > 1 ? 's' : ''}
+                </span>
               </div>
-            );
-          })}
+              {/* Variants par modèle */}
+              <div className="space-y-2 pl-9">
+                {group.variants.map(run => {
+                  const cfg = modelCfg(run.model_key);
+                  const isOk = (run.total_volume_mm3 || 0) >= NORM_TOTAL_MIN;
+                  return (
+                    <div key={run.id} className="flex items-center gap-3 rounded-xl bg-slate-50/70 border border-slate-100 px-3 py-2.5">
+                      {/* Badge modèle */}
+                      <span className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-black ${cfg.cls}`}>
+                        <Cpu className="w-2.5 h-2.5" />{cfg.label}
+                      </span>
+                      {/* Volumes */}
+                      <div className="flex-1 grid grid-cols-3 gap-2">
+                        {[['Gauche', run.left_volume_mm3, NORM_LEFT_MIN], ['Droit', run.right_volume_mm3, NORM_RIGHT_MIN], ['Total', run.total_volume_mm3, NORM_TOTAL_MIN]].map(([lbl, val, min]) => (
+                          <div key={lbl} className="text-center">
+                            <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">{lbl}</p>
+                            <p className={`text-[12px] font-black ${val && val < min ? 'text-rose-600' : 'text-slate-800'}`}>
+                              {val ? `${Math.round(val)} mm³` : '—'}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                      <span className={`shrink-0 text-[9px] font-black px-2 py-1 rounded-full ${isOk ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                        {isOk ? '✓ Normal' : '⚠ Bas'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 

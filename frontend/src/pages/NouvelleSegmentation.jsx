@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
+  AlertTriangle,
   Brain,
   CalendarDays,
   Check,
@@ -13,6 +14,8 @@ import {
   FolderOpen,
   Hash,
   Info,
+  Layers,
+  LayoutTemplate,
   Loader2,
   Move,
   Search,
@@ -1437,6 +1440,9 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
     try {
       const token = localStorage.getItem('access');
       const fd = new FormData();
+      // UUID unique pour ce batch — identifie cet IRM de suivi comme une session distincte
+      const acquisitionId = crypto.randomUUID();
+      fd.append('acquisition_id', acquisitionId);
       newIrmFiles.forEach(f => {
         fd.append('files', f);
         fd.append('relative_paths', f.webkitRelativePath || f.name);
@@ -2380,6 +2386,14 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
     <div className="h-screen w-screen overflow-hidden bg-slate-50 flex flex-col font-sans">
       <div className="bg-slate-900 px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="flex items-center gap-1.5 rounded-full border border-white/25 bg-white/10 backdrop-blur-sm px-3 py-1.5 text-[11px] font-bold text-white/80 hover:bg-white/20 transition-all"
+            aria-label="Retour"
+          >
+            <ChevronLeft className="h-3 w-3" /> Retour
+          </button>
           <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white">
             <UserRound className="h-4 w-4" />
           </span>
@@ -2853,6 +2867,39 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                       {npErrors.pathologie && <p className="mt-1 text-[11px] font-semibold text-red-500">{npErrors.pathologie}</p>}
                     </div>
 
+                    {/* Contrainte technique images */}
+                    <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3.5">
+                      <div className="flex items-start gap-3">
+                        <div className="shrink-0 w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center mt-0.5">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-[11px] font-black text-amber-800 uppercase tracking-wide mb-1.5">
+                            Contrainte technique — Images requises
+                          </p>
+                          <p className="text-[11px] text-amber-700 leading-relaxed mb-2.5">
+                            Les images importées doivent obligatoirement respecter les deux conditions suivantes :
+                          </p>
+                          <div className="flex flex-col sm:flex-row gap-2">
+                            <div className="flex items-center gap-2 rounded-lg bg-amber-100 border border-amber-200 px-3 py-2 flex-1">
+                              <Layers className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                              <div>
+                                <p className="text-[9px] font-black text-amber-800 uppercase tracking-wide">Type d'image</p>
+                                <p className="text-[11px] text-amber-700 font-semibold">Images 2D uniquement</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 rounded-lg bg-amber-100 border border-amber-200 px-3 py-2 flex-1">
+                              <LayoutTemplate className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                              <div>
+                                <p className="text-[9px] font-black text-amber-800 uppercase tracking-wide">Plan d'acquisition</p>
+                                <p className="text-[11px] text-amber-700 font-semibold">Plan coronal obligatoire</p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Zone upload images 2D */}
                     <div>
                       <label className="mb-2 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
@@ -2931,18 +2978,6 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                       </div>
                     </div>
 
-                    {/* Badges sécurité */}
-                    <div className="flex flex-wrap gap-2">
-                      {[
-                        { icon: ShieldCheck, label: 'HIPAA Compliant',    cls: 'text-emerald-600 bg-emerald-50 border-emerald-200' },
-                        { icon: Zap,         label: 'GPU Accéléré',       cls: 'text-amber-600  bg-amber-50  border-amber-200'  },
-                        { icon: ShieldCheck, label: 'Transfert chiffré',  cls: 'text-sky-600    bg-sky-50    border-sky-200'    },
-                      ].map(({ icon: Icon, label, cls }) => (
-                        <div key={label} className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold ${cls}`}>
-                          <Icon className="h-3.5 w-3.5" />{label}
-                        </div>
-                      ))}
-                    </div>
 
                     {npApiError && (
                       <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-600">{npApiError}</div>

@@ -11,7 +11,9 @@ Prérequis : dépendances MINE (PyTorch, etc.) comme pour l'upload 3D — pas AN
 
 Variables d'environnement (optionnelles) :
     REFERENCE_INTENSITY_NIFTI_SOURCE   Chemin du NIfTI source (même entrée qu'un patient)
-    REFERENCE_INTENSITY_NOM           Nom unique en base (défaut : sujet1)
+    REFERENCE_INTENSITY_NOM           Nom unique en base : sujet1 ... sujet5 (tranches d'âge
+                                      côté application). Relancer le script pour chaque volume
+                                      en changeant NOM et SOURCE.
     REFERENCE_INTENSITY_N_ITERS       Itérations MINE (défaut : 60 ; Hybrid : 100–250)
     REFERENCE_INTENSITY_DEVICE        cuda | cpu | auto (défaut : cuda)
     REFERENCE_INTENSITY_HYBRID        1 pour HYBRID, sinon MINE (défaut : 0)

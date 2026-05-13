@@ -9,14 +9,13 @@ import cv2
 import numpy as np
 from PIL import Image
 from scipy.ndimage import zoom
+from django.conf import settings
 from django.http import JsonResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from rest_framework.decorators import api_view
 from .utils.volume_utils import extract_slice, MAX_FILE_SIZE_BYTES
-from .volume_mine_3d_registration import run_mine_3d_nifti
-from .volume_mine_3d_hybrid import run_mine_3d_hybrid
 
 try:
     from asgiref.sync import async_to_sync
@@ -38,7 +37,18 @@ except Exception:
     nilearn_image = None
 
 VOLUMES_CACHE: Dict[str, dict] = {}
-JOBS_ROOT_DIR = os.path.join(tempfile.gettempdir(), 'visionmed_volume_jobs')
+JOBS_ROOT_DIR = os.path.join(settings.MEDIA_ROOT, 'volume_jobs')
+
+
+def _get_volume_registration_fns():
+    """
+    Lazy import des moteurs MINE 3D.
+    Evite de bloquer le demarrage Django si torch/cuda met du temps a s'initialiser.
+    """
+    from .volume_mine_3d_registration import run_mine_3d_nifti
+    from .volume_mine_3d_hybrid import run_mine_3d_hybrid
+
+    return run_mine_3d_nifti, run_mine_3d_hybrid
 
 
 def _emit_registration_progress(job_id: str, progress: int, stage: str, message: str, status: str = 'processing'):
@@ -1554,6 +1564,25 @@ def upload_volume(request):
         }
         _persist_job_entry(job_id)
 
+        # Enregistrer le job en base de données
+        try:
+            from .models import Patient, VolumeRegistrationJob
+            patient_id_param = request.POST.get('patientId')
+            patient_obj = None
+            if patient_id_param:
+                patient_obj = Patient.objects.filter(
+                    id=patient_id_param, doctor=request.user
+                ).first()
+            VolumeRegistrationJob.objects.create(
+                job_id=job_id,
+                patient=patient_obj,
+                user=request.user,
+                status='uploaded',
+                patient_volume_path=patient_nifti_path or '',
+            )
+        except Exception:
+            pass
+
         # Backward-compatible payload + new shape/suggested payload.
         median_slice = vol[:, :, best_z]
         return JsonResponse({
@@ -2680,6 +2709,7 @@ def mine_register_nifti_for_reference_pipeline(
         affine=VOLUMES_CACHE['atlas'].get('affine'),
     )
 
+    run_mine_3d_nifti, run_mine_3d_hybrid = _get_volume_registration_fns()
     _reg_fn = run_mine_3d_hybrid if use_hybrid else run_mine_3d_nifti
     _hybrid_kwargs: Dict[str, Any] = dict(base=16, max_disp=0.05) if use_hybrid else {}
     result = _reg_fn(
@@ -2821,6 +2851,7 @@ def auto_align_volume(request):
             def _on_p2p_progress(tp, msg):
                 _emit_registration_progress(job_id, 12 + int(max(0, min(100, int(tp))) * 0.80), 'optimisation', msg)
 
+            run_mine_3d_nifti, run_mine_3d_hybrid = _get_volume_registration_fns()
             _reg_fn_p2p = run_mine_3d_hybrid if use_hybrid else run_mine_3d_nifti
             _hybrid_kwargs_p2p = dict(base=16, max_disp=0.05) if use_hybrid else {}
             result_p2p = _reg_fn_p2p(
@@ -3061,6 +3092,7 @@ def auto_align_volume(request):
             overall = 12 + int(max(0, min(100, int(train_progress))) * 0.80)
             _emit_registration_progress(job_id, overall, 'optimisation', msg)
 
+        run_mine_3d_nifti, run_mine_3d_hybrid = _get_volume_registration_fns()
         _reg_fn = run_mine_3d_hybrid if use_hybrid else run_mine_3d_nifti
         _hybrid_kwargs = dict(base=16, max_disp=0.05) if use_hybrid else {}
         result = _reg_fn(
@@ -3261,6 +3293,15 @@ def validate_volume_registration(request):
         entry['pending_registered_data'] = None
         _persist_job_entry(job_id)
 
+        try:
+            from .models import VolumeRegistrationJob
+            VolumeRegistrationJob.objects.filter(job_id=job_id).update(
+                status='validated',
+                registered_volume_path=entry.get('nifti_path') or '',
+            )
+        except Exception:
+            pass
+
         z = VOLUMES_CACHE['atlas']['data'].shape[2] // 2
         atlas_img = _render_label_slice_rgb(VOLUMES_CACHE['atlas']['labels'], z, 'axial')
         patient_img = _normalize_u8(_render_slice(entry['registered_data'], z, 'axial'))
@@ -3369,6 +3410,13 @@ def reject_volume_registration(request):
     entry['pending_registration'] = None
     entry['pending_registered_data'] = None
     _persist_job_entry(job_id)
+
+    try:
+        from .models import VolumeRegistrationJob
+        VolumeRegistrationJob.objects.filter(job_id=job_id).update(status='rejected')
+    except Exception:
+        pass
+
     return JsonResponse({'success': True, 'message': 'Resultat rejete. Relancez avec d autres parametres.'})
 
 

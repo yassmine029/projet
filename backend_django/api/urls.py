@@ -148,4 +148,5 @@ urlpatterns = [
     path('project_brodmann', views.project_brodmann, name='project_brodmann'),
     # Intensités Brodmann (patient MNI vs référence sujet1 en BDD)
     path('brodmann/intensity/', views.brodmann_intensity, name='brodmann_intensity'),
+    path('brodmann/all-intensities/', views.brodmann_all_intensities, name='brodmann_all_intensities'),
 ]

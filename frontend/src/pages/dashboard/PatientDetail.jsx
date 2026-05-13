@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, Calendar, FileText, Phone, Mail, Stethoscope, Clock, ShieldCheck,
   MapPin, Activity, Star, Plus, Boxes, Layers, ChevronRight, ChevronDown,
@@ -314,6 +314,11 @@ function SessionCard({ session }) {
           <div className="flex items-center gap-2 flex-wrap mb-1">
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-700">Segmentation</span>
             <span className="text-sm font-bold text-slate-800">{session.session_num}</span>
+            {/* Badge modèle IA */}
+            {session.model_key && (() => {
+              const cfg = { unetpp: { cls: 'bg-blue-100 text-blue-700', label: 'Modèle 1' }, nnunet: { cls: 'bg-violet-100 text-violet-700', label: 'Modèle 2' }, swinunetr: { cls: 'bg-emerald-100 text-emerald-700', label: 'Modèle 3' } }[session.model_key] || { cls: 'bg-slate-100 text-slate-600', label: session.model_label || session.model_key };
+              return <span className={`px-2 py-0.5 rounded-full text-[9px] font-black border ${cfg.cls}`}>{cfg.label}</span>;
+            })()}
             {session.is_new && (
               <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-emerald-500 text-white animate-pulse">Nouveau</span>
             )}
@@ -510,6 +515,7 @@ const formatDateTime = (dateValue) => {
 export default function PatientDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [patient, setPatient] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -540,24 +546,33 @@ export default function PatientDetail() {
     fetchReports();
   }, [id]);
 
-  useEffect(() => {
-    const fetchPatient = async () => {
-      try {
-        const res = await api.get(`/patients/${id}/`);
-        if (res.data && res.data.ok) {
-          setPatient(res.data.patient);
-        } else {
-          setError(res.data.error || "Patient introuvable.");
-        }
-      } catch (err) {
-        setError("Erreur de connexion au serveur.");
-      } finally {
-        setLoading(false);
+  const fetchPatient = useCallback(async () => {
+    try {
+      const res = await api.get(`/patients/${id}/`);
+      if (res.data && res.data.ok) {
+        setPatient(res.data.patient);
+      } else {
+        setError(res.data.error || "Patient introuvable.");
       }
-    };
-
-    fetchPatient();
+    } catch {
+      setError("Erreur de connexion au serveur.");
+    } finally {
+      setLoading(false);
+    }
   }, [id]);
+
+  // Chargement initial
+  useEffect(() => { fetchPatient(); }, [fetchPatient]);
+
+  // Rafraîchissement au retour sur la page (ex. après reconstruction 3D)
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') fetchPatient(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [fetchPatient]);
+
+  // Rafraîchissement à chaque navigation vers cette page
+  useEffect(() => { fetchPatient(); }, [location.key, fetchPatient]);
 
   useEffect(() => {
     if (!zipNotice) return undefined;
@@ -763,6 +778,8 @@ export default function PatientDetail() {
         is_new: run.status === 'running' || (new Date() - new Date(run.created_at)) < 86400000,
         has_3d_reconstruction: Boolean(run.has_3d_reconstruction),
         total_volume_mm3: run.total_volume_mm3 ?? null,
+        model_key: run.model_key || 'unetpp',
+        model_label: run.model_version || 'Modèle 1',
         groups: [
           {
             type: 'segmentation',
@@ -1111,6 +1128,11 @@ export default function PatientDetail() {
                                           Segmentation #{report.run_id}
                                         </span>
                                       )}
+                                      {/* Badge modèle IA */}
+                                      {!isRecalage && report.model_key && (() => {
+                                        const mCfg = { unetpp: { cls: 'bg-blue-100 text-blue-700 border-blue-200', label: 'Modèle 1' }, nnunet: { cls: 'bg-violet-100 text-violet-700 border-violet-200', label: 'Modèle 2' }, swinunetr: { cls: 'bg-emerald-100 text-emerald-700 border-emerald-200', label: 'Modèle 3' } }[report.model_key] || { cls: 'bg-slate-100 text-slate-600 border-slate-200', label: report.model_label || report.model_key };
+                                        return <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${mCfg.cls}`}>{mCfg.label}</span>;
+                                      })()}
                                     </div>
                                     <p className="text-[11px] text-slate-500">
                                       <Calendar className="inline h-3 w-3 mr-1" />

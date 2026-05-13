@@ -344,6 +344,17 @@ def _brain_shell_mask_from_mri(vol: np.ndarray) -> Optional[np.ndarray]:
     binary = (vn > max(thr, 0.08)).astype(np.uint8)
     binary = ndimage.binary_closing(binary, iterations=2).astype(np.uint8)
     binary = ndimage.binary_fill_holes(binary).astype(np.uint8)
+
+    # Effacement minimal des bords (évite les parois de scan sans couper le cerveau)
+    B = 2
+    binary[:B, :, :] = 0
+    binary[-B:, :, :] = 0
+    binary[:, :B, :] = 0
+    binary[:, -B:, :] = 0
+    binary[:, :, :B] = 0
+    binary[:, :, -B:] = 0
+
+    # Conserver uniquement le plus grand composant connexe (cerveau)
     labeled, num = ndimage.label(binary)
     if num <= 0:
         return None
@@ -417,6 +428,29 @@ def _try_build_brain_context_mesh(
         return err
 
     mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=True)
+
+    # Filtrer les composants parasites (barres/parois plates) par score géométrique
+    try:
+        components = mesh.split(only_watertight=False)
+        if len(components) > 1:
+            def _component_score(m):
+                if m.bounds is None or len(m.faces) == 0:
+                    return 0
+                dims = m.bounds[1] - m.bounds[0]  # [dx, dy, dz]
+                min_dim = float(dims.min())
+                max_dim = float(dims.max())
+                # Pénaliser fortement les composants plats (dalle/barre) : min_dim << max_dim
+                if max_dim > 0 and min_dim / max_dim < 0.12:
+                    return 0
+                return len(m.faces)
+            best = max(components, key=_component_score)
+            # Fallback : si tous les composants sont plats, garder le plus grand en faces
+            if _component_score(best) == 0:
+                best = max(components, key=lambda m: len(m.faces))
+            mesh = best
+    except Exception:
+        pass
+
     try:
         trimesh.smoothing.filter_laplacian(mesh, lamb=0.35, iterations=3)
     except Exception:
@@ -446,11 +480,14 @@ def run_modelisation_3d(
     normative_total_mean_mm3: float = DEFAULT_NORMATIVE_TOTAL_MEAN_MM3,
     normative_total_std_mm3: float = DEFAULT_NORMATIVE_TOTAL_STD_MM3,
 ) -> Dict:
+    # Coupes sélectionnées uniquement → hippocampe
     rows = list(
         run.results.exclude(review_status=SegmentationMaskResult.ReviewStatus.REJECTED).order_by('slice_index', 'id')
     )
     if not rows:
         raise ValueError('Aucun masque disponible pour ce run (toutes les coupes sont rejetées ou aucun résultat).')
+
+    # Coupes non-rejetées → enveloppe cerveau (les coupes rejetées sont souvent des bords de scan vides qui créent des artefacts)
 
     masks: List[np.ndarray] = []
     for row in rows:

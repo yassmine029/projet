@@ -10,7 +10,7 @@ export default function BrodmannIntensityPanel({
   stats,
   loading,
   error,
-  referenceLabel = 'Référence (sujet1)',
+  referenceLabel = 'Référence (norme par âge)',
   analyseAvailable = true,
 }) {
   const fmt = (v) =>
@@ -45,6 +45,13 @@ export default function BrodmannIntensityPanel({
           <span className="text-slate-500">Cliquez sur une zone pour comparer</span>
         )}
       </h3>
+      {stats?.reference_nom && (
+        <p className="mt-1 text-[11px] text-slate-600">
+          Norme : <span className="font-semibold">{stats.reference_nom}</span>
+          {stats.reference_age_band_fr ? ` (${stats.reference_age_band_fr})` : ''}
+          {stats.patient_age_years != null ? ` — âge patient : ${stats.patient_age_years} ans` : ''}
+        </p>
+      )}
 
       {!analyseAvailable && (
         <p className="mt-3 text-xs leading-relaxed text-slate-600">
@@ -94,7 +101,7 @@ export default function BrodmannIntensityPanel({
           <p className="text-[10px] leading-relaxed text-slate-400 pt-1">
             Les sommes brutes ci-dessous additionnent tous les voxels de la zone : elles dépendent fortement
             du réglage logiciel et ne sont en général pas comparables entre le patient recalé et l&apos;archive
-            « sujet1 », d&apos;où l&apos;écart énorme si vous ne regardez que ces lignes.
+            du sujet de référence choisi selon l&apos;âge, d&apos;où l&apos;écart énorme si vous ne regardez que ces lignes.
           </p>
           <div className="flex justify-between gap-2 border-b border-slate-100 pb-2">
             <dt className="text-slate-500">Somme intensités — Patient</dt>

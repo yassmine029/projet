@@ -65,6 +65,9 @@ interface BrodmannIntensityPayload {
   reference_brain_mean?: number | null;
   patient_relative_index?: number;
   reference_relative_index?: number | null;
+  reference_nom?: string;
+  reference_age_band_fr?: string;
+  patient_age_years?: number | null;
 }
 
 export function RegistrationPage({ user, accessToken, onNavigate }: RegistrationPageProps) {
@@ -241,8 +244,9 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       setBrodmannAnalyseIdAuto(null);
       return;
     }
-    const pid = confirmedPanelPatients.patient?.id;
-    if (phase !== 3 || registrationDimension !== 'advanced' || typeof pid !== 'number') {
+    const pidRaw = confirmedPanelPatients.patient?.id;
+    const pid = pidRaw != null ? Number(pidRaw) : NaN;
+    if (phase !== 3 || registrationDimension !== 'advanced' || isNaN(pid) || pid <= 0) {
       setBrodmannAnalyseIdAuto(null);
       return;
     }
@@ -251,9 +255,9 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       .get(`/patients/${pid}/latest-brodmann-analyse/`)
       .then((res) => {
         if (cancelled) return;
-        const aid = res.data?.analyse_id;
+        const aid = Number(res.data?.analyse_id);
         setBrodmannAnalyseIdAuto(
-          typeof aid === 'number' && !Number.isNaN(aid) ? aid : null
+          !isNaN(aid) && aid > 0 ? aid : null
         );
       })
       .catch(() => {
@@ -262,7 +266,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     return () => {
       cancelled = true;
     };
-  }, [brodmannAnalyseIdFromNav, phase, registrationDimension, confirmedPanelPatients.patient?.id]);
+  }, [brodmannAnalyseIdFromNav, phase, registrationDimension, confirmedPanelPatients.patient?.id]); // eslint-disable-line
 
   // Interactive confirmation dialog
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -291,16 +295,26 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const splitDragRef       = useRef(false);
   const superpositionPanelRef = useRef<HTMLDivElement>(null);
 
+  const brodmannPatientIdForIntensity = React.useMemo(() => {
+    const p = confirmedPanelPatients.patient ?? confirmedPanelPatients.reference;
+    if (p?.id == null) return null;
+    const num = Number(p.id);
+    return !Number.isNaN(num) && num > 0 ? num : null;
+  }, [confirmedPanelPatients.patient, confirmedPanelPatients.reference]);
+
   const loadBrodmannIntensity = useCallback(
     async (zoneNumber: number) => {
       const useJob = brodmannAnalyseId == null && jobId;
       if (brodmannAnalyseId == null && !useJob) return;
+      // Si on utilise jobId, patient_id est obligatoire côté backend
+      if (useJob && brodmannPatientIdForIntensity == null) return;
       setBrodmannIntensityLoading(true);
       setBrodmannIntensityError(null);
       try {
         const { data } = await getBrodmannIntensity({
           analyseId: brodmannAnalyseId ?? undefined,
           jobId: useJob ? jobId : undefined,
+          patientId: brodmannAnalyseId != null ? undefined : brodmannPatientIdForIntensity ?? undefined,
           zoneNumber,
         });
         setBrodmannIntensityStats(data as BrodmannIntensityPayload);
@@ -315,7 +329,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         setBrodmannIntensityLoading(false);
       }
     },
-    [brodmannAnalyseId, jobId]
+    [brodmannAnalyseId, jobId, brodmannPatientIdForIntensity]
   );
 
   /** Recalcule les intensités quand la zone ou l’analyse MNI devient disponible (évite le clic « trop tôt » avant la fin du chargement auto de l’id). */
@@ -3373,7 +3387,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                     <BrainCircuit className="h-4 w-4 text-white" />
                   </div>
                   <div className="flex-1">
-                    <p className="text-sm font-black text-slate-900 group-hover:text-blue-700 transition-colors">Recalage 3D Standard</p>
+                    <p className="text-sm font-black text-slate-900 group-hover:text-blue-700 transition-colors">Recalage 3D</p>
                     <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
                       Importez deux volumes NIfTI (référence + patient) et lancez le recalage neuronal MINE 3D ou Hybride avec navigation coupes axiales/coronales/sagittales.
                     </p>
@@ -3397,7 +3411,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                     <BrainCircuit className="h-4 w-4 text-white" />
                   </div>
                   <div className="flex-1">
-                    <p className="text-sm font-black text-slate-900 group-hover:text-violet-700 transition-colors">Recalage 3D basé atlas MNI152</p>
+                    <p className="text-sm font-black text-slate-900 group-hover:text-violet-700 transition-colors">Recalage 3D et identification des zones de Brodmann</p>
                     <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
                       Uploadez uniquement votre volume patient — l'atlas MNI152 se télécharge automatiquement. Suivi d'une identification interactive des 47 aires de Brodmann avec coordonnées MNI.
                     </p>
@@ -4394,6 +4408,19 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                     loading={brodmannIntensityLoading}
                     error={brodmannIntensityError}
                     analyseAvailable={brodmannAnalyseId != null || (jobId != null && jobId !== '')}
+                    referenceLabel={
+                      brodmannIntensityStats?.reference_nom
+                        ? `Référence (${brodmannIntensityStats.reference_nom}${
+                            brodmannIntensityStats.reference_age_band_fr
+                              ? `, ${brodmannIntensityStats.reference_age_band_fr}`
+                              : ''
+                          }${
+                            brodmannIntensityStats.patient_age_years != null
+                              ? ` — patient ${brodmannIntensityStats.patient_age_years} ans`
+                              : ''
+                          })`
+                        : 'Référence (selon âge du patient)'
+                    }
                   />
                   <BrodmannZone3D
                     labelId={zone?.id ?? null}
@@ -5853,7 +5880,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
             </div>
           )}
           <div className="flex-1 min-h-0">
-            <ExplorationPage onBack={() => setShowExploration(false)} />
+            <ExplorationPage onBack={() => setShowExploration(false)} dashboardPatientId={brodmannPatientIdForIntensity} />
           </div>
         </div>
       )}

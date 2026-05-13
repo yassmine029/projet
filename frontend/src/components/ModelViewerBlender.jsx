@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeftRight } from 'lucide-react';
+import { ArrowLeftRight, Scissors, Play, Pause, RotateCcw, RefreshCw } from 'lucide-react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
@@ -94,13 +94,22 @@ export default function ModelViewerBlender({
   const stateRef = useRef(null);
   const [error, setError] = useState('');
   const [wireframe, setWireframe] = useState(false);
-  /** Pas de 90° sur place (axe X) : incline le volume sans le déplacer — bas → droite → haut → gauche selon le maillage. */
-  const [modelQuarterTurns, setModelQuarterTurns] = useState(0);
+  // Rotation libre par axe (degrés)
+  const [rotX, setRotX] = useState(0);
+  const [rotY, setRotY] = useState(0);
+  const [rotZ, setRotZ] = useState(0);
+  // Plans de coupe (0 = tout coupé, 1 = rien coupé)
+  const [clipEnabled, setClipEnabled] = useState(false);
+  const [clipX, setClipX] = useState(1);
+  const [clipY, setClipY] = useState(1);
+  const [clipZ, setClipZ] = useState(1);
+  // Animation
+  const [autoRotate, setAutoRotate] = useState(false);
+  const [autoRotateSpeed, setAutoRotateSpeed] = useState(1.5);
   const [color, setColor] = useState(meshColor);
   const [opacity, setOpacity] = useState(brainOpacity);
   const [showGrid, setShowGrid] = useState(true);
   const [showAxes, setShowAxes] = useState(true);
-  /** Enveloppe cerveau (contexte IRM) : affichage, teinte et opacité. */
   const [showBrain, setShowBrain] = useState(true);
   const [brainColor, setBrainColor] = useState('#8a96a8');
 
@@ -131,6 +140,7 @@ export default function ModelViewerBlender({
     renderer.toneMappingExposure = variant === 'mini' ? 1.0 : 1.05;
     renderer.setClearColor(0x8b939e, 1);
     renderer.shadowMap.enabled = false;
+    renderer.localClippingEnabled = true;
     mount.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
@@ -298,9 +308,13 @@ export default function ModelViewerBlender({
           brainObj.renderOrder = 0;
           brainObj.visible = showBrain;
           s.brainObject = brainObj;
+          // Correction orientation anatomique (coupes NIfTI empilées en sens inverse)
+          brainObj.rotation.z = Math.PI;
           s.root.add(brainObj);
         }
 
+        // Correction orientation anatomique (coupes NIfTI empilées en sens inverse)
+        mainObject.rotation.z = Math.PI;
         mainObject.renderOrder = 1;
         s.root.add(mainObject);
 
@@ -315,6 +329,15 @@ export default function ModelViewerBlender({
         const c = new THREE.Vector3();
         box2.getCenter(c);
         s.root.position.sub(c);
+
+        // Bbox post-centrage — utilisée par les plans de coupe
+        const box3 = new THREE.Box3().setFromObject(s.root);
+        s.bbox = box3;
+        s.clipPlanes = [
+          new THREE.Plane(new THREE.Vector3(-1, 0, 0), box3.max.x),
+          new THREE.Plane(new THREE.Vector3(0, -1, 0), box3.max.y),
+          new THREE.Plane(new THREE.Vector3(0, 0, -1), box3.max.z),
+        ];
 
         const sz2 = new THREE.Vector3();
         box2.getSize(sz2);
@@ -414,14 +437,41 @@ export default function ModelViewerBlender({
     if (st?.brainObject) st.brainObject.visible = showBrain;
   }, [showBrain, objUrl, stlUrl, brainObjUrl, buildScene]);
 
+  // Rotation libre X/Y/Z
   useEffect(() => {
     const st = stateRef.current;
     if (!st?.root) return;
-    const x = THREE.MathUtils.degToRad(modelQuarterTurns * 90);
-    st.root.rotation.set(x, 0, 0);
-  }, [modelQuarterTurns, objUrl, stlUrl, brainObjUrl, buildScene]);
+    st.root.rotation.set(
+      THREE.MathUtils.degToRad(rotX),
+      THREE.MathUtils.degToRad(rotY),
+      THREE.MathUtils.degToRad(rotZ),
+    );
+  }, [rotX, rotY, rotZ, objUrl, stlUrl, brainObjUrl, buildScene]);
 
-  const stepModelRotation90 = () => setModelQuarterTurns((q) => (q + 1) % 4);
+  // Plans de coupe interactifs
+  useEffect(() => {
+    const st = stateRef.current;
+    if (!st?.root || !st.clipPlanes || !st.bbox) return;
+    const { bbox, clipPlanes } = st;
+    clipPlanes[0].constant = bbox.min.x + clipX * (bbox.max.x - bbox.min.x);
+    clipPlanes[1].constant = bbox.min.y + clipY * (bbox.max.y - bbox.min.y);
+    clipPlanes[2].constant = bbox.min.z + clipZ * (bbox.max.z - bbox.min.z);
+    st.root.traverse((child) => {
+      if (!child.isMesh || !child.material) return;
+      child.material.clippingPlanes = clipEnabled ? clipPlanes : [];
+      child.material.needsUpdate = true;
+    });
+  }, [clipEnabled, clipX, clipY, clipZ, objUrl, stlUrl, brainObjUrl, buildScene]);
+
+  // Auto-rotation
+  useEffect(() => {
+    const st = stateRef.current;
+    if (!st?.controls) return;
+    st.controls.autoRotate = autoRotate;
+    st.controls.autoRotateSpeed = autoRotateSpeed;
+  }, [autoRotate, autoRotateSpeed, objUrl, stlUrl, brainObjUrl, buildScene]);
+
+  const stepModelRotation90 = () => setRotX((x) => (x + 90) % 360);
 
   const resetCamera = () => {
     const st = stateRef.current;
@@ -485,33 +535,41 @@ export default function ModelViewerBlender({
 
   const Divider = () => <div className="h-px bg-slate-600/50" />;
 
+  // Composant slider réutilisable pour le sidebar sombre
+  const AxisSlider = ({ label, color: axisColor, value, onChange, min = 0, max = 360, step = 1, unit = '°', displayVal }) => (
+    <div>
+      <div className="mb-1 flex items-center justify-between">
+        <span className={`text-[9px] font-black uppercase tracking-widest ${axisColor}`}>{label}</span>
+        <span className="rounded bg-slate-700 px-1.5 py-0.5 text-[9px] font-bold tabular-nums text-slate-200">
+          {displayVal ?? value}{unit}
+        </span>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))}
+        className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-slate-700 accent-blue-500" />
+    </div>
+  );
+
   const toolbarAside = (
     <aside
       className={`flex min-h-0 shrink-0 flex-col border-slate-600/50 bg-gradient-to-b from-slate-800 to-slate-900 ${
-        variant === 'mini' ? 'w-[5.25rem] border-l px-2 py-2 gap-2' : 'w-52 border-l px-3 py-4 gap-3'
+        variant === 'mini' ? 'w-[5.25rem] border-l px-2 py-2 gap-2' : 'w-56 border-l px-3 py-3 gap-2.5 overflow-y-auto'
       }`}
     >
       {variant === 'full' ? (
         <>
+          {/* ── Outils ── */}
           <SectionLabel>Outils</SectionLabel>
-          {navBtn(wireframe, wireframe ? 'Fil de fer' : 'Surface', () => setWireframe((p) => !p))}
-          <button
-            type="button"
-            onClick={stepModelRotation90}
-            title="Pivoter le modèle de 90°"
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-300 transition-all hover:bg-slate-600 hover:text-white"
-          >
-            <ArrowLeftRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            Rotation 90°
-          </button>
-
-          <Divider />
-          <SectionLabel>Affichage</SectionLabel>
           <div className="grid grid-cols-2 gap-1.5">
+            {navBtn(wireframe, wireframe ? 'Fil de fer' : 'Surface', () => setWireframe((p) => !p), true)}
             {navBtn(showGrid, showGrid ? 'Grille ●' : 'Grille ○', () => setShowGrid((p) => !p), true)}
             {navBtn(showAxes, showAxes ? 'Axes ●' : 'Axes ○', () => setShowAxes((p) => !p), true)}
+            <button type="button" onClick={stepModelRotation90}
+              className="rounded-lg bg-slate-800 py-2 text-[9px] font-bold uppercase tracking-wide text-slate-300 transition-all hover:bg-slate-600 hover:text-white flex items-center justify-center gap-1">
+              <ArrowLeftRight className="h-3 w-3" /> +90°
+            </button>
           </div>
 
+          {/* ── Vues rapides ── */}
           <Divider />
           <SectionLabel>Vues rapides</SectionLabel>
           <div className="grid grid-cols-3 gap-1">
@@ -523,93 +581,90 @@ export default function ModelViewerBlender({
               { label: 'Gauche',  preset: 'left' },
               { label: 'Droite',  preset: 'right' },
             ].map(({ label, preset }) => (
-              <button
-                key={preset}
-                type="button"
-                onClick={() => setCameraPreset(preset)}
-                className="rounded-lg bg-slate-800 py-1.5 text-[9px] font-bold uppercase tracking-wide text-slate-300 transition-all hover:bg-blue-600 hover:text-white"
-              >
+              <button key={preset} type="button" onClick={() => setCameraPreset(preset)}
+                className="rounded-lg bg-slate-800 py-1.5 text-[9px] font-bold uppercase tracking-wide text-slate-300 transition-all hover:bg-blue-600 hover:text-white">
                 {label}
               </button>
             ))}
           </div>
 
+          {/* ── Animation ── */}
+          <Divider />
+          <SectionLabel>Animation</SectionLabel>
+          <div className="space-y-2 rounded-lg bg-slate-900/60 px-2.5 py-2.5">
+            <button type="button" onClick={() => setAutoRotate((p) => !p)}
+              className={`flex w-full items-center justify-center gap-2 rounded-lg py-2 text-[10px] font-bold uppercase tracking-wide transition-all ${
+                autoRotate ? 'bg-blue-600 text-white shadow-md shadow-blue-900/40' : 'bg-slate-800 text-slate-300 hover:bg-slate-600 hover:text-white'
+              }`}>
+              {autoRotate ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+              {autoRotate ? 'Pause' : 'Auto-rotation'}
+            </button>
+            {autoRotate && (
+              <div>
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="text-[9px] font-semibold text-slate-400">Vitesse</span>
+                  <span className="rounded bg-slate-700 px-1.5 py-0.5 text-[9px] font-bold tabular-nums text-slate-200">{autoRotateSpeed.toFixed(1)}×</span>
+                </div>
+                <input type="range" min={0.3} max={5} step={0.1} value={autoRotateSpeed}
+                  onChange={(e) => setAutoRotateSpeed(Number(e.target.value))}
+                  className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-slate-700 accent-blue-500" />
+              </div>
+            )}
+          </div>
+
+          {/* ── Hippocampe ── */}
           <Divider />
           <SectionLabel>Hippocampe</SectionLabel>
           <div>
             <span className="mb-1.5 block text-[10px] font-semibold text-slate-400">Couleur du maillage</span>
-            <input
-              type="color"
-              value={color}
-              onChange={(e) => setColor(e.target.value)}
-              className="h-10 w-full cursor-pointer rounded-lg border border-slate-600 bg-slate-800 p-1"
-              title="Couleur du maillage hippocampe"
-            />
+            <input type="color" value={color} onChange={(e) => setColor(e.target.value)}
+              className="h-8 w-full cursor-pointer rounded-lg border border-slate-600 bg-slate-800 p-1" />
           </div>
 
+          {/* ── Cerveau ── */}
           {brainObjUrl ? (
             <>
               <Divider />
               <SectionLabel>Cerveau (contexte)</SectionLabel>
               <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-slate-600/60 bg-slate-800 px-3 py-2 text-[10px] font-semibold text-slate-200 transition-all hover:bg-slate-700">
-                <input
-                  type="checkbox"
-                  className="h-3.5 w-3.5 shrink-0 rounded accent-blue-500"
-                  checked={showBrain}
-                  onChange={(e) => setShowBrain(e.target.checked)}
-                />
+                <input type="checkbox" className="h-3.5 w-3.5 shrink-0 rounded accent-blue-500"
+                  checked={showBrain} onChange={(e) => setShowBrain(e.target.checked)} />
                 Enveloppe cerveau (IRM)
               </label>
-              {showBrain ? (
-                <div className="space-y-3">
+              {showBrain && (
+                <div className="space-y-2.5">
                   <div>
-                    <span className="mb-1.5 block text-[10px] font-semibold text-slate-400">Couleur du cerveau</span>
-                    <input
-                      type="color"
-                      value={brainColor}
-                      onChange={(e) => setBrainColor(e.target.value)}
-                      className="h-10 w-full cursor-pointer rounded-lg border border-slate-600 bg-slate-800 p-1"
-                      title="Teinte du volume contexte"
-                    />
+                    <span className="mb-1.5 block text-[10px] font-semibold text-slate-400">Couleur</span>
+                    <input type="color" value={brainColor} onChange={(e) => setBrainColor(e.target.value)}
+                      className="h-8 w-full cursor-pointer rounded-lg border border-slate-600 bg-slate-800 p-1" />
                   </div>
                   <div>
-                    <div className="mb-1.5 flex items-center justify-between">
+                    <div className="mb-1 flex items-center justify-between">
                       <span className="text-[10px] font-semibold text-slate-400">Opacité</span>
-                      <span className="rounded-full bg-slate-700 px-2 py-0.5 text-[9px] font-bold text-slate-300">{Math.round(opacity * 100)} %</span>
+                      <span className="rounded bg-slate-700 px-1.5 py-0.5 text-[9px] font-bold text-slate-200">{Math.round(opacity * 100)} %</span>
                     </div>
-                    <input
-                      type="range"
-                      min={0.02}
-                      max={0.75}
-                      step={0.02}
-                      value={opacity}
+                    <input type="range" min={0.02} max={0.75} step={0.02} value={opacity}
                       onChange={(e) => setOpacity(Number(e.target.value))}
-                      className="w-full accent-blue-500"
-                    />
+                      className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-slate-700 accent-blue-500" />
                   </div>
                 </div>
-              ) : null}
+              )}
             </>
           ) : null}
 
-          <div className="mt-auto">
+          {/* ── Caméra ── */}
+          <div className="mt-auto pt-1">
             <Divider />
-            <button
-              type="button"
-              onClick={resetCamera}
-              className="mt-3 w-full rounded-lg border border-slate-600/50 bg-slate-800 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-300 transition-all hover:bg-slate-600 hover:text-white"
-            >
-              Réinitialiser caméra
+            <button type="button" onClick={resetCamera}
+              className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-600/50 bg-slate-800 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-300 transition-all hover:bg-slate-600 hover:text-white">
+              <RefreshCw className="h-3 w-3" /> Réinitialiser caméra
             </button>
           </div>
         </>
       ) : null}
       {variant === 'mini' ? (
-        <button
-          type="button"
-          onClick={resetCamera}
-          className="mt-auto w-full rounded-md bg-slate-800/90 py-2 text-[9px] font-bold uppercase tracking-wide text-slate-200 hover:bg-slate-600"
-        >
+        <button type="button" onClick={resetCamera}
+          className="mt-auto w-full rounded-md bg-slate-800/90 py-2 text-[9px] font-bold uppercase tracking-wide text-slate-200 hover:bg-slate-600">
           Reset
         </button>
       ) : null}

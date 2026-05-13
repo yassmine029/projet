@@ -3,7 +3,6 @@ import { ArrowLeft, Loader2 } from 'lucide-react';
 import api, { getBrodmannIntensity } from '../api';
 import BrodmannIdentificationView from '../components/BrodmannIdentificationView';
 import BrodmannZone3D from '../components/BrodmannZone3D';
-import BrodmannIntensityPanel from '../components/BrodmannIntensityPanel';
 
 interface ImageTransform {
   offsetX: number; offsetY: number; scale: number;
@@ -88,6 +87,9 @@ interface BrodmannIntensityPayload {
   reference_brain_mean?: number | null;
   patient_relative_index?: number;
   reference_relative_index?: number | null;
+  reference_nom?: string;
+  reference_age_band_fr?: string;
+  patient_age_years?: number | null;
 }
 
 export type ExplorationPageProps = {
@@ -96,7 +98,7 @@ export type ExplorationPageProps = {
   dashboardPatientId?: number | null;
 };
 
-type RightTab = 'zones' | '3d';
+type RightTab = 'zones' | '3d' | 'carte';
 
 export default function ExplorationPage({ onBack, dashboardPatientId = null }: ExplorationPageProps) {
   const [jobId, setJobId]           = useState('');
@@ -166,6 +168,7 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
   const [brodmannIntensityLoading, setBrodmannIntensityLoading] = useState(false);
   const [brodmannIntensityError, setBrodmannIntensityError] = useState<string | null>(null);
 
+
   useEffect(() => {
     if (explorerPatientId == null) {
       setBrodmannAnalyseId(null);
@@ -204,12 +207,14 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
     async (zoneNumber: number) => {
       const useJob = brodmannAnalyseId == null && jobId;
       if (brodmannAnalyseId == null && !useJob) return;
+      if (useJob && explorerPatientId == null) return;
       setBrodmannIntensityLoading(true);
       setBrodmannIntensityError(null);
       try {
         const { data } = await getBrodmannIntensity({
           analyseId: brodmannAnalyseId ?? undefined,
           jobId: useJob ? jobId : undefined,
+          patientId: brodmannAnalyseId != null ? undefined : explorerPatientId ?? undefined,
           zoneNumber,
         });
         setBrodmannIntensityStats(data as BrodmannIntensityPayload);
@@ -224,11 +229,11 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
         setBrodmannIntensityLoading(false);
       }
     },
-    [brodmannAnalyseId, jobId]
+    [brodmannAnalyseId, jobId, explorerPatientId]
   );
 
   useEffect(() => {
-    const canIntensity = brodmannAnalyseId != null || (jobId != null && jobId !== '');
+    const canIntensity = brodmannAnalyseId != null || (jobId != null && jobId !== '' && explorerPatientId != null);
     if (!canIntensity) {
       setBrodmannIntensityStats(null);
       setBrodmannIntensityError(null);
@@ -599,19 +604,8 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
           </div>
         </main>
 
-        {/* RIGHT STRIP — Zones list + 3D */}
+        {/* RIGHT STRIP — Zones list + 3D + Carte */}
         <aside className="w-80 shrink-0 border-l border-slate-200 bg-white flex flex-col overflow-hidden shadow-sm">
-
-          <div className="shrink-0 max-h-[38vh] overflow-y-auto border-b border-slate-100 px-3 py-2.5">
-            <BrodmannIntensityPanel
-              zoneName={zone?.name}
-              zoneNumber={zone?.id}
-              stats={brodmannIntensityStats}
-              loading={brodmannIntensityLoading}
-              error={brodmannIntensityError}
-              analyseAvailable={brodmannAnalyseId != null || (jobId != null && jobId !== '')}
-            />
-          </div>
 
           {/* Tab selector */}
           <div className="flex shrink-0 border-b border-slate-100">
@@ -635,6 +629,16 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
             >
               3D
               {zone?.id && <span className="h-1.5 w-1.5 rounded-full bg-violet-500 animate-pulse" />}
+            </button>
+            <button
+              onClick={() => setRightTab('carte')}
+              className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest transition flex items-center justify-center gap-1 ${
+                rightTab === 'carte'
+                  ? 'text-emerald-600 border-b-2 border-emerald-500 bg-emerald-50/50'
+                  : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              Intensité
             </button>
           </div>
 
@@ -743,6 +747,159 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
               </div>
             </div>
           )}
+
+          {/* Intensité des zones */}
+          {rightTab === 'carte' && (() => {
+            const s = brodmannIntensityStats;
+            const ratio = s?.ratio_relative_percent ?? null;
+
+            type Accent = { bar: string; text: string; bg: string; ring: string; badge: string; label: string; desc: string };
+            let accent: Accent = { bar: 'bg-slate-300', text: 'text-slate-500', bg: 'bg-slate-50', ring: 'ring-slate-200', badge: 'bg-slate-100 text-slate-500', label: '—', desc: '' };
+            if (ratio != null) {
+              if (ratio < 70)        accent = { bar: 'bg-red-400',     text: 'text-red-600',     bg: 'bg-red-50',     ring: 'ring-red-200',     badge: 'bg-red-100 text-red-700',     label: 'Hypo-activation',     desc: 'Activité nettement inférieure à la norme pour cet âge.' };
+              else if (ratio < 90)   accent = { bar: 'bg-amber-400',   text: 'text-amber-600',   bg: 'bg-amber-50',   ring: 'ring-amber-200',   badge: 'bg-amber-100 text-amber-700',   label: 'Légèrement bas',      desc: 'Activité légèrement en-dessous de la référence.' };
+              else if (ratio <= 110) accent = { bar: 'bg-emerald-400', text: 'text-emerald-600', bg: 'bg-emerald-50', ring: 'ring-emerald-200', badge: 'bg-emerald-100 text-emerald-700', label: 'Dans la norme',     desc: 'Activité comparable au sujet de référence du même âge.' };
+              else if (ratio <= 150) accent = { bar: 'bg-blue-400',    text: 'text-blue-600',    bg: 'bg-blue-50',    ring: 'ring-blue-200',    badge: 'bg-blue-100 text-blue-700',    label: 'Légèrement élevé',   desc: 'Activité modérément supérieure à la référence.' };
+              else                   accent = { bar: 'bg-violet-400',  text: 'text-violet-600',  bg: 'bg-violet-50',  ring: 'ring-violet-200',  badge: 'bg-violet-100 text-violet-700',  label: 'Hyper-activation',   desc: 'Activité nettement supérieure à la norme pour cet âge.' };
+            }
+
+            const barW = ratio == null ? 0 : Math.min(Math.max(ratio, 0), 200) / 2;
+            const fmt = (v: number | null | undefined) =>
+              typeof v === 'number' && Number.isFinite(v)
+                ? v.toLocaleString('fr-FR', { maximumFractionDigits: 2 })
+                : '—';
+
+            if (brodmannIntensityLoading) return (
+              <div className="flex flex-1 items-center justify-center gap-2 text-slate-400">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="text-[11px]">Analyse en cours…</span>
+              </div>
+            );
+
+            if (!zone?.id) return (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
+                <div className="h-10 w-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-300 text-xl">⬡</div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">Cliquez sur une zone dans l'image pour afficher son analyse d'intensité.</p>
+              </div>
+            );
+
+            if (!s) return (
+              <div className="flex flex-1 items-center justify-center px-5 text-center">
+                <p className="text-[11px] text-amber-600">{brodmannIntensityError || 'Aucune donnée disponible.'}</p>
+              </div>
+            );
+
+            return (
+              <div className="flex-1 overflow-y-auto custom-scrollbar px-3 py-3 space-y-2.5">
+
+                {/* ── Identité de la zone ── */}
+                <div className={`rounded-2xl p-3.5 ${accent.bg} ring-1 ${accent.ring}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[8px] font-black uppercase tracking-widest text-slate-400 mb-0.5">Zone analysée</p>
+                      <p className="text-[13px] font-bold text-slate-800 leading-snug">{zone.name}</p>
+                      <p className="text-[10px] font-mono text-slate-400 mt-0.5">Aire de Brodmann {zone.id}</p>
+                    </div>
+                    <span className={`shrink-0 text-[8px] font-black px-2 py-1 rounded-full ${accent.badge}`}>{accent.label}</span>
+                  </div>
+                  {s.reference_nom && (
+                    <div className="mt-2 pt-2 border-t border-black/5 text-[10px] text-slate-500">
+                      Comparé à <span className="font-semibold text-slate-700">{s.reference_nom}</span>
+                      {s.reference_age_band_fr ? ` (${s.reference_age_band_fr})` : ''}
+                      {s.patient_age_years != null ? ` · patient ${s.patient_age_years} ans` : ''}
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Ratio comparable — indicateur principal ── */}
+                <div className="rounded-2xl border border-slate-100 bg-white p-3.5 shadow-sm">
+                  <div className="flex items-center justify-between mb-0.5">
+                    <p className="text-[8px] font-black uppercase tracking-widest text-slate-400">Ratio d'activité</p>
+                    <span className="text-[8px] text-slate-400">réf. = 100 %</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mb-2 leading-relaxed">
+                    Contraste zone/cerveau du patient, exprimé en % du même contraste chez le sujet de référence.
+                    Corrige les différences d'échelle — c'est l'indicateur principal à interpréter.
+                  </p>
+                  <div className="flex items-end justify-between mb-2">
+                    <span className={`text-3xl font-black leading-none ${accent.text}`}>
+                      {ratio != null ? `${ratio.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %` : '—'}
+                    </span>
+                  </div>
+                  <div className="relative h-2.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                    <div className={`h-full rounded-full transition-all duration-500 ${accent.bar}`} style={{ width: `${barW}%` }} />
+                    {/* Marqueur 100 % */}
+                    <div className="absolute top-0 bottom-0 w-px bg-slate-400/50" style={{ left: '50%' }} />
+                  </div>
+                  <div className="flex justify-between mt-1 text-[8px] text-slate-300">
+                    <span>0 %</span><span className="text-slate-400 font-semibold">100 %</span><span>200 %</span>
+                  </div>
+                  {accent.desc && (
+                    <p className={`mt-2 text-[10px] font-medium ${accent.text}`}>{accent.desc}</p>
+                  )}
+                </div>
+
+                {/* ── Intensité SUVR par zone ── */}
+                <div className="rounded-2xl border border-blue-100 bg-blue-50/40 p-3.5 shadow-sm">
+                  <div className="flex items-center justify-between mb-0.5">
+                    <p className="text-[8px] font-black uppercase tracking-widest text-blue-500">Intensité moyenne dans la zone</p>
+                    <span className="text-[8px] font-bold text-blue-300 bg-blue-100 px-1.5 py-0.5 rounded">SUVR</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 mb-2.5 leading-relaxed">
+                    Intensité normalisée par la moyenne du cerveau entier (SUVR). Valeur &gt; 1 = zone plus active que la moyenne, &lt; 1 = moins active. Patient et référence sont directement comparables.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-xl bg-blue-600 p-2.5 shadow-sm">
+                      <p className="text-[8px] text-blue-200 font-semibold">Patient</p>
+                      <p className="text-[15px] font-black text-white font-mono mt-0.5">
+                        {fmt(s.patient_zone_mean)}
+                        <span className="ml-1 text-[9px] font-normal text-blue-200">SUVR</span>
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-white border border-blue-100 p-2.5">
+                      <p className="text-[8px] text-slate-400 font-semibold">Référence ({s.reference_nom ?? '—'})</p>
+                      <p className="text-[15px] font-black text-blue-700 font-mono mt-0.5">
+                        {fmt(s.reference_zone_mean)}
+                        <span className="ml-1 text-[9px] font-normal text-blue-400">SUVR</span>
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+{/* ── Sommes SUVR ── */}
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5 shadow-sm">
+                  <div className="flex items-center justify-between mb-0.5">
+                    <p className="text-[8px] font-black uppercase tracking-widest text-slate-400">Sommes SUVR</p>
+                    <span className="text-[8px] font-bold text-slate-400 bg-slate-200 px-1.5 py-0.5 rounded">SUVR · voxels</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mb-2.5 leading-relaxed">
+                    Somme des valeurs SUVR sur tous les voxels de la zone. Patient et référence sont maintenant sur la même échelle.
+                  </p>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between rounded-lg bg-white border border-slate-200 px-3 py-2">
+                      <span className="text-[10px] font-semibold text-slate-600">Patient</span>
+                      <span className="text-[11px] font-black font-mono text-slate-800">
+                        {fmt(s.somme_patient)} <span className="text-[8px] font-normal text-slate-400">SUVR</span>
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg bg-white border border-slate-200 px-3 py-2">
+                      <span className="text-[10px] font-semibold text-slate-600">Référence</span>
+                      <span className="text-[11px] font-black font-mono text-slate-500">
+                        {fmt(s.somme_reference)} <span className="text-[8px] font-normal text-slate-400">SUVR</span>
+                      </span>
+                    </div>
+                    <div className={`flex items-center justify-between rounded-lg px-3 py-2 ${s.difference != null && s.difference < 0 ? 'bg-red-50 border border-red-200' : 'bg-emerald-50 border border-emerald-200'}`}>
+                      <span className="text-[10px] font-semibold text-slate-600">Différence</span>
+                      <span className={`text-[11px] font-black font-mono ${s.difference != null ? (s.difference < 0 ? 'text-red-600' : 'text-emerald-600') : 'text-slate-500'}`}>
+                        {fmt(s.difference)} <span className="text-[8px] font-normal opacity-70">SUVR</span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            );
+          })()}
 
         </aside>
 

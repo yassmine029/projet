@@ -91,9 +91,6 @@ from .serializers import (
     PatientImageSerializer, OrientationSerializer
 )
 # auto_registration (ANTs) supprimé — MINE uniquement
-from .mine_registration import run_mine_registration
-from .segmentation_inference import run_segmentation_on_files
-from .modelisation_3d import run_modelisation_3d, parse_spacing, parse_reference_values
 
 # Setup logging - just flush stdout for real-time output
 sys.stdout.flush()
@@ -1010,7 +1007,7 @@ def register(request):
             print(f"Yassmine now the register SUCCESS for user: {username}")
             if is_bootstrap_admin:
                 return JsonResponse({'ok': True, 'message': 'Compte admin initial créé avec succès'})
-            return JsonResponse({'ok': True, 'message': 'Compte créé avec succès'})
+            return JsonResponse({'ok': True, 'message': 'Compte en attente de validation admin'})
     except IntegrityError as e:
         print(f"Yassmine now the register FAILED - IntegrityError for username: {username}, error: {str(e)}")
         return JsonResponse({'ok': False, 'error': 'username already exists'}, status=400)
@@ -1705,6 +1702,8 @@ def auto_align(request):
         def on_progress(pct: int, msg: str):
             _emit_registration_progress(job_id, pct, 'optimisation', msg)
         
+        from .mine_registration import run_mine_registration
+
         result = run_mine_registration(
             ref_path,
             pat_path,
@@ -2279,6 +2278,29 @@ def project_brodmann(request):
     return HttpResponse(buf.tobytes(), content_type='image/png')
 
 
+def _brodmann_reference_nom_band_for_age(age_years):
+    """
+    Âge du patient -> ReferenceIntensity.nom (sujet1..sujet5) + libellé tranche.
+    Retourne (nom, libelle_fr, erreur_detail) ; si erreur_detail est non vide, rejeter la requête.
+    """
+    if age_years is None:
+        return None, None, (
+            'La date de naissance du patient est absente sur la fiche dossier. '
+            "Renseignez-la pour comparer aux normes d'intensité par tranche d'âge."
+        )
+    if age_years < 16:
+        return 'sujet1', 'moins de 16 ans (référence jeune adulte)', None
+    if 16 <= age_years <= 24:
+        return 'sujet1', '16-24 ans', None
+    if 25 <= age_years <= 54:
+        return 'sujet2', '25-54 ans', None
+    if 55 <= age_years <= 64:
+        return 'sujet3', '55-64 ans', None
+    if 65 <= age_years <= 75:
+        return 'sujet4', '65-75 ans', None
+    return 'sujet5', 'plus de 75 ans', None
+
+
 @api_view(['GET'])
 @authentication_classes([CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
@@ -2291,11 +2313,13 @@ def brodmann_intensity(request):
       zone_number (int) : indice Harvard–Oxford (identification).
       analyse_id (int, optionnel) : volume archivé (modèle Analyse).
       job_id (str, optionnel) : session de recalage (même volume que les coupes affichées).
+      patient_id (int, requis avec job_id) : dossier patient pour l'âge -> sujet1..sujet5.
 
     Fournir analyse_id ou job_id ; si les deux sont présents, analyse_id est utilisé.
 
     Réponse : sommes brutes, ratio brut (souvent non interprétable), et champs
     ratio_relative_percent / moyennes par zone lorsque le fichier IRM du sujet de référence est lisible.
+    reference_nom / reference_age_band_fr / patient_age_years selon la tranche.
     """
     qp = request.query_params
     analyse_raw = qp.get('analyse_id')
@@ -2326,13 +2350,53 @@ def brodmann_intensity(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # ── Référence d'intensité : lecture BDD uniquement (pas de NIfTI) ───────
-    ref_row = ReferenceIntensity.objects.order_by('-date_creation').first()
+    # ── Patient lié (âge -> référence sujet1 .. sujet5) ───────────────────────
+    analyse = None
+    if use_analyse:
+        analyse = get_object_or_404(
+            Analyse.objects.select_related('patient'),
+            pk=analyse_id,
+            patient__doctor=request.user,
+        )
+        patient_for_age = analyse.patient
+    else:
+        patient_pid_raw = (qp.get('patient_id') or '').strip()
+        if not patient_pid_raw:
+            return Response(
+                {
+                    'detail': (
+                        "Indiquez le patient (patient_id) pour choisir la référence "
+                        "d'intensité selon l'âge."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            patient_pid = int(patient_pid_raw)
+        except (TypeError, ValueError):
+            return Response(
+                {'detail': 'patient_id invalide.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        patient_for_age = get_object_or_404(
+            Patient,
+            pk=patient_pid,
+            doctor=request.user,
+        )
+
+    age_years = _compute_age(getattr(patient_for_age, 'date_naissance', None))
+    ref_nom, ref_band_fr, age_err = _brodmann_reference_nom_band_for_age(age_years)
+    if age_err:
+        return Response({'detail': age_err}, status=status.HTTP_400_BAD_REQUEST)
+
+    ref_row = ReferenceIntensity.objects.filter(nom=ref_nom).first()
     if ref_row is None:
         return Response(
             {
-                'detail': 'Aucune ReferenceIntensity en base. Exécuter : '
-                'python manage.py runscript setup_reference_intensity',
+                'detail': (
+                    f'Aucune référence d\'intensité « {ref_nom} » en base pour la tranche « {ref_band_fr} ». '
+                    'Enregistrez ce sujet via setup_reference_intensity (REFERENCE_INTENSITY_NOM).'
+                ),
             },
             status=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
@@ -2340,7 +2404,12 @@ def brodmann_intensity(request):
     key = str(zone_number)
     if key not in (ref_row.brodmann_intensities or {}):
         return Response(
-            {'detail': f'Zone {zone_number} absente du JSON de référence (relancer runscript setup_reference_intensity si besoin).'},
+            {
+                'detail': (
+                    f'Zone {zone_number} absente pour la référence {ref_nom} '
+                    '(relancer setup_reference_intensity pour ce sujet si besoin).'
+                ),
+            },
             status=status.HTTP_404_NOT_FOUND,
         )
     somme_reference = float(ref_row.brodmann_intensities[key])
@@ -2357,11 +2426,6 @@ def brodmann_intensity(request):
         )
 
     if use_analyse:
-        analyse = get_object_or_404(
-            Analyse.objects.select_related('patient'),
-            pk=analyse_id,
-            patient__doctor=request.user,
-        )
         try:
             patient_path = analyse.mri_registered.path
         except Exception:
@@ -2449,13 +2513,15 @@ def brodmann_intensity(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    somme_patient = float(np.sum(patient_data[mask]))
-    n_vox = int(np.sum(mask))
-    patient_zone_mean = somme_patient / max(n_vox, 1)
+    # Normalisation SUVR : diviser chaque voxel par la moyenne du cerveau entier du patient.
+    # Ainsi patient_zone_mean > 1 = hyperactif, < 1 = hypoactif, comparable à la référence.
     patient_brain_mean = float(np.mean(patient_data[brain_mask]))
-    patient_rel_index = patient_zone_mean / max(patient_brain_mean, 1e-12)
+    patient_data_suvr = patient_data / max(patient_brain_mean, 1e-12)
+    n_vox = int(np.sum(mask))
+    patient_zone_mean = float(np.mean(patient_data_suvr[mask]))   # SUVR patient
+    somme_patient = float(np.sum(patient_data_suvr[mask]))
+    patient_rel_index = patient_zone_mean                          # = zone_mean/brain_mean par construction
 
-    # Somme JSON (ancienne) ; recalcul préféré depuis le fichier référence pour aligner les échelles.
     somme_reference = float(ref_row.brodmann_intensities[key])
     reference_zone_mean = None
     reference_brain_mean = None
@@ -2481,17 +2547,21 @@ def brodmann_intensity(request):
                 bm_ref = labels_ref > 0
                 if np.any(bm_ref):
                     reference_brain_mean = float(np.mean(ref_data[bm_ref]))
+                    # Normalisation SUVR pour la référence : même logique
+                    ref_data_suvr = ref_data / max(reference_brain_mean, 1e-12)
                     mask_ref = labels_ref == zone_number
                     if np.any(mask_ref):
-                        somme_reference = float(np.sum(ref_data[mask_ref]))
                         nv_ref = int(np.sum(mask_ref))
-                        reference_zone_mean = somme_reference / max(nv_ref, 1)
-                        reference_rel_index = reference_zone_mean / max(reference_brain_mean, 1e-12)
+                        reference_zone_mean = float(np.mean(ref_data_suvr[mask_ref]))
+                        somme_reference = float(np.sum(ref_data_suvr[mask_ref]))
+                        reference_rel_index = reference_zone_mean   # = zone_mean/brain_mean
         except Exception:
             pass
 
-    if reference_rel_index is not None and reference_rel_index > 0:
-        ratio_relative_percent = float((patient_rel_index / reference_rel_index) * 100.0)
+    # Ratio SUVR : patient_zone_mean / reference_zone_mean × 100
+    # Les deux sont déjà normalisés par leur propre brain_mean → directement comparables
+    if reference_zone_mean is not None and reference_zone_mean > 0:
+        ratio_relative_percent = float((patient_zone_mean / reference_zone_mean) * 100.0)
 
     difference = somme_patient - somme_reference
     if somme_reference == 0.0:
@@ -2513,6 +2583,198 @@ def brodmann_intensity(request):
         'reference_brain_mean': reference_brain_mean,
         'patient_relative_index': patient_rel_index,
         'reference_relative_index': reference_rel_index,
+        'reference_nom': ref_nom,
+        'reference_age_band_fr': ref_band_fr,
+        'patient_age_years': age_years,
+    })
+
+
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def brodmann_all_intensities(request):
+    """
+    Retourne ratio_relative_percent pour TOUTES les zones disponibles en une seule requête.
+    Params identiques à brodmann_intensity mais sans zone_number.
+    Réponse : { zones: [ { zone_number, ratio_relative_percent, patient_zone_mean,
+                           reference_zone_mean, patient_relative_index, reference_relative_index } ],
+                reference_nom, reference_age_band_fr, patient_age_years }
+    """
+    qp = request.query_params
+    analyse_raw = qp.get('analyse_id')
+    job_raw = (qp.get('job_id') or '').strip()
+
+    use_analyse = analyse_raw not in (None, '')
+    if use_analyse:
+        try:
+            analyse_id = int(analyse_raw)
+        except (TypeError, ValueError):
+            return Response({'detail': 'analyse_id invalide.'}, status=status.HTTP_400_BAD_REQUEST)
+    elif job_raw:
+        analyse_id = None
+    else:
+        return Response(
+            {'detail': 'Fournir analyse_id ou job_id.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    analyse = None
+    if use_analyse:
+        analyse = get_object_or_404(
+            Analyse.objects.select_related('patient'),
+            pk=analyse_id,
+            patient__doctor=request.user,
+        )
+        patient_for_age = analyse.patient
+    else:
+        patient_pid_raw = (qp.get('patient_id') or '').strip()
+        if not patient_pid_raw:
+            return Response(
+                {'detail': "Indiquez le patient (patient_id) pour choisir la référence d'intensité selon l'âge."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            patient_pid = int(patient_pid_raw)
+        except (TypeError, ValueError):
+            return Response({'detail': 'patient_id invalide.'}, status=status.HTTP_400_BAD_REQUEST)
+        patient_for_age = get_object_or_404(Patient, pk=patient_pid, doctor=request.user)
+
+    age_years = _compute_age(getattr(patient_for_age, 'date_naissance', None))
+    ref_nom, ref_band_fr, age_err = _brodmann_reference_nom_band_for_age(age_years)
+    if age_err:
+        return Response({'detail': age_err}, status=status.HTTP_400_BAD_REQUEST)
+
+    ref_row = ReferenceIntensity.objects.filter(nom=ref_nom).first()
+    if ref_row is None:
+        return Response(
+            {'detail': f"Aucune référence d'intensité « {ref_nom} » en base pour la tranche « {ref_band_fr} »."},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    try:
+        from api.official_atlas import load_official_mni_atlas_bundle
+        template_img, labels_img, _lut = load_official_mni_atlas_bundle()
+    except Exception as exc:
+        return Response(
+            {'detail': f'Impossible de charger la carte des régions Nilearn : {exc}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+    if use_analyse:
+        try:
+            patient_path = analyse.mri_registered.path
+        except Exception:
+            patient_path = ''
+        if not patient_path or not os.path.isfile(patient_path):
+            return Response(
+                {'detail': 'Fichier IRM recalée introuvable sur le disque.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            patient_img = nib.load(patient_path)
+            patient_data = np.asanyarray(patient_img.dataobj).astype(np.float64, copy=False)
+            atlas_on_patient = resample_to_img(labels_img, patient_img, interpolation='nearest', force_resample=True)
+            labels = np.rint(np.asanyarray(atlas_on_patient.dataobj)).astype(np.int32)
+        except Exception as exc:
+            return Response({'detail': f'Erreur lecture NIfTI / atlas : {exc}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    else:
+        from api.volume_api import _get_job_entry
+        entry = _get_job_entry(job_raw)
+        if entry is None:
+            return Response(
+                {'detail': 'Session de recalage introuvable ou expirée.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        vol = entry.get('registered_data') or entry.get('pending_registered_data')
+        if vol is None:
+            return Response(
+                {'detail': "Pas encore de volume recalé dans cette session — validez d'abord le recalage."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            patient_data = np.asarray(vol, dtype=np.float64)
+            patient_img = nib.Nifti1Image(patient_data.astype(np.float64), template_img.affine, template_img.header)
+            atlas_on_patient = resample_to_img(labels_img, patient_img, interpolation='nearest', force_resample=True)
+            labels = np.rint(np.asanyarray(atlas_on_patient.dataobj)).astype(np.int32)
+        except Exception as exc:
+            return Response({'detail': f'Erreur volume session / atlas : {exc}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    if labels.shape != patient_data.shape:
+        return Response({'detail': 'Forme atlas != forme volume patient après rééchantillonnage.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    brain_mask = labels > 0
+    patient_brain_mean = float(np.mean(patient_data[brain_mask])) if np.any(brain_mask) else 1e-12
+    # Normalisation SUVR patient : diviser par la moyenne cerveau → brain_mean = 1.0
+    patient_data_suvr = patient_data / max(patient_brain_mean, 1e-12)
+
+    # Charger le NIfTI de référence pour les moyennes SUVR
+    rel_media = (ref_row.mri_registered_path or '').strip().replace('\\', '/')
+    ref_path = None
+    if rel_media:
+        ref_path = rel_media if os.path.isabs(rel_media) else os.path.join(str(settings.MEDIA_ROOT), rel_media)
+
+    ref_data_suvr = None
+    labels_ref = None
+    reference_brain_mean = None
+    if ref_path and os.path.isfile(ref_path):
+        try:
+            ref_img = nib.load(ref_path)
+            ref_data = np.asanyarray(ref_img.dataobj).astype(np.float64, copy=False)
+            atlas_on_ref = resample_to_img(labels_img, ref_img, interpolation='nearest', force_resample=True)
+            labels_ref = np.rint(np.asanyarray(atlas_on_ref.dataobj)).astype(np.int32)
+            if labels_ref.shape == ref_data.shape:
+                bm_ref = labels_ref > 0
+                if np.any(bm_ref):
+                    reference_brain_mean = float(np.mean(ref_data[bm_ref]))
+                    # Normalisation SUVR référence
+                    ref_data_suvr = ref_data / max(reference_brain_mean, 1e-12)
+        except Exception:
+            ref_data_suvr = None
+            labels_ref = None
+
+    results = []
+    for zone_key, somme_ref_json in (ref_row.brodmann_intensities or {}).items():
+        try:
+            zone_number = int(zone_key)
+        except (TypeError, ValueError):
+            continue
+        mask = labels == zone_number
+        if not np.any(mask):
+            continue
+        n_vox = int(np.sum(mask))
+        patient_zone_mean = float(np.mean(patient_data_suvr[mask]))   # SUVR patient
+        somme_patient = float(np.sum(patient_data_suvr[mask]))
+        patient_rel_index = patient_zone_mean
+
+        reference_zone_mean = None
+        reference_rel_index = None
+        ratio_relative_percent = None
+
+        if ref_data_suvr is not None and labels_ref is not None:
+            mask_ref = labels_ref == zone_number
+            if np.any(mask_ref):
+                reference_zone_mean = float(np.mean(ref_data_suvr[mask_ref]))  # SUVR référence
+                reference_rel_index = reference_zone_mean
+                if reference_zone_mean > 0:
+                    ratio_relative_percent = float((patient_zone_mean / reference_zone_mean) * 100.0)
+
+        results.append({
+            'zone_number': zone_number,
+            'ratio_relative_percent': ratio_relative_percent,
+            'patient_zone_mean': patient_zone_mean,
+            'reference_zone_mean': reference_zone_mean,
+            'patient_relative_index': patient_rel_index,
+            'reference_relative_index': reference_rel_index,
+            'n_voxels': n_vox,
+        })
+
+    results.sort(key=lambda z: z['zone_number'])
+
+    return Response({
+        'zones': results,
+        'reference_nom': ref_nom,
+        'reference_age_band_fr': ref_band_fr,
+        'patient_age_years': age_years,
     })
 
 
@@ -2775,6 +3037,7 @@ def launch_patient_segmentation(request, patient_id):
     )
 
     try:
+        from .segmentation_inference import run_segmentation_on_files
         results = run_segmentation_on_files(mri_files, model_key=model, threshold=threshold)
 
         created_results = []
@@ -3032,6 +3295,7 @@ def segmentation_run_resegment_masks(request, run_id):
     mri_files = [row.mri_file for row in mask_rows]
 
     try:
+        from .segmentation_inference import run_segmentation_on_files
         results = run_segmentation_on_files(mri_files, model_key=model, threshold=float(run.threshold))
     except FileNotFoundError as e:
         return JsonResponse({'ok': False, 'error': str(e)}, status=500)
@@ -3087,6 +3351,8 @@ def segmentation_run_modelisation_3d(request, run_id):
     structure = str(request.data.get('structure') or 'both').strip().lower()
     quality = str(request.data.get('quality') or 'standard').strip().lower()
     smoothing = str(request.data.get('smoothing') or 'low').strip().lower()
+
+    from .modelisation_3d import run_modelisation_3d, parse_spacing, parse_reference_values
 
     spacing = parse_spacing(
         {
@@ -3776,6 +4042,8 @@ def segmentation_run_report_pdf(request, run_id):
     structure = str(request.data.get('structure') or 'both').strip().lower()
     quality = str(request.data.get('quality') or 'standard').strip().lower()
     smoothing = str(request.data.get('smoothing') or 'low').strip().lower()
+    from .modelisation_3d import run_modelisation_3d, parse_spacing, parse_reference_values
+
     spacing = parse_spacing(
         {
             'spacing_z': request.data.get('spacing_z'),
@@ -3841,8 +4109,14 @@ def patient_segmentation_history(request, patient_id):
         .order_by('completed_at', 'created_at')
     )
 
-    data = []
-    run_fingerprints = []   # une empreinte (frozenset d'IDs) par run inclus dans data
+    MODEL_LABELS = {
+        'unetpp':    'Modèle 1',
+        'nnunet':    'Modèle 2',
+        'swinunetr': 'Modèle 3',
+    }
+
+    # Collecter tous les runs valides avec leur empreinte IRM et leur modèle
+    raw_entries = []   # (fingerprint, fingerprint_str, exam_date, entry_dict)
 
     for run in runs:
         # Calcul à la volée si volumes manquants
@@ -3862,22 +4136,31 @@ def patient_segmentation_history(request, patient_id):
                     'asymmetry_index', 'normality_index', 'z_score',
                 ])
             except Exception:
-                pass  # Run sans masques valides — on continue
+                pass
+        # Inclure le run même sans volumes : le frontend affiche la zone d'import
 
-        # N'inclure que les runs avec des volumes calculables
-        if run.left_volume_mm3 is None:
-            continue
-
-        # Empreinte = ensemble des IDs de fichiers IRM utilisés par ce run
         run_mri_ids = frozenset(r.mri_file_id for r in run.results.all() if r.mri_file_id)
-        run_fingerprints.append(run_mri_ids)
+        exam_date   = run.completed_at or run.created_at
 
-        exam_date = run.completed_at or run.created_at
-        data.append({
+        # Clé d'acquisition : acquisition_id partagé si disponible, sinon fingerprint fichiers
+        acq_ids = set(
+            r.mri_file.acquisition_id
+            for r in run.results.all()
+            if r.mri_file and r.mri_file.acquisition_id
+        )
+        # Clé d'acquisition : UUID si disponible (fiable), sinon hash des fichiers source
+        fingerprint = next(iter(acq_ids)) if len(acq_ids) == 1 else run_mri_ids
+        fp_str      = str(next(iter(acq_ids))) if len(acq_ids) == 1 else str(sorted(run_mri_ids))
+
+        has_volumes = run.left_volume_mm3 is not None
+        raw_entries.append((fingerprint, fp_str, exam_date, {
             'id':               run.id,
             'date':             exam_date.date().isoformat() if exam_date else None,
             'date_display':     exam_date.strftime('%d/%m/%Y') if exam_date else '—',
-            'model_key':        run.model_key,
+            'model_key':        run.model_key or 'unetpp',
+            'model_label':      MODEL_LABELS.get(run.model_key or '', run.model_key or 'Modèle'),
+            'acquisition_id':   fp_str,
+            'has_volumes':      has_volumes,
             'left_volume_mm3':  run.left_volume_mm3,
             'right_volume_mm3': run.right_volume_mm3,
             'total_volume_mm3': run.total_volume_mm3,
@@ -3885,19 +4168,26 @@ def patient_segmentation_history(request, patient_id):
             'normality_index':  run.normality_index,
             'z_score':          run.z_score,
             'source_mri_ids':   sorted(run_mri_ids),
-        })
+        }))
 
-    # all_same_source = vrai si tous les runs ont analysé exactement le même jeu de fichiers IRM
-    unique_fingerprints = set(run_fingerprints)
+    # Compter les IRM distincts (pour all_same_source et unique_mri_count)
+    unique_fingerprints = set(fp for fp, _, _, _ in raw_entries)
     unique_mri_count    = len(unique_fingerprints)
-    all_same_source     = unique_mri_count <= 1 and len(data) > 0
+    all_same_source     = unique_mri_count <= 1 and len(raw_entries) > 0
+
+    # Retourner TOUS les runs triés par date croissante
+    # Le frontend groupe par acquisition_id pour l'affichage multi-modèles
+    data = [
+        entry
+        for _, _, date, entry in sorted(raw_entries, key=lambda x: x[2] or '')
+    ]
 
     return JsonResponse({
-        'ok':              True,
-        'history':         data,
-        'count':           len(data),
+        'ok':               True,
+        'history':          data,
+        'count':            len(data),
         'unique_mri_count': unique_mri_count,
-        'all_same_source': all_same_source,
+        'all_same_source':  all_same_source,
     })
 
 
@@ -4541,7 +4831,6 @@ def emergency_stage_patient(request):
         return JsonResponse({'ok': False, 'error': 'Au moins un fichier est requis.'}, status=400)
 
     dossier_number = _next_dossier_number()
-    from datetime import date as _date
 
     try:
         with transaction.atomic():
@@ -4549,7 +4838,7 @@ def emergency_stage_patient(request):
                 dossier_number=dossier_number,
                 nom='Urgence',
                 prenom='Import',
-                date_naissance=_date(1990, 1, 1),
+                date_naissance=None,
                 sexe='M',
                 doctor=request.user,
                 emergency_temp=True,
@@ -5228,8 +5517,10 @@ def patients_list_create(request):
                 return JsonResponse({'ok': False, 'error': 'Format de date invalide (attendu : YYYY-MM-DD).'}, status=400)
 
         date_naissance_val = (raw_data.get('date_naissance') or '').strip()
-        if not date_naissance_val:
-            return JsonResponse({'ok': False, 'error': 'La date de naissance est obligatoire.'}, status=400)
+        date_naissance_for_model = None
+        if date_naissance_val:
+            from datetime import date as _date
+            date_naissance_for_model = _date.fromisoformat(date_naissance_val)
 
         sexe_val = (raw_data.get('sexe') or '').strip()
         if sexe_val not in ('M', 'F'):
@@ -5245,7 +5536,7 @@ def patients_list_create(request):
             'dossier_number': dossier_number,
             'nom': (raw_data.get('nom') or 'Patient').strip(),
             'prenom': (raw_data.get('prenom') or dossier_number).strip(),
-            'date_naissance': date_naissance_val,
+            'date_naissance': date_naissance_for_model,
             'sexe': sexe_val,
             'telephone': raw_data.get('telephone') or None,
             'email': raw_data.get('email') or None,
@@ -5276,6 +5567,14 @@ def patients_list_create(request):
                 if not is_json and not files:
                     transaction.set_rollback(True)
                     return JsonResponse({'ok': False, 'error': 'Un dossier contenant au moins un fichier est obligatoire.'}, status=400)
+
+                # acquisition_id de l'IRM initial : fourni par le frontend ou généré ici
+                import uuid as _uuid
+                raw_acq_init = (request.POST.get('acquisition_id', '') or '').strip()
+                try:
+                    initial_acquisition_id = _uuid.UUID(raw_acq_init) if raw_acq_init else _uuid.uuid4()
+                except ValueError:
+                    initial_acquisition_id = _uuid.uuid4()
 
                 ALLOWED_EXTENSIONS = {
                     '.nii', '.gz', '.dcm', '.dicom',
@@ -5314,6 +5613,7 @@ def patients_list_create(request):
                         original_filename=uploaded_file.name,
                         relative_path=safe_rel,
                         file_size=int(getattr(uploaded_file, 'size', 0) or 0),
+                        acquisition_id=initial_acquisition_id,
                     )
                     _ensure_mri_file_dimensions(mri_rec)  # ✅ ajout de nadine
 
@@ -5407,6 +5707,15 @@ def upload_mri_files(request, patient_id: int):
     if not files:
         return JsonResponse({'ok': False, 'error': 'No files provided'}, status=400)
 
+    # acquisition_id partagé par tous les fichiers de ce batch — fourni par le frontend
+    # ou généré ici si absent (rétrocompatibilité).
+    import uuid as _uuid
+    raw_acq = request.POST.get('acquisition_id', '').strip()
+    try:
+        batch_acquisition_id = _uuid.UUID(raw_acq) if raw_acq else _uuid.uuid4()
+    except ValueError:
+        batch_acquisition_id = _uuid.uuid4()
+
     uploaded_count = 0
     errors = []
     relative_paths = request.POST.getlist('relative_paths')
@@ -5417,13 +5726,14 @@ def upload_mri_files(request, patient_id: int):
             safe_rel = _safe_relative_path(rel_from_client, f.name)
             storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
             saved_path = default_storage.save(storage_path, f)
-            
+
             rec = MRIFile.objects.create(
                 patient=patient,
                 file=saved_path,
                 original_filename=f.name,
                 relative_path=safe_rel,
                 file_size=int(getattr(f, 'size', 0) or 0),
+                acquisition_id=batch_acquisition_id,
             )
             _ensure_mri_file_dimensions(rec)
             uploaded_count += 1
@@ -6494,53 +6804,71 @@ def save_patient_report(request, patient_id):
         if new_volume is None and run.total_volume_mm3:
             new_volume = run.total_volume_mm3
 
-        # Cas 2 : un run différent a analysé les mêmes fichiers IRM (empreinte identique)
-        new_mri_ids = frozenset(
+        # Cas 2 : même IRM ET même modèle déjà archivé — bloquer le doublon exact
+        # On autorise différents modèles sur le même IRM (chaque modèle = rapport distinct)
+        new_mri_ids   = frozenset(
             SegmentationMaskResult.objects
             .filter(run=run)
             .values_list('mri_file_id', flat=True)
         )
+        new_model_key = run.model_key or ''
+
+        # Utiliser acquisition_id si disponible pour une comparaison fiable
+        new_acq_ids = set(
+            mf.acquisition_id
+            for mf in [
+                getattr(r, 'mri_file', None)
+                for r in run.results.all()
+            ]
+            if mf and getattr(mf, 'acquisition_id', None)
+        )
+        new_acq_key = next(iter(new_acq_ids)) if len(new_acq_ids) == 1 else None
 
         existing_reports = (
             PatientReport.objects
             .filter(patient=patient, segmentation_run__isnull=False)
             .exclude(segmentation_run=run)
             .select_related('segmentation_run')
-            .prefetch_related('segmentation_run__results')
+            .prefetch_related('segmentation_run__results__mri_file')
             .order_by('created_at')
         )
 
         for existing in existing_reports:
             existing_run = existing.segmentation_run
-            matched = False
+            same_irm     = False
+            same_model   = (existing_run.model_key or '') == new_model_key
 
-            # Critère A — mêmes fichiers IRM source
-            if new_mri_ids:
+            # Comparer par acquisition_id (fiable) en priorité
+            if new_acq_key:
+                ex_acq_ids = set(
+                    getattr(r.mri_file, 'acquisition_id', None)
+                    for r in existing_run.results.all()
+                    if getattr(r, 'mri_file', None)
+                )
+                ex_acq_key = next(iter(ex_acq_ids)) if len(ex_acq_ids) == 1 else None
+                if ex_acq_key and ex_acq_key == new_acq_key:
+                    same_irm = True
+            # Fallback : comparer par empreinte de fichiers
+            elif new_mri_ids:
                 existing_mri_ids = frozenset(
                     r.mri_file_id
                     for r in existing_run.results.all()
                     if r.mri_file_id
                 )
                 if existing_mri_ids and existing_mri_ids == new_mri_ids:
-                    matched = True
+                    same_irm = True
 
-            # Critère B — volumes quasi-identiques (< 1 % d'écart)
-            # couvre le cas : même IRM, prétraitement différent (ex. 124 → 90 coupes)
-            if not matched and new_volume and existing_run.total_volume_mm3:
-                diff_pct = abs(new_volume - existing_run.total_volume_mm3) / existing_run.total_volume_mm3 * 100
-                if diff_pct < 1.0:
-                    matched = True
-
-            if matched:
+            # Bloquer uniquement si même IRM ET même modèle
+            if same_irm and same_model:
                 return JsonResponse({
                     "ok": False,
                     "already_saved": True,
                     "existing_report_id": existing.id,
                     "existing_report_date": existing.created_at.strftime("%d/%m/%Y à %H:%M"),
                     "error": (
-                        f"Un résultat équivalent est déjà enregistré dans le dossier patient "
+                        f"Un résultat issu du même IRM avec le même modèle est déjà enregistré "
                         f"(rapport du {existing.created_at.strftime('%d/%m/%Y à %H:%M')}). "
-                        f"Inutile de l'enregistrer à nouveau."
+                        f"Pour comparer, utilisez un modèle différent ou un nouvel IRM."
                     ),
                 }, status=409)
 
@@ -6569,50 +6897,58 @@ def save_patient_report(request, patient_id):
 @login_required
 @require_http_methods(["GET"])
 def list_patient_reports(request, patient_id):
-    """Liste les rapports archivés d'un patient, dédupliqués par source IRM."""
+    """Liste tous les rapports archivés d'un patient — un rapport par run (sans déduplication par IRM)."""
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
-    # Du plus récent au plus ancien : on garde le premier vu pour chaque groupe
+
+    MODEL_LABELS = {'unetpp': 'Modèle 1', 'nnunet': 'Modèle 2', 'swinunetr': 'Modèle 3'}
+
     reports = (
         PatientReport.objects
         .filter(patient=patient)
         .select_related("segmentation_run", "doctor")
-        .prefetch_related("segmentation_run__results")
+        .prefetch_related("segmentation_run__results__mri_file")
         .order_by("-created_at")
     )
 
-    seen_run_ids   = set()   # dédupliquer par run_id exact
-    seen_mri_fps   = set()   # dédupliquer par empreinte IRM (run différent, même fichiers)
+    seen_run_ids = set()   # éviter les doublons exacts du même run
     data = []
 
     for r in reports:
         run_id = r.segmentation_run_id
 
-        # Dédupliquer par run_id exact
+        # Ignorer si ce run exact a déjà été inclus
         if run_id is not None:
             if run_id in seen_run_ids:
                 continue
             seen_run_ids.add(run_id)
 
-            # Calculer l'empreinte IRM de ce run
-            mri_fp = frozenset(
-                res.mri_file_id
-                for res in r.segmentation_run.results.all()
-                if res.mri_file_id
+        run         = r.segmentation_run
+        model_key   = (run.model_key or '') if run else ''
+        model_label = MODEL_LABELS.get(model_key, model_key or 'Modèle')
+
+        # acquisition_id pour regrouper côté frontend
+        acq_id = None
+        if run:
+            acq_ids = set(
+                getattr(res.mri_file, 'acquisition_id', None)
+                for res in run.results.all()
+                if getattr(res, 'mri_file', None)
             )
-            if mri_fp:
-                if mri_fp in seen_mri_fps:
-                    continue
-                seen_mri_fps.add(mri_fp)
+            if len(acq_ids) == 1:
+                acq_id = str(next(iter(acq_ids)))
 
         url = request.build_absolute_uri(r.file.url) if r.file else None
         data.append({
-            "id": r.id,
-            "created_at": r.created_at.strftime("%d/%m/%Y %H:%M"),
-            "run_id": run_id,
-            "doctor_name": r.doctor.get_full_name() or r.doctor.username if r.doctor else "-",
-            "doctor_conclusion": r.doctor_conclusion,
+            "id":                    r.id,
+            "created_at":            r.created_at.strftime("%d/%m/%Y %H:%M"),
+            "run_id":                run_id,
+            "model_key":             model_key,
+            "model_label":           model_label,
+            "acquisition_id":        acq_id,
+            "doctor_name":           r.doctor.get_full_name() or r.doctor.username if r.doctor else "-",
+            "doctor_conclusion":     r.doctor_conclusion,
             "doctor_recommendations": r.doctor_recommendations,
-            "file_url": url,
+            "file_url":              url,
         })
 
     return JsonResponse({"ok": True, "reports": data, "total": len(data)})

@@ -341,7 +341,7 @@ export default function Login({ onLogin }) {
     try {
       const r = await register({ username, password, nom, prenom, order_number: normalizedOrderNumber, affiliation: normalizedAffiliation, specialty, grade, telephone: normalizedTelephone })
       if (r.data && r.data.ok) {
-        setSuccessMessage('')
+        setSuccessMessage(r.data.message || 'Compte en attente de validation admin')
         setIsSignUp(false)
       } else {
         const errMsg = (r.data && r.data.error) ? r.data.error : 'Erreur lors de la création du compte'

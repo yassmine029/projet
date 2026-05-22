@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { ArrowLeft, Loader2 } from 'lucide-react';
-import api, { getBrodmannIntensity } from '../api';
+import api, { getBrodmannIntensitySlice } from '../api';
 import BrodmannIdentificationView from '../components/BrodmannIdentificationView';
 import BrodmannZone3D from '../components/BrodmannZone3D';
+import BrodmannIntensityPanel from '../components/BrodmannIntensityPanel';
 
 interface ImageTransform {
   offsetX: number; offsetY: number; scale: number;
@@ -81,6 +82,7 @@ interface BrodmannIntensityPayload {
   ratio_percent: number | null;
   ratio_relative_percent?: number | null;
   n_voxels?: number;
+  n_voxels_reference?: number;
   patient_zone_mean?: number;
   patient_brain_mean?: number;
   reference_zone_mean?: number | null;
@@ -109,15 +111,17 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
 
   const [refSrc, setRefSrc]         = useState('');
   const [patSrc, setPatSrc]         = useState('');
+  const [refIntensitySrc, setRefIntensitySrc] = useState('');
   const [refView, setRefView]       = useState<ViewTransform>(DEFAULT_VIEW);
   const [patView, setPatView]       = useState<ViewTransform>(DEFAULT_VIEW);
+  const [refIntensityView, setRefIntensityView] = useState<ViewTransform>(DEFAULT_VIEW);
 
   const [zone, setZone]                             = useState<any>(null);
   const [insideBrain, setInsideBrain]               = useState(false);
   const [hasBrodmannAttempt, setHasBrodmannAttempt] = useState(false);
   const [mniCoords, setMniCoords]                   = useState<any>(null);
   const [brodmannTooltip, setBrodmannTooltip]       = useState<{
-    panel: 'reference' | 'patient'; x: number; y: number;
+    panel: 'reference' | 'patient' | 'referenceIntensity'; x: number; y: number;
     insideBrain: boolean; zoneId?: number; zoneName?: string;
   } | null>(null);
   const [loading, setLoading]       = useState(true);
@@ -127,8 +131,10 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
 
   const refCanvasRef = useRef<HTMLCanvasElement>(null);
   const patCanvasRef = useRef<HTMLCanvasElement>(null);
+  const refIntensityCanvasRef = useRef<HTMLCanvasElement>(null);
   const refTransformRef = useRef<ImageTransform>({ offsetX:0, offsetY:0, scale:1, baseScale:1, imageWidth:0, imageHeight:0 });
   const patTransformRef = useRef<ImageTransform>({ offsetX:0, offsetY:0, scale:1, baseScale:1, imageWidth:0, imageHeight:0 });
+  const refIntensityTransformRef = useRef<ImageTransform>({ offsetX:0, offsetY:0, scale:1, baseScale:1, imageWidth:0, imageHeight:0 });
   const brodmannTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Noms réels des zones depuis l'atlas backend (Harvard-Oxford)
@@ -211,10 +217,11 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
       setBrodmannIntensityLoading(true);
       setBrodmannIntensityError(null);
       try {
-        const { data } = await getBrodmannIntensity({
-          analyseId: brodmannAnalyseId ?? undefined,
-          jobId: useJob ? jobId : undefined,
-          patientId: brodmannAnalyseId != null ? undefined : explorerPatientId ?? undefined,
+        const { data } = await getBrodmannIntensitySlice({
+          jobId,
+          patientId: explorerPatientId,
+          axis,
+          index,
           zoneNumber,
         });
         setBrodmannIntensityStats(data as BrodmannIntensityPayload);
@@ -229,7 +236,7 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
         setBrodmannIntensityLoading(false);
       }
     },
-    [brodmannAnalyseId, jobId, explorerPatientId]
+    [jobId, explorerPatientId, axis, index]
   );
 
   useEffect(() => {
@@ -247,14 +254,34 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
       return;
     }
     void loadBrodmannIntensity(zone.id);
-  }, [brodmannAnalyseId, jobId, zone?.id, loadBrodmannIntensity]);
+  }, [jobId, explorerPatientId, zone?.id, loadBrodmannIntensity]);
 
   // ── Drawing ─────────────────────────────────────────────────────────────────
-  const drawCanvas = useCallback((type: 'reference' | 'patient') => {
-    const canvas = type === 'reference' ? refCanvasRef.current : patCanvasRef.current;
-    const src    = type === 'reference' ? refSrc : patSrc;
-    const tRef   = type === 'reference' ? refTransformRef : patTransformRef;
-    const view   = type === 'reference' ? refView : patView;
+  const drawCanvas = useCallback((type: 'reference' | 'patient' | 'referenceIntensity') => {
+    const canvas =
+      type === 'reference'
+        ? refCanvasRef.current
+        : type === 'patient'
+          ? patCanvasRef.current
+          : refIntensityCanvasRef.current;
+    const src =
+      type === 'reference'
+        ? refSrc
+        : type === 'patient'
+          ? patSrc
+          : refIntensitySrc;
+    const tRef =
+      type === 'reference'
+        ? refTransformRef
+        : type === 'patient'
+          ? patTransformRef
+          : refIntensityTransformRef;
+    const view =
+      type === 'reference'
+        ? refView
+        : type === 'patient'
+          ? patView
+          : refIntensityView;
     if (!canvas || !src) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -278,10 +305,11 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
       ctx.restore();
     };
     img.src = src;
-  }, [refSrc, patSrc, refView, patView]);
+  }, [refSrc, patSrc, refIntensitySrc, refView, patView, refIntensityView]);
 
   useEffect(() => { drawCanvas('reference'); }, [drawCanvas]);
   useEffect(() => { drawCanvas('patient');   }, [drawCanvas]);
+  useEffect(() => { drawCanvas('referenceIntensity'); }, [drawCanvas]);
 
   // ── Slice fetching ───────────────────────────────────────────────────────────
   const getAxisMax = (axisKey: string) => {
@@ -293,6 +321,24 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
     return maxIndex;
   };
 
+  const fetchReferenceSlice = async (jId: string, pId: number, axisKey: string, idx: number) => {
+    const primary = `/api/volume/reference-intensity-slice?jobId=${jId}&patientId=${pId}&axis=${axisKey}&index=${idx}&showContour=1`;
+    const fallback = `/api/brodmann/reference-slice/?job_id=${jId}&patient_id=${pId}&axis=${axisKey}&index=${idx}`;
+    try {
+      const r = await fetch(primary, { credentials: 'include' });
+      if (r.ok) return await r.json();
+    } catch {
+      // fallback below
+    }
+    try {
+      const r2 = await fetch(fallback, { credentials: 'include' });
+      if (r2.ok) return await r2.json();
+    } catch {
+      // silent
+    }
+    return null;
+  };
+
   const syncViews = async (nextAxis: string, nextIndex: number, jId: string) => {
     if (!jId) return;
     try {
@@ -300,16 +346,22 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
       const clamped = Math.max(0, Math.min(nextIndex, axisMax || 999));
       const atlasUrl = `/api/volume/atlas_slice?axis=${nextAxis}&index=${clamped}&showLabels=1&jobId=${jId}`;
       const patUrl   = `/api/volume/patient_slice?jobId=${jId}&axis=${nextAxis}&index=${clamped}`;
-      const [r1, r2] = await Promise.all([
+      const [r1, r2, r3] = await Promise.all([
         fetch(atlasUrl, { credentials: 'include' }).then(r => r.json()),
         fetch(patUrl,   { credentials: 'include' }).then(r => r.json()),
+        explorerPatientId != null
+          ? fetchReferenceSlice(jId, explorerPatientId, nextAxis, clamped)
+          : Promise.resolve(null),
       ]);
       if (r1.image || r1.slice) setRefSrc(r1.image || r1.slice);
       if (r2.image) setPatSrc(r2.image);
+      if (r3?.image) setRefIntensitySrc(r3.image);
       const rm = typeof r1.max_index === 'number' ? r1.max_index : null;
       const pm = typeof r2.max_index === 'number' ? r2.max_index : null;
+      const im = typeof r3?.max_index === 'number' ? r3.max_index : null;
       let resolvedMax = axisMax;
-      if (rm !== null && pm !== null) resolvedMax = Math.min(rm, pm);
+      if (rm !== null && pm !== null && im !== null) resolvedMax = Math.min(rm, pm, im);
+      else if (rm !== null && pm !== null) resolvedMax = Math.min(rm, pm);
       else if (pm !== null) resolvedMax = pm;
       else if (rm !== null) resolvedMax = rm;
       setMaxIndex(resolvedMax);
@@ -333,10 +385,19 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
     };
   }, []);
 
+  useEffect(() => {
+    if (!jobId || explorerPatientId == null) return;
+    void syncViews(axis, index, jobId);
+  }, [jobId, explorerPatientId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Click identification ─────────────────────────────────────────────────────
-  const getImageRatioFromClick = (e: React.MouseEvent<HTMLCanvasElement>, type: 'reference' | 'patient') => {
+  const getImageRatioFromClick = (e: React.MouseEvent<HTMLCanvasElement>, type: 'reference' | 'patient' | 'referenceIntensity') => {
     const rect = e.currentTarget.getBoundingClientRect();
-    const t = (type === 'reference' ? refTransformRef : patTransformRef).current;
+    const t = (
+      type === 'reference' ? refTransformRef :
+      type === 'patient' ? patTransformRef :
+      refIntensityTransformRef
+    ).current;
     if (!t.imageWidth || !t.imageHeight || t.scale <= 0) return null;
     const localX = e.clientX - rect.left;
     const localY = e.clientY - rect.top;
@@ -349,7 +410,7 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
     };
   };
 
-  const handleBrodmannClick = async (e: React.MouseEvent<HTMLCanvasElement>, type: 'reference' | 'patient') => {
+  const handleBrodmannClick = async (e: React.MouseEvent<HTMLCanvasElement>, type: 'reference' | 'patient' | 'referenceIntensity') => {
     if (!jobId) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
@@ -389,15 +450,26 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
       showTooltip({ insideBrain: Boolean(data.insideBrain && data.zone), zoneId: data.zone?.id, zoneName: data.zone?.name });
       if (data.images?.atlas) setRefSrc(data.images.atlas);
       if (data.images?.patient) setPatSrc(data.images.patient);
+      if (data.zone?.id && jobId && explorerPatientId != null) {
+        void loadBrodmannIntensity(data.zone.id);
+      }
+      if (explorerPatientId != null) {
+        try {
+          const refData = await fetchReferenceSlice(jobId, explorerPatientId, axis, index);
+          if (refData?.image) setRefIntensitySrc(refData.image);
+        } catch {
+          // ignore
+        }
+      }
     } catch {
       // silent
     }
   };
 
   // ── Pan/Zoom ─────────────────────────────────────────────────────────────────
-  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>, type: 'reference' | 'patient') => {
+  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>, type: 'reference' | 'patient' | 'referenceIntensity') => {
     e.preventDefault();
-    const sv = type === 'reference' ? setRefView : setPatView;
+    const sv = type === 'reference' ? setRefView : type === 'patient' ? setPatView : setRefIntensityView;
     const f = e.deltaY < 0 ? 1.1 : 0.9;
     sv(p => ({ ...p, scale: Math.min(Math.max(p.scale * f, 0.3), 10) }));
   };
@@ -408,9 +480,9 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
       setLastMousePos({ x: e.clientX, y: e.clientY });
     }
   };
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>, type: 'reference' | 'patient') => {
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>, type: 'reference' | 'patient' | 'referenceIntensity') => {
     if (!isPanning) return;
-    const sv = type === 'reference' ? setRefView : setPatView;
+    const sv = type === 'reference' ? setRefView : type === 'patient' ? setPatView : setRefIntensityView;
     const dx = e.clientX - lastMousePos.x;
     const dy = e.clientY - lastMousePos.y;
     sv(p => ({ ...p, panX: p.panX + dx, panY: p.panY + dy }));
@@ -477,7 +549,7 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
         <main className="flex-1 flex flex-col gap-3 p-3 min-w-0 overflow-hidden">
 
           {/* Canvases */}
-          <div className="flex-1 min-h-0 grid grid-cols-2 gap-3">
+          <div className="flex-1 min-h-0 grid grid-cols-3 gap-3">
 
             {/* Atlas */}
             <div className="relative overflow-hidden rounded-2xl bg-[#0a0f1d] border border-slate-200 shadow-md">
@@ -529,6 +601,41 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
                 className="w-full h-full cursor-crosshair"
               />
               {brodmannTooltip?.panel === 'patient' && (
+                <div className="pointer-events-none absolute z-20 w-[220px]" style={{ left: brodmannTooltip.x, top: brodmannTooltip.y }}>
+                  <div className="rounded-xl border border-slate-200 bg-white/95 p-3 shadow-xl backdrop-blur-md">
+                    {brodmannTooltip.insideBrain ? (
+                      <>
+                        <p className="text-[9px] font-black uppercase tracking-widest text-blue-600">Zone détectée</p>
+                        <p className="mt-0.5 text-[11px] font-black text-slate-900">
+                          BA {brodmannTooltip.zoneId ?? '--'} — {brodmannTooltip.zoneName || 'Zone corticale'}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-[9px] font-black uppercase tracking-widest text-amber-600">Hors cerveau</p>
+                        <p className="mt-0.5 text-[10px] text-slate-500">Aucune aire Brodmann ici</p>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Reference intensity */}
+            <div className="relative overflow-hidden rounded-2xl bg-[#0a0f1d] border border-slate-200 shadow-md">
+              <div className="absolute top-3 left-3 z-10 inline-flex items-center gap-2 rounded-full border border-violet-500/40 bg-violet-600/20 px-3 py-1 backdrop-blur-md">
+                <div className="h-1.5 w-1.5 rounded-full bg-violet-400" />
+                <span className="text-[10px] font-black uppercase tracking-widest text-violet-300">Référence d&apos;intensité</span>
+              </div>
+              <canvas
+                ref={refIntensityCanvasRef}
+                onClick={e => handleBrodmannClick(e, 'referenceIntensity')}
+                onWheel={e => handleWheel(e, 'referenceIntensity')}
+                onMouseDown={handleMouseDown}
+                onMouseMove={e => handleMouseMove(e, 'referenceIntensity')}
+                className="w-full h-full cursor-crosshair"
+              />
+              {brodmannTooltip?.panel === 'referenceIntensity' && (
                 <div className="pointer-events-none absolute z-20 w-[220px]" style={{ left: brodmannTooltip.x, top: brodmannTooltip.y }}>
                   <div className="rounded-xl border border-slate-200 bg-white/95 p-3 shadow-xl backdrop-blur-md">
                     {brodmannTooltip.insideBrain ? (
@@ -606,6 +713,32 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
 
         {/* RIGHT STRIP — Zones list + 3D + Carte */}
         <aside className="w-80 shrink-0 border-l border-slate-200 bg-white flex flex-col overflow-hidden shadow-sm">
+
+          <div className="shrink-0 max-h-[38vh] overflow-y-auto border-b border-slate-100 px-3 py-2.5">
+            <BrodmannIntensityPanel
+              zoneName={zone?.name}
+              zoneNumber={zone?.id}
+              stats={brodmannIntensityStats}
+              loading={brodmannIntensityLoading}
+              error={brodmannIntensityError}
+              analyseAvailable={
+                brodmannAnalyseId != null || (jobId != null && jobId !== '' && explorerPatientId != null)
+              }
+              referenceLabel={
+                brodmannIntensityStats?.reference_nom
+                  ? `Référence (${brodmannIntensityStats.reference_nom}${
+                      brodmannIntensityStats.reference_age_band_fr
+                        ? `, ${brodmannIntensityStats.reference_age_band_fr}`
+                        : ''
+                    }${
+                      brodmannIntensityStats.patient_age_years != null
+                        ? ` — patient ${brodmannIntensityStats.patient_age_years} ans`
+                        : ''
+                    })`
+                  : 'Référence (selon âge du patient)'
+              }
+            />
+          </div>
 
           {/* Tab selector */}
           <div className="flex shrink-0 border-b border-slate-100">

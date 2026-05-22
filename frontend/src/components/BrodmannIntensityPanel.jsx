@@ -73,50 +73,77 @@ export default function BrodmannIntensityPanel({
         <dl className="mt-3 space-y-2 text-xs">
           <div className="flex justify-between gap-2 border-b border-slate-100 pb-2">
             <dt className="text-slate-500">
-              Ratio comparable
-              <span className="mt-0.5 block font-normal normal-case text-[10px] text-slate-400">
-                Contraste zone / reste du cerveau (corrige les échelles d&apos;affichage différentes)
-              </span>
+              Niveau de la zone vs norme d&apos;âge
             </dt>
             <dd className="shrink-0 font-mono font-semibold text-slate-800 text-right">
               {stats.ratio_relative_percent == null || stats.reference_relative_index == null
                 ? '—'
-                : `${fmt(stats.ratio_relative_percent)} % du sujet de référence`}
+                : `${fmt(stats.ratio_relative_percent)} % de la norme`}
             </dd>
           </div>
           <div className="flex justify-between gap-2 border-b border-slate-100 pb-2">
-            <dt className="text-slate-500">Moyenne dans la zone — Patient</dt>
+            <dt className="text-slate-500">
+              Intensité moyenne de la zone — Patient
+              <span className="mt-0.5 block font-normal normal-case text-[10px] text-slate-400">
+                Formule : SommeZonePatient ÷ NbVoxelsZonePatient
+              </span>
+            </dt>
             <dd className="font-mono font-semibold text-slate-800">{fmt(stats.patient_zone_mean)}</dd>
           </div>
           <div className="flex justify-between gap-2 border-b border-slate-100 pb-2">
-            <dt className="text-slate-500">Moyenne cerveau (atlas) — Patient</dt>
+            <dt className="text-slate-500">
+              Intensité moyenne du cerveau (atlas) — Patient
+              <span className="mt-0.5 block font-normal normal-case text-[10px] text-slate-400">
+                Formule : SommeCerveauPatient ÷ NbVoxelsCerveauPatient
+              </span>
+            </dt>
             <dd className="font-mono font-semibold text-slate-800">{fmt(stats.patient_brain_mean)}</dd>
           </div>
           {stats.reference_zone_mean != null && (
             <div className="flex justify-between gap-2 border-b border-slate-100 pb-2">
-              <dt className="text-slate-500">Moyenne zone — {referenceLabel}</dt>
+              <dt className="text-slate-500">
+                Intensité moyenne de la zone — {referenceLabel}
+                <span className="mt-0.5 block font-normal normal-case text-[10px] text-slate-400">
+                  Formule : SommeZoneRef ÷ NbVoxelsZoneRef
+                </span>
+              </dt>
               <dd className="font-mono font-semibold text-slate-800">{fmt(stats.reference_zone_mean)}</dd>
             </div>
           )}
-          <p className="text-[10px] leading-relaxed text-slate-400 pt-1">
-            Les sommes brutes ci-dessous additionnent tous les voxels de la zone : elles dépendent fortement
-            du réglage logiciel et ne sont en général pas comparables entre le patient recalé et l&apos;archive
-            du sujet de référence choisi selon l&apos;âge, d&apos;où l&apos;écart énorme si vous ne regardez que ces lignes.
-          </p>
           <div className="flex justify-between gap-2 border-b border-slate-100 pb-2">
-            <dt className="text-slate-500">Somme intensités — Patient</dt>
+            <dt className="text-slate-500">
+              Somme brute des intensités — Patient
+              <span className="mt-0.5 block font-normal normal-case text-[10px] text-slate-400">
+                Formule : Σ intensités des voxels de la zone (patient)
+              </span>
+            </dt>
             <dd className="font-mono font-semibold text-slate-800">{fmt(stats.somme_patient)}</dd>
           </div>
           <div className="flex justify-between gap-2 border-b border-slate-100 pb-2">
-            <dt className="text-slate-500">Somme intensités — {referenceLabel}</dt>
+            <dt className="text-slate-500">
+              Somme brute des intensités — {referenceLabel}
+              <span className="mt-0.5 block font-normal normal-case text-[10px] text-slate-400">
+                Formule : Σ intensités des voxels de la zone (référence)
+              </span>
+            </dt>
             <dd className="font-mono font-semibold text-slate-800">{fmt(stats.somme_reference)}</dd>
           </div>
           <div className="flex justify-between gap-2 border-b border-slate-100 pb-2">
-            <dt className="text-slate-500">Différence (sommes brutes)</dt>
+            <dt className="text-slate-500">
+              Écart brut Patient − Référence
+              <span className="mt-0.5 block font-normal normal-case text-[10px] text-slate-400">
+                Formule : SommeZonePatient − SommeZoneRef
+              </span>
+            </dt>
             <dd className={`font-mono font-semibold ${diffColor}`}>{fmt(stats.difference)}</dd>
           </div>
           <div className="flex justify-between gap-2">
-            <dt className="text-slate-500">Ratio sommes brutes</dt>
+            <dt className="text-slate-500">
+              Ratio brut Patient / Référence
+              <span className="mt-0.5 block font-normal normal-case text-[10px] text-slate-400">
+                Formule : (SommeZonePatient ÷ SommeZoneRef) × 100
+              </span>
+            </dt>
             <dd className="font-mono font-semibold text-slate-800">
               {stats.ratio_percent == null
                 ? '— (réf. nulle)'

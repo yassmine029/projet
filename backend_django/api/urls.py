@@ -45,6 +45,7 @@ urlpatterns = [
     path('volume/confirm-slice', volume_api.confirm_slice, name='confirm_slice'),
     path('volume/load-demo', volume_api.load_demo_patient, name='load_demo_patient'),
     path('volume/patient_slice', volume_api.get_patient_slice, name='get_patient_slice'),
+    path('volume/reference-intensity-slice', volume_api.get_reference_intensity_slice, name='get_reference_intensity_slice'),
     path('volume/brodmann', volume_api.get_brodmann_zone, name='get_brodmann_zone'),
     path('volume/brodmann-zone-3d', volume_api.get_brodmann_zone_3d, name='get_brodmann_zone_3d'),
     path('volume/brain-surface-3d', volume_api.get_brain_surface_3d, name='get_brain_surface_3d'),
@@ -127,6 +128,8 @@ urlpatterns = [
     path('patients/<int:patient_id>/download-zip/', views.patient_files_download_zip, name='patient_files_download_zip'),
     path('patients/<int:patient_id>/reports/', views.save_patient_report, name='save_patient_report'),
     path('patients/<int:patient_id>/reports/list/', views.list_patient_reports, name='list_patient_reports'),
+    path('patients/<int:patient_id>/volume-registration-jobs/', views.patient_volume_registration_jobs, name='patient_volume_registration_jobs'),
+    path('volume-registration-jobs/<str:job_id>/', views.volume_registration_job_detail, name='volume_registration_job_detail'),
 
     # Reclamation routes
     path('reclamations/', views.reclamations_list_create, name='reclamations_list_create'),
@@ -146,7 +149,9 @@ urlpatterns = [
 
     # Brodmann projection route
     path('project_brodmann', views.project_brodmann, name='project_brodmann'),
-    # Intensités Brodmann (patient MNI vs référence sujet1 en BDD)
+    # Intensités Brodmann (patient vs référence d'intensité recalée)
     path('brodmann/intensity/', views.brodmann_intensity, name='brodmann_intensity'),
     path('brodmann/all-intensities/', views.brodmann_all_intensities, name='brodmann_all_intensities'),
+    path('brodmann/intensity-slice/', views.brodmann_intensity_slice, name='brodmann_intensity_slice'),
+    path('brodmann/reference-slice/', views.brodmann_reference_slice, name='brodmann_reference_slice'),
 ]

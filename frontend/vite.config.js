@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// Même machine que le backend Django (change si run-dev utilise un autre port).
+// Backend Django standard sur port 8000
 const API_TARGET = process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8000'
 const WS_TARGET = API_TARGET.replace(/^http/, 'ws')
 

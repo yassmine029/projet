@@ -207,7 +207,6 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
     async (zoneNumber: number) => {
       const useJob = brodmannAnalyseId == null && jobId;
       if (brodmannAnalyseId == null && !useJob) return;
-      if (useJob && explorerPatientId == null) return;
       setBrodmannIntensityLoading(true);
       setBrodmannIntensityError(null);
       try {
@@ -233,7 +232,7 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
   );
 
   useEffect(() => {
-    const canIntensity = brodmannAnalyseId != null || (jobId != null && jobId !== '' && explorerPatientId != null);
+    const canIntensity = brodmannAnalyseId != null || (jobId != null && jobId !== '');
     if (!canIntensity) {
       setBrodmannIntensityStats(null);
       setBrodmannIntensityError(null);

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Mail, ArrowLeft, ShieldAlert, CheckCircle2, AlertTriangle, Brain, Zap, ArrowRight, Briefcase } from 'lucide-react'
-import { emergencyLogin, checkSession } from '../api'
+import { emergencyLogin, checkSession, checkEmergencyLimit } from '../api'
 
 export default function EmergencyLoginPage({ onBack, onLogin }) {
   const navigate = useNavigate()
@@ -14,8 +14,17 @@ export default function EmergencyLoginPage({ onBack, onLogin }) {
   const [successMessage, setSuccessMessage] = useState('')
   const [remainingAttempts, setRemainingAttempts] = useState(null)
 
+  const refreshAttempts = async () => {
+    if (!email || !orderNumber) return
+    try {
+      const res = await checkEmergencyLimit(email, orderNumber)
+      if (res.data?.ok) setRemainingAttempts(res.data.remaining ?? null)
+    } catch {
+      /* silencieux */
+    }
+  }
+
   useEffect(() => {
-    // Logic for checking remaining attempts could be added here
     setRemainingAttempts(2)
   }, [])
 
@@ -33,6 +42,7 @@ export default function EmergencyLoginPage({ onBack, onLogin }) {
     try {
       const response = await emergencyLogin(email, orderNumber)
       if (response.data && response.data.ok) {
+        if (response.data.remaining !== undefined) setRemainingAttempts(response.data.remaining)
         // La session Django est déjà créée par emergency_login (Set-Cookie).
         // checkSession peut parfois ne pas voir le cookie tout de suite (timing / onglet) :
         // on enrichit via l’API si possible, sinon on dérive l’utilisateur depuis la réponse.
@@ -64,11 +74,16 @@ export default function EmergencyLoginPage({ onBack, onLogin }) {
         }
 
         localStorage.setItem('user', JSON.stringify(merged))
+        // Stocker les infos de session pour l'affichage dans EmergencyDashboard
+        const countUsed = (response.data.count ?? 0);
+        sessionStorage.setItem('emergency_count', String(countUsed));
+        sessionStorage.setItem('emergency_max', '10');
         onLogin?.(merged)
-        navigate('/', { replace: true })
+        navigate('/urgence', { replace: true })
         return
       } else {
         setEmailError(response.data?.error || 'Validation d\'urgence échouée.')
+        await refreshAttempts()
       }
     } catch (err) {
       console.error(err)

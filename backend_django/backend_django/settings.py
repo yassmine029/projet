@@ -14,10 +14,17 @@ _frontend_env = BASE_DIR.parent / 'frontend' / '.env'
 if _frontend_env.is_file():
     load_dotenv(_frontend_env)
 
-SECRET_KEY = os.getenv('SECRET_KEY', 'change-me')
-DEBUG = os.getenv('DEBUG', '1') == '1'
+_secret_key = os.getenv('SECRET_KEY', '')
+if not _secret_key:
+    raise RuntimeError(
+        "SECRET_KEY non défini. Ajoutez SECRET_KEY=<valeur aléatoire> dans votre fichier .env."
+    )
+SECRET_KEY = _secret_key
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost 127.0.0.1 testserver *').split()
+DEBUG = os.getenv('DEBUG', '0') == '1'
+
+# En production, définir ALLOWED_HOSTS dans .env sans joker '*'.
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost 127.0.0.1 testserver').split()
 
 INSTALLED_APPS = [
     # ASGI / WebSockets (recalage progression temps réel) — doit précéder staticfiles pour runserver
@@ -35,6 +42,16 @@ INSTALLED_APPS = [
     'api',
     'django.contrib.postgres',
 ]
+
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
+    # Backend minimal réservé aux sessions d'urgence (ne peut pas initier de session normale).
+    'api.emergency_backend.EmergencyOnlyBackend',
+]
+
+# Augmenté pour les imports de dossiers DICOM (séries > 100 fichiers)
+DATA_UPLOAD_MAX_NUMBER_FILES = 10000
+DATA_UPLOAD_MAX_MEMORY_SIZE = 524288000  # 500 MB
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
@@ -89,7 +106,10 @@ DATABASES = {
 }
 
 AUTH_PASSWORD_VALIDATORS = [
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
     {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator', 'OPTIONS': {'min_length': 8}},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
 LANGUAGE_CODE = 'en-us'
@@ -162,6 +182,16 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.SessionAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (),
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/hour',
+        'user': '1000/hour',
+        'login': '10/min',
+        'auth': '5/min',
+    },
 }
 
 DATA_UPLOAD_MAX_NUMBER_FILES = 10000

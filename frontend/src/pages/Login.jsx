@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import { Brain, ShieldCheck, Mail, Lock, User, Briefcase, AlertCircle, CheckCircle, ArrowRight, Building2, Phone, RefreshCw, Eye, EyeOff, Zap } from 'lucide-react'
 import { login, register, logout, adminPortalLogin } from '../api'
 import {
-  tryMatchAdminPortalLogin,
   clearAdminDashboardSession,
 } from '../adminSession'
 import TermsPage from './TermsPage'
@@ -136,6 +135,8 @@ export default function Login({ onLogin }) {
 
   const onEmailChange = (v) => { setUsername(v); setEmailError(''); setEmailSuccess('') }
   const onPasswordChange = (v) => { setPassword(v); setPasswordError(''); setPasswordSuccess('') }
+
+  const BLOCK_SECONDS = 30 * 60 // 30 minutes
 
   // Block timer effect
   useEffect(() => {
@@ -375,28 +376,6 @@ export default function Login({ onLogin }) {
 
     setIsLoading(true)
     try {
-      if (tryMatchAdminPortalLogin(username, password)) {
-        try {
-          await logout()
-        } catch {
-          /* éviter session Django résiduelle */
-        }
-        clearAdminDashboardSession()
-        const pr = await adminPortalLogin(username.trim(), password)
-        if (!pr.data?.ok) {
-          setError(pr.data?.error || 'Connexion administrateur impossible.')
-          return
-        }
-        const portalUser = pr.data.user
-        setLoginAttempts(0)
-        localStorage.removeItem('login_attempts')
-        localStorage.removeItem('login_blocked_until')
-        setSuccessMessage('Connexion administrateur…')
-        onLogin(portalUser)
-        navigate('/admin', { replace: true })
-        return
-      }
-
       const r = await login(username, password)
       if (r.data && r.data.ok) {
         clearAdminDashboardSession()
@@ -405,25 +384,37 @@ export default function Login({ onLogin }) {
         localStorage.removeItem('login_blocked_until')
         setSuccessMessage('Connexion réussie ! Redirection...')
         onLogin(r.data.user)
-        navigate('/dashboard', { replace: true })
+        navigate(r.data.user?.is_staff ? '/admin' : '/dashboard', { replace: true })
       } else {
         const errorType = r.data?.error_type
         const errMsg = r.data?.error || 'Identifiants invalides'
 
+        // Tentative portail admin uniquement si l'utilisateur est introuvable en tant que médecin.
         if (errorType === 'user_not_found') {
-          setErrorType('user_not_found')
-          setEmailError(errMsg)
+          try {
+            const pr = await adminPortalLogin(username.trim(), password)
+            if (pr.data?.ok) {
+              clearAdminDashboardSession()
+              setLoginAttempts(0)
+              localStorage.removeItem('login_attempts')
+              localStorage.removeItem('login_blocked_until')
+              setSuccessMessage('Connexion administrateur…')
+              onLogin(pr.data.user)
+              navigate('/admin', { replace: true })
+              return
+            }
+          } catch { /* pas un compte portail admin — continuer vers l'erreur standard */ }
+          setError('Identifiants invalides')
         } else if (errorType === 'invalid_password') {
-          setErrorType('invalid_password')
-          setPasswordError(errMsg)
+          setPasswordError('Identifiants invalides')
           setLoginAttempts(prev => {
             const newCount = prev + 1
             localStorage.setItem('login_attempts', newCount.toString())
             if (newCount >= 3) {
+              const BLOCK_SECONDS = 30 * 60
               setIsBlocked(true)
-              setBlockTimer(30)
-              const blockedUntil = Date.now() + (30 * 60 * 1000)
-              localStorage.setItem('login_blocked_until', blockedUntil.toString())
+              setBlockTimer(BLOCK_SECONDS)
+              localStorage.setItem('login_blocked_until', (Date.now() + BLOCK_SECONDS * 1000).toString())
             }
             return newCount
           })
@@ -436,29 +427,23 @@ export default function Login({ onLogin }) {
       const errorType = err.response?.data?.error_type
       const srvMsg = err.response?.data?.error || ''
 
-      if (errorType === 'user_not_found') {
-        setErrorType('user_not_found')
-        setEmailError(srvMsg)
-      } else if (errorType === 'invalid_password') {
-        setErrorType('invalid_password')
-        setPasswordError(srvMsg)
+      if (errorType === 'invalid_password') {
+        setPasswordError('Identifiants invalides')
         setLoginAttempts(prev => {
           const newCount = prev + 1
           localStorage.setItem('login_attempts', newCount.toString())
           if (newCount >= 3) {
+            const BLOCK_SECONDS = 30 * 60
             setIsBlocked(true)
-            setBlockTimer(30)
-            const blockedUntil = Date.now() + (30 * 60 * 1000)
-            localStorage.setItem('login_blocked_until', blockedUntil.toString())
+            setBlockTimer(BLOCK_SECONDS)
+            localStorage.setItem('login_blocked_until', (Date.now() + BLOCK_SECONDS * 1000).toString())
           }
           return newCount
         })
+      } else if (srvMsg) {
+        setError(srvMsg)
       } else {
-        if (srvMsg) {
-          setError(srvMsg)
-        } else {
-          setError('Serveur indisponible. Verifiez que le backend Django est demarre sur le port 8000.')
-        }
+        setError('Serveur indisponible. Verifiez que le backend Django est demarre sur le port 8000.')
       }
     } finally {
       setIsLoading(false)
@@ -550,7 +535,7 @@ export default function Login({ onLogin }) {
           {isBlocked && !isSignUp && (
             <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
               <p className="text-xs text-amber-700 font-bold uppercase tracking-widest">
-                Compte temporairement bloqué. Réessayez dans {blockTimer}s.
+                Compte temporairement bloqué. Réessayez dans {Math.floor(blockTimer / 60)}:{String(blockTimer % 60).padStart(2, '0')}.
               </p>
             </div>
           )}

@@ -1,5 +1,5 @@
 import React from 'react'
-import { Routes, Route, Navigate, Outlet, useNavigate } from 'react-router-dom'
+import { Routes, Route, Navigate, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { Moon, Sun } from 'lucide-react'
 
@@ -46,6 +46,7 @@ import MonProfil from './pages/MonProfil'
 import NouvelleSegmentation from './pages/NouvelleSegmentation'
 import Modelisation3D from './pages/Modelisation3D'
 import AppLayout from './components/AppLayout'
+import EmergencyDashboard from './pages/EmergencyDashboard'
 import './index.css'
 import { checkSession, logout } from './api'
 import { clearAdminDashboardSession } from './adminSession'
@@ -81,7 +82,7 @@ function Protected({ user, children }) {
 function ProtectedLayout({ user }) {
   if (!user) return <Navigate to="/login" replace />
   if (isPortalAdminUser(user)) return <Navigate to="/admin" replace />
-  if (user.is_emergency_session) return <Navigate to="/" replace />
+  if (user.is_emergency_session) return <Navigate to="/urgence" replace />
   return <AppLayout><Outlet /></AppLayout>
 }
 
@@ -116,6 +117,7 @@ function ThemeToggle() {
 
 export default function App() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [user, setUser] = useState(readStoredUser)
   const [checking, setChecking] = useState(true)
   const [routeNormalized, setRouteNormalized] = useState(false)
@@ -221,7 +223,7 @@ export default function App() {
         return
       }
       if (page === 'dashboard') {
-        navigate(user?.is_emergency_session ? '/' : '/dashboard')
+        navigate(user?.is_emergency_session ? '/urgence' : '/dashboard')
         return
       }
       if (page === 'login') {
@@ -232,7 +234,7 @@ export default function App() {
         navigate(user ? '/registration' : '/login')
         return
       }
-      navigate('/')
+      navigate(user?.is_emergency_session ? '/urgence' : '/')
     },
     [user, navigate]
   )
@@ -247,6 +249,10 @@ export default function App() {
       setUser(null)
       try {
         localStorage.removeItem('user')
+        sessionStorage.removeItem('emergency_count')
+        sessionStorage.removeItem('emergency_max')
+        sessionStorage.removeItem('volumeJobId')
+        sessionStorage.removeItem('explorationPatientId')
       } catch {
         /* ignore */
       }
@@ -283,7 +289,7 @@ export default function App() {
 
   return (
     <>
-      <ThemeToggle />
+      {!location.pathname.startsWith('/admin') && <ThemeToggle />}
 
       <Routes>
         <Route
@@ -332,10 +338,24 @@ export default function App() {
         />
         <Route
           path="/admin/*"
-          element={(user || devBypassAdmin) ? <AdminDashboard /> : <Navigate to="/login" replace />}
+          element={
+            (isPortalAdminUser(user) || devBypassAdmin)
+              ? <AdminDashboard user={user} onLogout={handleLogout} />
+              : user
+                ? <Navigate to="/dashboard" replace />
+                : <Navigate to="/login" replace />
+          }
         />
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/terms" element={<TermsPage />} />
+        <Route
+          path="/urgence"
+          element={
+            user?.is_emergency_session
+              ? <EmergencyDashboard user={user} onLogout={handleLogout} />
+              : <Navigate to="/login" replace />
+          }
+        />
 
         {/* ── Dashboard & management pages (with sidebar) ── */}
         <Route element={<ProtectedLayout user={user} />}>
@@ -360,9 +380,9 @@ export default function App() {
 
         {/* ── Full-screen tools (no sidebar) ── */}
         <Route path="/exploration" element={<Protected user={user}><ExplorationErrorBoundary><ExplorationPage /></ExplorationErrorBoundary></Protected>} />
-        <Route path="/segmentation/nouvelle" element={<Protected user={user}><NouvelleSegmentation /></Protected>} />
-        <Route path="/segmentation/modelisation" element={<Protected user={user}><Modelisation3D /></Protected>} />
-        <Route path="/registration" element={<Protected user={user}><RegistrationPage user={user} accessToken={null} onNavigate={handleNavigate} /></Protected>} />
+        <Route path="/segmentation/nouvelle" element={<Protected user={user}><NouvelleSegmentation user={user} /></Protected>} />
+        <Route path="/segmentation/modelisation" element={<Protected user={user}><Modelisation3D user={user} /></Protected>} />
+        <Route path="/registration" element={<Protected user={user}><ExplorationErrorBoundary><RegistrationPage user={user} accessToken={null} onNavigate={handleNavigate} /></ExplorationErrorBoundary></Protected>} />
 
         {/* ── Catch-all ── */}
         <Route path="*" element={<Navigate to="/" replace />} />

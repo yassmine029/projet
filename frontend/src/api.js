@@ -10,6 +10,14 @@ const api = axios.create({
   withCredentials: true,
 });
 
+api.interceptors.request.use((config) => {
+  const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+  if (match) {
+    config.headers['X-CSRFToken'] = match[1];
+  }
+  return config;
+});
+
 // Auth
 export const register = (payload = {}) =>
   api.post("/register", payload);

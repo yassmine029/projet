@@ -6,51 +6,8 @@ import { jsPDF } from 'jspdf';
 import ModelViewerBlender from '../components/ModelViewerBlender.jsx';
 import api from '../api';
 
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
-function ThresholdLine({ leftPercent, colorClass }) {
-  return (
-    <span
-      className={`absolute top-1/2 h-5 w-[2px] -translate-y-1/2 ${colorClass}`}
-      style={{ left: `calc(${clamp(leftPercent, 0, 100)}% - 1px)` }}
-    />
-  );
-}
-
-function StatusBadge({ tone, label }) {
-  const toneClass =
-    tone === 'ok'
-      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-      : tone === 'warn'
-        ? 'border-amber-200 bg-amber-50 text-amber-700'
-        : tone === 'danger'
-          ? 'border-rose-200 bg-rose-50 text-rose-700'
-          : 'border-sky-200 bg-sky-50 text-sky-700';
-
-  return <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${toneClass}`}>{label}</span>;
-}
-
-function getAiStatus(value) {
-  const v = Math.abs(Number(value || 0));
-  if (v <= 10) return { label: 'Normal', tone: 'ok', shortRule: '<= 10%' };
-  return { label: 'Asymétrie significative', tone: 'danger', shortRule: '> 10%' };
-}
-
-function getNiStatus(value) {
-  const v = Number(value || 0);
-  if (v < 60) return { label: 'Severe', tone: 'danger', shortRule: '< 60%' };
-  if (v < 90) return { label: 'Alerte', tone: 'warn', shortRule: '60-90%' };
-  if (v <= 110) return { label: 'Normal', tone: 'ok', shortRule: '90-110%' };
-  return { label: 'Haut', tone: 'info', shortRule: '> 110%' };
-}
-
-function LegendDot({ colorClass }) {
-  return <span className={`inline-block h-2.5 w-2.5 rounded-full ${colorClass}`} />;
-}
-
-/** Bouton "i" cliquable — panneau d'information sur le paramètre, sa formule et son contexte clinique. */
 function InfoPopover({ title, formula, variables, clinicalContext, threshold }) {
   const [open, setOpen] = useState(false);
   return (
@@ -72,12 +29,10 @@ function InfoPopover({ title, formula, variables, clinicalContext, threshold }) 
             aria-label="Fermer"
           />
           <div className="absolute right-0 top-7 z-50 w-80 max-h-[min(26rem,80vh)] overflow-y-auto overflow-x-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
-            {/* Header sticky */}
             <div className="sticky top-0 bg-gradient-to-r from-[#0f1f4b] to-[#1a3a8f] px-4 py-3">
               <p className="text-xs font-black text-white">{title}</p>
             </div>
             <div className="p-4 space-y-3">
-              {/* Formule */}
               {formula && (
                 <div>
                   <p className="mb-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Formule</p>
@@ -86,21 +41,18 @@ function InfoPopover({ title, formula, variables, clinicalContext, threshold }) 
                   </div>
                 </div>
               )}
-              {/* Variables */}
               {variables && (
                 <div>
                   <p className="mb-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Variables</p>
                   <p className="text-[11px] leading-relaxed text-slate-600">{variables}</p>
                 </div>
               )}
-              {/* Seuil */}
               {threshold && (
-                <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2.5">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-amber-600 mb-1">Seuil diagnostique</p>
-                  <p className="text-[11px] leading-relaxed text-slate-700">{threshold}</p>
+                <div>
+                  <p className="mb-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Seuil clinique</p>
+                  <p className="text-[11px] leading-relaxed text-slate-600">{threshold}</p>
                 </div>
               )}
-              {/* Contexte clinique */}
               {clinicalContext && (
                 <div>
                   <p className="mb-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">Contexte clinique</p>
@@ -114,6 +66,20 @@ function InfoPopover({ title, formula, variables, clinicalContext, threshold }) 
     </span>
   );
 }
+
+const getAiStatus = (value) => {
+  const v = Number(value || 0);
+  if (v <= 10) return { label: 'Normal', tone: 'ok' };
+  return { label: 'Alerte', tone: 'warn' };
+};
+
+const getNiStatus = (value) => {
+  const v = Number(value || 0);
+  if (v < 60) return { label: 'Severe', tone: 'error' };
+  if (v < 90) return { label: 'Alerte', tone: 'warn' };
+  if (v <= 110) return { label: 'Normal', tone: 'ok' };
+  return { label: 'Haut', tone: 'info' };
+};
 
 function AIGauge({ value, interpretation, leftVol, rightVol }) {
   const v = Math.abs(Number(value || 0));
@@ -1355,23 +1321,6 @@ export default function Modelisation3D({ user = null }) {
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {modelingResult ? (
-              <button
-                type="button"
-                onClick={() => setStandardConfigOpen(true)}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-              >
-                <Box className="h-3.5 w-3.5" />
-                Paramètres 3D
-              </button>
-            ) : null}
-            <button
-              type="button"
-              onClick={() => navigate('/dashboard/analysesMRI')}
-              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-            >
-              Analyses MRI
-            </button>
           </div>
         </div>
       </div>
@@ -1547,13 +1496,6 @@ export default function Modelisation3D({ user = null }) {
 
               {/* ── Footer ── */}
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-slate-100 bg-white px-6 py-4">
-                <button
-                  type="button"
-                  onClick={() => navigate('/dashboard/analysesMRI')}
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                >
-                  Revenir aux analyses
-                </button>
                 <button
                   type="button"
                   onClick={handleLaunchModeling}
@@ -1839,9 +1781,9 @@ export default function Modelisation3D({ user = null }) {
                   </div>
 
                   {/* ══════════════════════════════════════════════════
-                      CONCLUSION DU MÉDECIN
+                      CONCLUSION DU MÉDECIN  (masqué en mode urgence)
                   ══════════════════════════════════════════════════ */}
-                  <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                  {!isEmergencySession && <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                     {/* Header */}
                     <div className="relative overflow-hidden bg-gradient-to-r from-[#0f1f4b] via-[#0e2d82] to-[#1a3a8f] px-6 py-5">
                       <span className="absolute -right-8 -top-8 h-28 w-28 rounded-full bg-white/5 pointer-events-none" />
@@ -1962,9 +1904,9 @@ export default function Modelisation3D({ user = null }) {
                         </div>
                       </div>
                     </div>
-                  </div>
+                  </div>}
 
-                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                  {!isEmergencySession && <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                     <div className="mb-4 flex items-center justify-between gap-2">
                       <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Actions &amp; exports</p>
                     </div>
@@ -1986,126 +1928,106 @@ export default function Modelisation3D({ user = null }) {
                       </button>
                     </div>
 
-                    {/* Archiver dans le dossier patient */}
-                    <div className={`mt-4 rounded-xl border p-4 transition-all ${
-                      existingReport || archiveSuccess
-                        ? 'border-emerald-200 bg-emerald-50'
-                        : 'border-slate-200 bg-slate-50'
-                    }`}>
-                      {/* En-tête avec statut */}
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <p className="text-sm font-bold text-slate-800">Rapport dans le dossier patient</p>
-                            {existingReport?.same_mri ? (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-100 px-2.5 py-0.5 text-[10px] font-black text-amber-700">
-                                <CheckCircle2 className="h-3 w-3" /> Déjà enregistré
-                              </span>
-                            ) : (existingReport || archiveSuccess) ? (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-100 px-2.5 py-0.5 text-[10px] font-black text-emerald-700">
-                                <CheckCircle2 className="h-3 w-3" /> Archivé
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-black text-amber-600">
-                                Non archivé
-                              </span>
-                            )}
-                          </div>
-                          <p className="mt-0.5 text-[11px] text-slate-500">
-                            {existingReport?.same_mri ? (
-                              <span className="text-amber-700 font-semibold">
-                                Ce modèle a déjà analysé cet IRM — rapport du {existingReport.created_at} déjà archivé. Utilisez un modèle différent pour une nouvelle analyse.
-                              </span>
-                            ) : existingReport ? (
-                              <>Rapport archivé le <strong>{existingReport.created_at}</strong> par Dr. {existingReport.doctor_name}. Visible dans le dossier patient.</>
-                            ) : archiveSuccess ? (
-                              <>Rapport #{archiveSuccess.id} archivé le <strong>{archiveSuccess.date}</strong> — visible dans le dossier patient.</>
-                            ) : (
-                              <>
-                                Génère le rapport PDF et l'enregistre dans le dossier du patient.
-                                {!doctorConclusion && <span className="ml-1 font-semibold text-amber-600">Rédigez votre conclusion ci-dessus avant d'archiver.</span>}
-                              </>
-                            )}
-                          </p>
-                        </div>
+                    {/* ── Bouton export PDF direct ── */}
+                    <button type="button" onClick={handleDownloadReportPdf}
+                      disabled={reportLoading || !modelingResult}
+                      className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 disabled:opacity-50 disabled:cursor-not-allowed transition-all">
+                      {reportLoading
+                        ? <Loader2 className="h-4 w-4 animate-spin" />
+                        : <Download className="h-4 w-4" />}
+                      Exporter PDF
+                    </button>
 
-                        {/* Bouton — masqué si déjà archivé */}
-                        {!existingReport && !archiveSuccess ? (
-                          <button
-                            type="button"
-                            onClick={handleArchiveReport}
-                            disabled={archiving || !modelingResult}
-                            className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm shadow-blue-200 transition-all hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {archiving ? (
-                              <><Loader2 className="h-4 w-4 animate-spin" /> Archivage…</>
-                            ) : (
-                              <><FileText className="h-4 w-4" /> Archiver dans le dossier</>
-                            )}
-                          </button>
-                        ) : (
-                          <div className="flex items-center gap-2 shrink-0">
-                            {runInfo?.patient && (
-                              <button
-                                type="button"
-                                onClick={() => navigate(`/dashboard/patients/${runInfo.patient}`)}
-                                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-600 transition-all hover:bg-slate-50 hover:border-slate-300"
-                              >
-                                <FolderOpen className="h-4 w-4" /> Dossier patient
-                              </button>
-                            )}
-                            <a
-                              href={existingReport?.file_url || '#'}
-                              target="_blank"
-                              rel="noreferrer"
-                              download
-                              className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-4 py-2.5 text-sm font-bold text-emerald-700 transition-all hover:bg-emerald-600 hover:text-white"
-                            >
-                              <Download className="h-4 w-4" /> Télécharger le PDF
-                            </a>
-                          </div>
+                    {reportError && <p className="mt-3 text-xs font-medium text-red-600">{reportError}</p>}
+
+                    {/* ── Enregistrement dossier patient ── */}
+                    <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                        <div className="flex items-center gap-2">
+                          <FolderOpen className="h-4 w-4 text-slate-500" />
+                          <p className="text-sm font-bold text-slate-800">Enregistrer dans le dossier patient</p>
+                        </div>
+                        {existingReport && !existingReport.same_mri && (
+                          <span className="inline-flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-bold text-amber-700">
+                            <CheckCircle2 className="h-3.5 w-3.5" /> Rapport déjà archivé
+                          </span>
                         )}
                       </div>
 
-                      {/* Historique autres rapports du patient */}
-                      {otherPatientReports.length > 0 && (
-                        <div className="mt-3 flex items-center gap-3 rounded-xl border border-teal-200 bg-teal-50/60 px-4 py-2.5">
-                          <div className="w-1 self-stretch rounded-full bg-teal-400 shrink-0" />
-                          <div className="flex flex-1 flex-wrap items-center gap-x-5 gap-y-1">
-                            <span className="text-[11px] font-black text-teal-700 uppercase tracking-wide">
-                              Historique patient
-                            </span>
-                            <span className="text-[11px] text-slate-600">
-                              {otherPatientReports.length} autre{otherPatientReports.length > 1 ? 's' : ''} rapport{otherPatientReports.length > 1 ? 's' : ''} archivé{otherPatientReports.length > 1 ? 's' : ''}
-                            </span>
-                            {otherPatientReports[0]?.created_at && (
-                              <span className="text-[11px] text-slate-400">
-                                Dernier : {otherPatientReports.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0].created_at}
-                              </span>
-                            )}
-                            {runInfo?.patient && (
-                              <button
-                                type="button"
-                                onClick={() => navigate(`/dashboard/patients/${runInfo.patient}`)}
-                                className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-teal-300 bg-white px-3 py-1 text-[11px] font-bold text-teal-700 hover:bg-teal-600 hover:text-white transition-all"
-                              >
-                                <FolderOpen className="h-3.5 w-3.5" /> Voir le dossier
-                              </button>
-                            )}
+                      {/* Rapport déjà enregistré pour ce run */}
+                      {existingReport && !existingReport.same_mri && (
+                        <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                          <p className="font-bold">Un rapport existe déjà pour ce run.</p>
+                          <p className="text-[11px] text-emerald-600 mt-0.5">
+                            Archivé le {existingReport.created_at ? new Date(existingReport.created_at).toLocaleDateString('fr-FR') : '—'}
+                            {existingReport.doctor_name ? ` · par ${existingReport.doctor_name}` : ''}
+                          </p>
+                          <p className="text-[11px] text-emerald-600 mt-1">Vous pouvez archiver à nouveau pour mettre à jour la conclusion.</p>
+                        </div>
+                      )}
+
+                      {/* Même IRM déjà enregistrée dans le dossier patient (409) */}
+                      {existingReport?.same_mri && (
+                        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                          <p className="font-bold">Cette IRM est déjà enregistrée dans le dossier patient.</p>
+                          <p className="text-[11px] text-amber-600 mt-0.5">
+                            Enregistré le {existingReport.created_at ? new Date(existingReport.created_at).toLocaleDateString('fr-FR') : '—'}
+                            {existingReport.doctor_name ? ` · par ${existingReport.doctor_name}` : ''}.
+                            Aucun doublon ne sera créé.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Succès d'archivage */}
+                      {archiveSuccess && (
+                        <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 flex items-center gap-3">
+                          <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
+                          <div>
+                            <p className="text-sm font-bold text-emerald-800">Rapport enregistré avec succès.</p>
+                            <p className="text-[11px] text-emerald-600">
+                              Rapport #{archiveSuccess.id} · {archiveSuccess.date ? new Date(archiveSuccess.date).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR')}
+                            </p>
                           </div>
                         </div>
                       )}
 
+                      {/* Erreur d'archivage (hors 409) */}
                       {archiveError && !existingReport?.same_mri && (
-                        <p className="mt-2 text-xs font-semibold text-red-600">{archiveError}</p>
+                        <p className="mb-3 text-xs font-medium text-red-600">{archiveError}</p>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={handleArchiveReport}
+                        disabled={archiving || !modelingResult || !runInfo?.patient}
+                        className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-slate-700 to-slate-800 px-5 py-2.5 text-sm font-bold text-white hover:from-slate-800 hover:to-slate-900 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm transition-all"
+                      >
+                        {archiving
+                          ? <Loader2 className="h-4 w-4 animate-spin" />
+                          : <FolderOpen className="h-4 w-4" />}
+                        {archiving ? 'Enregistrement…' : existingReport && !existingReport.same_mri ? 'Ré-archiver le rapport' : 'Enregistrer dans le dossier'}
+                      </button>
+
+                      {/* Autres rapports du même patient */}
+                      {otherPatientReports.length > 0 && (
+                        <div className="mt-4 border-t border-slate-200 pt-4">
+                          <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Autres rapports du patient</p>
+                          <div className="space-y-1.5">
+                            {otherPatientReports.slice(0, 3).map((r) => (
+                              <div key={r.id} className="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-3 py-2">
+                                <span className="text-[11px] text-slate-600">Run #{r.run_id || '—'}</span>
+                                <span className="text-[11px] text-slate-400">{r.created_at ? new Date(r.created_at).toLocaleDateString('fr-FR') : '—'}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       )}
                     </div>
 
-                    {reportError && <p className="mt-3 text-xs font-medium text-red-600">{reportError}</p>}
                     <p className="mt-3 text-[11px] text-slate-400 font-medium">
                       Les fichiers OBJ/STL sont compatibles avec Blender, MeshLab et 3D Slicer.
                     </p>
-                  </div>
+                  </div>}
                 </div>
         ) : null}
       </div>

@@ -44,14 +44,18 @@ const NavItem = ({ to, icon: Icon, label, exact = false, isLogout = false, onCli
   );
 };
 
-export default function AdminSidebar() {
+export default function AdminSidebar({ user, onLogout }) {
   const handleLogout = async () => {
-    try {
-      await logout();
-      window.location.href = '/';
-    } catch (e) {
-      console.error(e);
-      window.location.href = '/';
+    if (onLogout) {
+      await onLogout();
+    } else {
+      try {
+        await logout();
+      } catch (e) {
+        console.error(e);
+      } finally {
+        window.location.href = '/';
+      }
     }
   };
 
@@ -106,8 +110,12 @@ export default function AdminSidebar() {
               />
             </div>
             <div>
-              <p className="text-[13px] font-bold text-white leading-none">Administrateur</p>
-              <p className="mt-1 text-[11px] font-medium text-blue-100/60 truncate max-w-[140px]">admin@neuroscan.com</p>
+              <p className="text-[13px] font-bold text-white leading-none">
+                {user?.fullName || user?.full_name || 'Administrateur'}
+              </p>
+              <p className="mt-1 text-[11px] font-medium text-blue-100/60 truncate max-w-[140px]">
+                Super Admin
+              </p>
             </div>
           </div>
         </div>

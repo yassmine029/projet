@@ -67,7 +67,8 @@
 .theme-toggle-btn {
   position: fixed;
   right: 16px;
-  top: 16px;
+  bottom: 20px;
+  top: auto;
   z-index: 9999;
   display: inline-flex;
   align-items: center;

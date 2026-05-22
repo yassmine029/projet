@@ -8,7 +8,7 @@ import {
   ArrowLeft, ArrowDown, Upload, X, Eye, Download, Trash2, Check,
   MousePointer2, ZoomIn, ZoomOut, RotateCcw, Keyboard, BrainCircuit, Brain, Undo2,
   Box, Loader2, FileText, Users, ChevronRight, Search, ScanSearch, Zap, ChevronLeft, Columns2,
-  Lightbulb, Microscope, Map as MapIcon, Target
+  Lightbulb, Microscope, Map as MapIcon, Target, Lock, ShieldCheck
 } from 'lucide-react';
 import api, { getBrodmannIntensitySlice } from '../api';
 import RegistrationModeSelector from '../components/RegistrationModeSelector';
@@ -75,6 +75,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
+  const isEmergencySession = Boolean((user as any)?.is_emergency_session);
   const brodmannAnalyseIdFromNav = React.useMemo(() => {
     const q = searchParams.get('brodmannAnalyseId');
     if (q != null && q !== '') {
@@ -121,7 +122,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const [showShortcuts, setShowShortcuts]   = useState(false);
   const [showGrid, setShowGrid]             = useState(true);
   const [gridSize, setGridSize]             = useState(32);
-  const [registrationMode, setRegistrationMode] = useState<'manual' | 'mine'>('manual');
+  const [registrationMode, setRegistrationMode] = useState<'manual' | 'mine'>(isEmergencySession ? 'mine' : 'manual');
   const [cameFromMINE, setCameFromMINE]     = useState(false);
   const [autoAlignStatus, setAutoAlignStatus] = useState<'idle'|'processing'|'success'|'error'>('idle');
   const [autoAlignMetrics, setAutoAlignMetrics] = useState<any>(null);
@@ -198,6 +199,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const [panelFullImg, setPanelFullImg] = useState<{ ref: string | null; patient: string | null }>({ ref: null, patient: null });
   const [panelFullLoading, setPanelFullLoading] = useState<{ ref: boolean; patient: boolean }>({ ref: false, patient: false });
   const panelDebounceRef = useRef<{ ref: ReturnType<typeof setTimeout> | null; patient: ReturnType<typeof setTimeout> | null }>({ ref: null, patient: null });
+  const validateAndExploreRef = useRef<(() => Promise<void>) | null>(null);
   const filmstripRefRef = useRef<HTMLDivElement>(null);
   const filmstripPatRef = useRef<HTMLDivElement>(null);
   const [showSeriesApplyConfirm, setShowSeriesApplyConfirm] = useState(false);
@@ -1547,7 +1549,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     setShowGrid(true);
     setGridSize(32);
     setVisMode('overlay');
-    setRegistrationMode(registrationDimension === '2d' ? 'manual' : 'mine');
+    setRegistrationMode(registrationDimension === '2d' && !isEmergencySession ? 'manual' : 'mine');
     setReferenceJobId('');
     setCameFromMINE(false);
     setAutoAlignStatus('idle');
@@ -1602,7 +1604,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     setShowGrid(true);
     setGridSize(32);
     setVisMode('overlay');
-    setRegistrationMode(registrationDimension === '2d' ? 'manual' : 'mine');
+    setRegistrationMode(registrationDimension === '2d' && !isEmergencySession ? 'manual' : 'mine');
     setReferenceJobId('');
     setCameFromMINE(false);
     setAutoAlignStatus('idle');
@@ -2134,8 +2136,8 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       // continue anyway — jobId is valid, exploration can proceed
     }
 
-    // 2. Auto-save to patient folder
-    const dbPatient = confirmedPanelPatients.patient ?? confirmedPanelPatients.reference;
+    // 2. Auto-save to patient folder (désactivé en mode urgence)
+    const dbPatient = !isEmergencySession && (confirmedPanelPatients.patient ?? confirmedPanelPatients.reference);
     if (dbPatient) {
       setSavingToPatient(true);
       try {
@@ -2165,6 +2167,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     sessionStorage.setItem('volumeJobId', jobId);
     setShowExploration(true);
   };
+  validateAndExploreRef.current = handleValidateAndExplore;
 
   const getImageRatioFromClick = (
     e: React.MouseEvent<HTMLCanvasElement>,
@@ -2454,6 +2457,13 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   useEffect(() => {
     if (pendingShowResult && autoAlignStatus === 'idle') {
       setPendingShowResult(false);
+
+      // Mode urgence 3D : aller directement à l'exploration Brodmann (même interface que mode normal)
+      if (isEmergencySession && (registrationDimension === '3d' || registrationDimension === 'advanced')) {
+        void validateAndExploreRef.current?.();
+        return;
+      }
+
       setShowResult(true);
       setShowValidationModal(false);
       setVisMode('overlay');
@@ -2461,7 +2471,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       setTimeout(() => drawResultImages(), 400);
       setTimeout(() => drawResultImages(), 800);
     }
-  }, [pendingShowResult, autoAlignStatus, drawResultImages, registrationDimension]);
+  }, [pendingShowResult, autoAlignStatus, drawResultImages, registrationDimension, isEmergencySession]);
 
   const loadPanelFull = useCallback((key: 'ref' | 'patient', idx: number) => {
     const panel = key === 'ref' ? 'reference' : 'patient';
@@ -2804,7 +2814,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
 
     void fetchAllPatientsForPanels();
 
-    setRegistrationMode(mode === '2d' ? 'manual' : 'mine');
+    setRegistrationMode(mode === '2d' && !isEmergencySession ? 'manual' : 'mine');
     setReferenceJobId('');
 
     if (mode === 'advanced') {
@@ -2939,8 +2949,10 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     const panelType = panelPickerOpen!;
     const typeLabel = panelType === 'reference' ? 'RÉFÉRENCE (Fixe)' : 'PATIENT (Moving)';
     const patientName = `${pickerSelectedPatient?.nom || ''} ${pickerSelectedPatient?.prenom || ''}`.trim();
+    const noun = is3D ? 'volume' : 'image';
+    const nounWithArticle = is3D ? 'le volume' : "l'image";
     askConfirm(
-      `Confirmer l'image ${typeLabel}`,
+      `Confirmer ${nounWithArticle} ${typeLabel}`,
       `Vous avez sélectionné "${file.original_filename}" du dossier ${patientName}.`,
       'Confirmer ce choix',
       () => {
@@ -2961,10 +2973,13 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
 
   const handleLocalFileWithConfirm = (file: File, panelType: 'reference' | 'patient') => {
     const typeLabel = panelType === 'reference' ? 'RÉFÉRENCE (Fixe)' : 'PATIENT (Moving)';
+    const noun = is3D ? 'volume' : 'image';
+    const nounWithArticle = is3D ? 'le volume' : "l'image";
+    const nounDemonstrative = is3D ? 'ce volume' : 'cette image';
     askConfirm(
-      `Confirmer l'image ${typeLabel}`,
-      `Vous allez importer "${file.name}" comme image ${typeLabel}.`,
-      'Oui, utiliser cette image',
+      `Confirmer ${nounWithArticle} ${typeLabel}`,
+      `Vous allez importer "${file.name}" comme ${nounWithArticle} ${typeLabel}.`,
+      `Oui, utiliser ${nounDemonstrative}`,
       () => {
         if (is3D) {
           panelType === 'patient' ? void importPatient3D(file) : void importReferenceVolume3D(file);
@@ -3608,7 +3623,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
               </div>
             </div>
           ) : referenceImage.src&&patientImage.src&&is2D?(
-            <RegistrationModeSelector selectedMode={registrationMode as any} onModeChange={setRegistrationMode as any} disabled={autoAlignStatus==='processing'} onShowManualGuide={() => setShowManualGuide(true)} onShowAutoGuide={() => setShowAutoGuide(true)} onShowAssistant={() => { setAssistantObjective(null); setShowModeAssistant(true); }}/>
+            <RegistrationModeSelector selectedMode={registrationMode as any} onModeChange={setRegistrationMode as any} disabled={autoAlignStatus==='processing'} isEmergencySession={isEmergencySession} onShowManualGuide={() => setShowManualGuide(true)} onShowAutoGuide={() => setShowAutoGuide(true)} onShowAssistant={() => { setAssistantObjective(null); setShowModeAssistant(true); }}/>
           ):(
             <div className="space-y-1.5">
               <p className="text-[9px] font-bold text-slate-700 uppercase tracking-widest">Mode de Recalage</p>
@@ -3618,7 +3633,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         </div>
 
         {/* Actions */}
-        <div className="px-3 py-3 space-y-2 flex-1 overflow-y-auto">
+        <div className="px-3 py-3 space-y-2">
           {phase === 3 ? (
             <>
               <button onClick={handleBackToRegistration} className="w-full py-2.5 px-4 rounded-xl border border-slate-300 bg-slate-100 text-[10px] font-bold text-slate-700 hover:bg-slate-200 flex items-center justify-center gap-2">
@@ -3736,37 +3751,46 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                   {/* Bouton Hybride */}
                   <div className="relative">
                     <button
-                      onClick={is3D && autoAlignStatus !== 'processing' ? handleHybridAlign : undefined}
-                      disabled={!is3D || autoAlignStatus === 'processing'}
+                      onClick={is3D && !isEmergencySession && autoAlignStatus !== 'processing' ? handleHybridAlign : undefined}
+                      disabled={!is3D || isEmergencySession || autoAlignStatus === 'processing'}
+                      title={isEmergencySession ? "Disponible après validation de votre compte par l'administrateur" : undefined}
                       className={`w-full rounded-xl px-4 py-3 text-left transition-all flex items-center gap-3
                         ${!is3D || autoAlignStatus === 'processing'
                           ? 'bg-slate-100 border-2 border-slate-200 cursor-not-allowed opacity-60'
-                          : 'bg-violet-600 hover:bg-violet-700 active:scale-[0.99] shadow-lg shadow-violet-200 cursor-pointer border-2 border-violet-600'
+                          : isEmergencySession
+                            ? 'bg-slate-100 border-2 border-slate-200 cursor-not-allowed'
+                            : 'bg-violet-600 hover:bg-violet-700 active:scale-[0.99] shadow-lg shadow-violet-200 cursor-pointer border-2 border-violet-600'
                         }`}
                     >
-                      <div className="h-8 w-8 rounded-lg bg-white/20 flex items-center justify-center shrink-0">
-                        <Box className={`w-4 h-4 ${!is3D ? 'text-slate-400' : 'text-white'}`} />
+                      <div className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 ${isEmergencySession && is3D ? 'bg-slate-200' : 'bg-white/20'}`}>
+                        {isEmergencySession && is3D
+                          ? <Lock className="w-4 h-4 text-slate-400" />
+                          : <Box className={`w-4 h-4 ${!is3D ? 'text-slate-400' : 'text-white'}`} />
+                        }
                       </div>
                       <div className="flex-1 min-w-0 pr-5">
                         <div className="flex items-center gap-2">
-                          <p className={`text-xs font-black ${!is3D ? 'text-slate-400' : 'text-white'}`}>Recalage déformable</p>
+                          <p className={`text-xs font-black ${!is3D || isEmergencySession ? 'text-slate-400' : 'text-white'}`}>Recalage déformable</p>
                           {!is3D && (
                             <span className="text-[8px] font-black uppercase tracking-wider bg-slate-200 text-slate-500 px-1.5 py-0.5 rounded-full">
                               3D uniquement
                             </span>
                           )}
-                          {is3D && (
+                          {is3D && !isEmergencySession && (
                             <span className="text-[8px] font-black uppercase tracking-wider bg-violet-400/40 text-violet-100 px-1.5 py-0.5 rounded-full">
                               Recommandé
                             </span>
                           )}
                         </div>
-                        <p className={`text-[9px] mt-0.5 ${!is3D ? 'text-slate-400' : 'text-violet-200'}`}>
-                          {is3D ? 'Global + corrections locales · ⏱ ~30s' : '3D uniquement'}
+                        <p className={`text-[9px] mt-0.5 ${!is3D || isEmergencySession ? 'text-slate-400' : 'text-violet-200'}`}>
+                          {isEmergencySession && is3D ? 'Compte complet requis' : is3D ? 'Global + corrections locales · ⏱ ~30s' : '3D uniquement'}
                         </p>
                       </div>
+                      {isEmergencySession && is3D && (
+                        <Lock className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+                      )}
                     </button>
-                    {is3D && (
+                    {is3D && !isEmergencySession && (
                       <button
                         onClick={e => { e.stopPropagation(); setShowHybridGuide(true); }}
                         className="absolute right-2.5 top-1/2 -translate-y-1/2 z-10 rounded-full bg-white hover:bg-slate-100 p-1 transition-all shadow-md"
@@ -3777,8 +3801,18 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                     )}
                   </div>
 
-                  {/* Bouton Aide au choix (3D uniquement — en 2D il est dans le RegistrationModeSelector) */}
-                  {is3D && (
+                  {/* Bandeau urgence 3D */}
+                  {isEmergencySession && is3D && (
+                    <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+                      <ShieldCheck className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                      <p className="text-[10px] font-semibold text-amber-700 leading-relaxed">
+                        Le recalage déformable sera disponible après validation de votre compte par l'administrateur.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Bouton Aide au choix (3D uniquement — masqué en urgence car un seul mode actif) */}
+                  {is3D && !isEmergencySession && (
                     <button
                       onClick={() => { setAssistantObjective(null); setShowModeAssistant(true); }}
                       disabled={autoAlignStatus === 'processing'}
@@ -4173,16 +4207,27 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                             Comment voulez-vous charger cette image ?
                           </p>
 
-                          {/* Two big choice cards */}
-                          <div className="grid grid-cols-2 gap-4 w-full max-w-sm">
+                          {/* Choice cards */}
+                          <div className={`grid gap-4 w-full ${isEmergencySession ? 'grid-cols-1 max-w-sm' : 'grid-cols-2 max-w-sm'}`}>
 
                             {/* ── Choice 1: Local disk ── */}
-                            <label className="group relative flex flex-col items-center gap-3 p-5 rounded-2xl border-2 border-dashed border-blue-200 bg-blue-50/40 cursor-pointer hover:border-blue-500 hover:bg-blue-50/80 hover:-translate-y-0.5 transition-all duration-200 shadow-sm hover:shadow-md hover:shadow-blue-100">
+                            <label
+                              className="group relative flex flex-col items-center gap-3 p-5 rounded-2xl border-2 border-dashed border-blue-200 bg-blue-50/40 cursor-pointer hover:border-blue-500 hover:bg-blue-50/80 hover:-translate-y-0.5 transition-all duration-200 shadow-sm hover:shadow-md hover:shadow-blue-100 w-full"
+                              onDragOver={e => e.preventDefault()}
+                              onDrop={e => {
+                                e.preventDefault();
+                                const f = e.dataTransfer.files?.[0];
+                                if (!f) return;
+                                handleLocalFileWithConfirm(f, type);
+                              }}
+                            >
                               <div className="w-12 h-12 rounded-xl bg-white border border-blue-200 flex items-center justify-center text-blue-400 group-hover:text-blue-600 group-hover:border-blue-400 transition-colors shadow-sm">
                                 <Upload className="w-6 h-6" />
                               </div>
                               <div className="text-center">
-                                <p className="text-sm font-black text-slate-800 group-hover:text-blue-800 leading-tight">Depuis mon disque</p>
+                                <p className="text-sm font-black text-slate-800 group-hover:text-blue-800 leading-tight">
+                                  {isEmergencySession ? 'Glisser ou cliquer pour importer' : 'Depuis mon disque'}
+                                </p>
                                 <p className="text-[10px] text-slate-400 mt-1">{is3D ? '.nii / .nii.gz' : 'JPG · PNG · DICOM'}</p>
                               </div>
                               <span className="text-[9px] font-black uppercase tracking-[0.12em] text-blue-500 border border-blue-200 rounded-full px-2 py-0.5 bg-white">
@@ -4201,27 +4246,29 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                               />
                             </label>
 
-                            {/* ── Choice 2: From patients DB ── */}
-                            <button
-                              onClick={() => openPanelPicker(type)}
-                              className="group relative flex flex-col items-center gap-3 p-5 rounded-2xl border-2 border-emerald-200 bg-emerald-50/40 hover:border-emerald-500 hover:bg-emerald-50/80 hover:-translate-y-0.5 transition-all duration-200 shadow-sm hover:shadow-md hover:shadow-emerald-100"
-                            >
-                              <div className="w-12 h-12 rounded-xl bg-white border border-emerald-200 flex items-center justify-center text-emerald-400 group-hover:text-emerald-600 group-hover:border-emerald-400 transition-colors shadow-sm">
-                                <Users className="w-6 h-6" />
-                              </div>
-                              <div className="text-center">
-                                <p className="text-sm font-black text-slate-800 group-hover:text-emerald-800 leading-tight">Mes patients</p>
-                                <p className="text-[10px] text-slate-400 mt-1">
-                                  {allPatientsLoading
-                                    ? 'Chargement…'
-                                    : `${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length} dossier${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length !== 1 ? 's' : ''} disponible${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length !== 1 ? 's' : ''}`
-                                  }
-                                </p>
-                              </div>
-                              <span className="text-[9px] font-black uppercase tracking-[0.12em] text-emerald-600 border border-emerald-200 rounded-full px-2 py-0.5 bg-white">
-                                Base de données
-                              </span>
-                            </button>
+                            {/* ── Choice 2: From patients DB (hidden in emergency) ── */}
+                            {!isEmergencySession && (
+                              <button
+                                onClick={() => openPanelPicker(type)}
+                                className="group relative flex flex-col items-center gap-3 p-5 rounded-2xl border-2 border-emerald-200 bg-emerald-50/40 hover:border-emerald-500 hover:bg-emerald-50/80 hover:-translate-y-0.5 transition-all duration-200 shadow-sm hover:shadow-md hover:shadow-emerald-100"
+                              >
+                                <div className="w-12 h-12 rounded-xl bg-white border border-emerald-200 flex items-center justify-center text-emerald-400 group-hover:text-emerald-600 group-hover:border-emerald-400 transition-colors shadow-sm">
+                                  <Users className="w-6 h-6" />
+                                </div>
+                                <div className="text-center">
+                                  <p className="text-sm font-black text-slate-800 group-hover:text-emerald-800 leading-tight">Mes patients</p>
+                                  <p className="text-[10px] text-slate-400 mt-1">
+                                    {allPatientsLoading
+                                      ? 'Chargement…'
+                                      : `${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length} dossier${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length !== 1 ? 's' : ''} disponible${allPatients.filter(p => is3D ? p.has_nifti : p.has_2d).length !== 1 ? 's' : ''}`
+                                    }
+                                  </p>
+                                </div>
+                                <span className="text-[9px] font-black uppercase tracking-[0.12em] text-emerald-600 border border-emerald-200 rounded-full px-2 py-0.5 bg-white">
+                                  Base de données
+                                </span>
+                              </button>
+                            )}
 
                           </div>
                         </div>
@@ -4805,7 +4852,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                     )}
                   </div>
                   <div className="flex items-center gap-3">
-                    {registrationDimension === '2d' && confirmedPanelPatients.patient && !showValidationModal && (
+                    {!isEmergencySession && registrationDimension === '2d' && confirmedPanelPatients.patient && !showValidationModal && (
                       <>
                         <button
                           onClick={() => setConfirmDialog({
@@ -4839,7 +4886,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                         </button>
                       </>
                     )}
-                    {!(registrationDimension === '2d' && confirmedPanelPatients.patient) && !showValidationModal && !saveToPatientResult && (
+                    {!isEmergencySession && !(registrationDimension === '2d' && confirmedPanelPatients.patient) && !showValidationModal && !saveToPatientResult && (
                       <>
                         <button
                           onClick={() => setConfirmDialog({
@@ -4887,7 +4934,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                       </>
                     )}
                     {/* ── Après validation 3D : indicateur "Recalage validé" dans le footer ── */}
-                    {!(registrationDimension === '2d' && confirmedPanelPatients.patient) && !showValidationModal && saveToPatientResult && (
+                    {!isEmergencySession && !(registrationDimension === '2d' && confirmedPanelPatients.patient) && !showValidationModal && saveToPatientResult && (
                       <div className="flex items-center gap-1.5 rounded-lg bg-slate-50 border border-slate-200 px-3 py-1.5 text-[10px] font-semibold text-slate-500">
                         <Check className="h-3.5 w-3.5 text-emerald-500" />
                         Recalage validé — exports disponibles en haut
@@ -4896,8 +4943,8 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                   </div>
                 </div>
 
-                {/* ── Validation modal — available for all modes ── */}
-                {showValidationModal && (
+                {/* ── Validation modal — masquée en mode urgence ── */}
+                {showValidationModal && !isEmergencySession && (
                   <div className="absolute inset-0 z-[70] flex items-start justify-center p-4 overflow-y-auto">
                     <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => { setShowValidationModal(false); setSaveToPatientResult(null); }} />
                     <div className="relative w-full max-w-xl rounded-3xl border border-slate-200 bg-white shadow-[0_24px_64px_rgba(15,23,42,0.22)] my-auto">

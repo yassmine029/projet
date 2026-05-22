@@ -62,7 +62,7 @@ const GRADE_OPTIONS = [
 const ORDER_NUMBER_REGEX = /^(?:\d{4,6}|T-\d{4,6})$/;
 const PHONE_REGEX = /^[24579]\d{7}$/;
 
-export default function Dashboard() {
+export default function Dashboard({ user, onLogout }) {
   const location = useLocation();
   const normalizedPath = (location.pathname || '/').replace(/\/+$/, '') || '/';
   const isHome = normalizedPath === '/admin';
@@ -1708,7 +1708,7 @@ export default function Dashboard() {
       )}
 
       <div className="flex relative z-10">
-      <AdminSidebar />
+      <AdminSidebar user={user} onLogout={onLogout} />
       <main className="relative z-10 flex-1 xl:ml-64">
         <div className="sticky top-0 z-10 border-b border-slate-200/90 bg-white px-4 py-2.5 md:px-6 md:py-2.5">
           <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">

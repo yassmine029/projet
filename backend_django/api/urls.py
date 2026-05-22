@@ -5,6 +5,7 @@ from . import volume_api
 
 urlpatterns = [
     # Auth routes
+    path('get_csrf_token', views.get_csrf_token, name='get_csrf_token'),
     path('register', views.register, name='register'),
     path('login', views.login_view, name='login'),
     path('emergency_login', views.emergency_login, name='emergency_login'),

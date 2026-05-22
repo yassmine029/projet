@@ -955,7 +955,7 @@ function HippocampusOverlayPreview({
       const maxH = Math.max(208, maxSlicePanelHeightPx());
       const nw = mri.naturalWidth;
       const nh = mri.naturalHeight;
-      const scale = Math.min(wrapW / nw, maxH / nh, 1);
+      const scale = Math.min(wrapW / nw, maxH / nh);
       const dispW = Math.max(1, Math.round(nw * scale));
       const dispH = Math.max(1, Math.round(nh * scale));
 
@@ -1382,6 +1382,10 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
   }, [isEmergencySession]);
 
   const fetchPatients = async () => {
+    if (Boolean(userProp?.is_emergency_session)) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
 
@@ -1414,8 +1418,12 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
   };
 
   useEffect(() => {
+    if (isEmergencySession) {
+      setLoading(false);
+      return;
+    }
     fetchPatients();
-  }, []);
+  }, [isEmergencySession]);
 
   // Auto-sélection du patient via ?patientId=X (depuis le suivi longitudinal)
   useEffect(() => {
@@ -1541,16 +1549,19 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
 
       setSlices(files);
 
-      // Auto-sélection : on ne pré-sélectionne que les coupes recommandées.
-      // Si aucune info qualité disponible (ancien backend), on sélectionne tout.
-      const hasQuality = Object.keys(quality).length > 0;
-      if (hasQuality) {
-        const recommended = files
-          .filter((f) => quality[String(f.id)]?.recommended !== false)
-          .map((f) => f.id);
-        setSelectedSlices(recommended);
+      // Mode urgence : sélection automatique de tout le volume, sans filtrage qualité.
+      if (isEmergencySession) {
+        setSelectedSlices(files.map((f) => f.id));
       } else {
-        setSelectedSlices([]);
+        const hasQuality = Object.keys(quality).length > 0;
+        if (hasQuality) {
+          const recommended = files
+            .filter((f) => quality[String(f.id)]?.recommended !== false)
+            .map((f) => f.id);
+          setSelectedSlices(recommended);
+        } else {
+          setSelectedSlices([]);
+        }
       }
 
       setImageErrors({});
@@ -1869,7 +1880,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
   }, [runIdFromQuery]);
 
   const flowSteps = [
-    { id: 1, label: 'Sélection du patient' },
+    { id: 1, label: isEmergencySession ? 'Import des images' : 'Sélection du patient' },
     { id: 2, label: 'Coupes IRM' },
     { id: 3, label: 'Segmentation (Modèle 1)' },
   ];
@@ -2307,6 +2318,38 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
     setNpApiError('');
   };
 
+  const acceptedFile = (name) => {
+    const lower = name.toLowerCase();
+    if (lower.endsWith('.nii.gz')) return true;
+    const exts = new Set(['.nii', '.gz', '.dcm', '.dicom', '.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp']);
+    const dot = lower.lastIndexOf('.');
+    return dot !== -1 && exts.has(lower.slice(dot));
+  };
+
+  const pickFolderViaDirectoryPicker = async () => {
+    if (!window.showDirectoryPicker) {
+      emergencyFolderInputRef.current?.click();
+      return;
+    }
+    try {
+      const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
+      const collected = [];
+      const walk = async (handle) => {
+        for await (const [, entry] of handle.entries()) {
+          if (entry.kind === 'file') {
+            if (acceptedFile(entry.name)) collected.push(await entry.getFile());
+          } else if (entry.kind === 'directory') {
+            await walk(entry);
+          }
+        }
+      };
+      await walk(dirHandle);
+      pickEmergencyFiles(collected);
+    } catch (err) {
+      if (err?.name !== 'AbortError') console.error('showDirectoryPicker:', err);
+    }
+  };
+
   const submitEmergencyStaging = async () => {
     if (emergencyFiles.length === 0) {
       setNpApiError('Ajoutez au moins un fichier ou choisissez un dossier.');
@@ -2341,7 +2384,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
         msg =
           'Connexion au serveur interrompue (session expirée, backend arrêté, ou import très lourd). Reconnectez-vous ou réessayez.';
       }
-      if (!msg) msg = err.message || 'Erreur lors de l’import.';
+      if (!msg) msg = err.message || "Erreur lors de l’import.";
       setNpApiError(msg);
     } finally {
       setNpSubmitting(false);
@@ -2388,7 +2431,13 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => navigate(-1)}
+            onClick={() => {
+              if (step > 1) {
+                setStep(step - 1);
+              } else {
+                navigate(isEmergencySession ? '/urgence' : '/dashboard');
+              }
+            }}
             className="flex items-center gap-1.5 rounded-full border border-white/25 bg-white/10 backdrop-blur-sm px-3 py-1.5 text-[11px] font-bold text-white/80 hover:bg-white/20 transition-all"
             aria-label="Retour"
           >
@@ -2485,79 +2534,143 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
             {step === 1 && (
               <div className="space-y-5">
                 {isEmergencySession ? (
-                  <>
-                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-                      <p className="font-bold text-amber-900">Session urgence</p>
-                      <p className="mt-1 text-xs text-amber-800/90">
-                        Importez un dossier ou plusieurs fichiers : DICOM (.dcm), NIfTI (.nii,
-                        .nii.gz), images (JPEG, PNG, TIFF, BMP). Même préparation que le mode
-                        standard. Les données temporaires sont supprimées à la déconnexion.
+                  <div className="space-y-5">
+                    {/* En-tête */}
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="w-5 h-px bg-red-500" />
+                        <span className="text-[10px] font-black text-red-500 uppercase tracking-[0.2em]">Mode urgence — Session démo</span>
+                      </div>
+                      <h2 className="text-[20px] font-extrabold text-slate-900 tracking-tight">Import des images IRM</h2>
+                      <p className="text-[13px] text-slate-500 mt-1">
+                        Importez vos coupes directement — aucun dossier patient requis en mode démo.
                       </p>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => emergencyMultiInputRef.current?.click()}
-                        className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                      >
-                        Choisir des fichiers
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => emergencyFolderInputRef.current?.click()}
-                        className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                      >
-                        Choisir un dossier
-                      </button>
-                      {emergencyFiles.length > 0 ? (
-                        <button
-                          type="button"
-                          onClick={() => pickEmergencyFiles([])}
-                          className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700"
-                        >
-                          Effacer la sélection
-                        </button>
-                      ) : null}
+
+                    {/* Instruction clinique */}
+                    <div className="flex items-start gap-3 rounded-2xl border border-blue-100 bg-blue-50 px-5 py-4">
+                      <div className="w-8 h-8 rounded-xl bg-blue-600 flex items-center justify-center flex-shrink-0 shadow shadow-blue-600/30 mt-0.5">
+                        <Brain className="w-4 h-4 text-white" />
+                      </div>
+                      <div>
+                        <p className="text-[13px] font-bold text-blue-900 mb-1">Coupes 2D — Plan coronal requis</p>
+                        <p className="text-[12px] text-blue-700 leading-relaxed">
+                          Fournissez des coupes <span className="font-semibold">coronales 2D</span> de l'hippocampe,
+                          acquises en <span className="font-semibold">IRM pondérée T1</span> (ou T2).
+                          Orientez les coupes perpendiculairement à l'axe hippocampique pour une segmentation optimale.
+                        </p>
+                      </div>
                     </div>
-                    <input
-                      ref={emergencyMultiInputRef}
-                      type="file"
-                      multiple
-                      className="hidden"
-                      accept=".nii,.nii.gz,.dcm,.dicom,.jpg,.jpeg,.png,.tif,.tiff,.bmp"
-                      onChange={(e) => {
-                        pickEmergencyFiles(e.target.files);
-                        e.target.value = '';
+
+                    {/* Zone de drop */}
+                    <div
+                      className={`relative rounded-2xl border-2 border-dashed transition-all duration-200
+                        ${emergencyFiles.length > 0
+                          ? 'border-emerald-300 bg-emerald-50/50'
+                          : 'border-slate-200 bg-slate-50/50'
+                        }`}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        pickEmergencyFiles(e.dataTransfer.files);
                       }}
-                    />
-                    <input
-                      ref={emergencyFolderInputRef}
-                      type="file"
-                      multiple
-                      className="hidden"
+                    >
+                      <div className="flex flex-col items-center justify-center py-10 px-6 text-center">
+                        {emergencyFiles.length === 0 ? (
+                          <>
+                            <div className="w-14 h-14 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-center mb-4">
+                              <CloudUpload className="w-7 h-7 text-slate-400" />
+                            </div>
+                            <p className="text-[15px] font-bold text-slate-700 mb-1">Glissez vos fichiers ici</p>
+                            <p className="text-[12px] text-slate-400 mb-5">ou choisissez une option ci-dessous</p>
+                            <div className="flex flex-wrap justify-center gap-3 mb-5">
+                              <button
+                                type="button"
+                                onClick={() => emergencyMultiInputRef.current?.click()}
+                                className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-5 py-2.5 text-[13px] font-semibold text-blue-700 hover:bg-blue-100 hover:border-blue-300 transition-all shadow-sm"
+                              >
+                                <CloudUpload className="w-4 h-4" />
+                                Sélectionner des fichiers
+                              </button>
+                              <button
+                                type="button"
+                                onClick={pickFolderViaDirectoryPicker}
+                                className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-[13px] font-semibold text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all shadow-sm"
+                              >
+                                <FolderOpen className="w-4 h-4" />
+                                Importer un dossier
+                              </button>
+                            </div>
+                            <div className="flex flex-wrap justify-center gap-2">
+                              {['.dcm', '.nii', '.nii.gz', '.jpg', '.png'].map(ext => (
+                                <span key={ext} className="px-2.5 py-1 bg-white border border-slate-200 rounded-full text-[10px] font-bold text-slate-500 shadow-sm">
+                                  {ext}
+                                </span>
+                              ))}
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="w-14 h-14 rounded-2xl bg-emerald-100 border border-emerald-200 flex items-center justify-center mb-3">
+                              <FileImage className="w-7 h-7 text-emerald-600" />
+                            </div>
+                            <p className="text-[16px] font-extrabold text-emerald-700 mb-1">
+                              {emergencyFiles.length} fichier{emergencyFiles.length !== 1 ? 's' : ''} sélectionné{emergencyFiles.length !== 1 ? 's' : ''}
+                            </p>
+                            <div className="flex flex-wrap justify-center gap-3 mt-3">
+                              <button
+                                type="button"
+                                onClick={() => emergencyMultiInputRef.current?.click()}
+                                className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-[12px] font-semibold text-slate-600 hover:bg-slate-50 transition-all shadow-sm"
+                              >
+                                <CloudUpload className="w-3.5 h-3.5" />
+                                Changer les fichiers
+                              </button>
+                              <button
+                                type="button"
+                                onClick={pickFolderViaDirectoryPicker}
+                                className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-[12px] font-semibold text-slate-600 hover:bg-slate-50 transition-all shadow-sm"
+                              >
+                                <FolderOpen className="w-3.5 h-3.5" />
+                                Changer le dossier
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => pickEmergencyFiles([])}
+                                className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-[12px] font-semibold text-red-600 hover:bg-red-100 transition-all"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                                Effacer
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Inputs cachés */}
+                    <input ref={emergencyMultiInputRef} type="file" multiple className="hidden"
+                      accept=".nii,.nii.gz,.dcm,.dicom,.jpg,.jpeg,.png,.tif,.tiff,.bmp"
+                      onChange={(e) => { pickEmergencyFiles(e.target.files); e.target.value = ''; }} />
+                    <input ref={emergencyFolderInputRef} type="file" multiple className="hidden"
                       accept=".nii,.nii.gz,.dcm,.dicom,.jpg,.jpeg,.png,.tif,.tiff,.bmp"
                       {...{ webkitdirectory: '', directory: '' }}
-                      onChange={(e) => {
-                        pickEmergencyFiles(e.target.files);
-                        e.target.value = '';
-                      }}
-                    />
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                      {emergencyFiles.length === 0 ? (
-                        <span className="text-slate-500">Aucun fichier sélectionné.</span>
-                      ) : (
-                        <span className="font-semibold">
-                          {emergencyFiles.length} fichier{emergencyFiles.length !== 1 ? 's' : ''} prêt
-                          {emergencyFiles.length !== 1 ? 's' : ''}
-                        </span>
-                      )}
+                      onChange={(e) => { pickEmergencyFiles(e.target.files); e.target.value = ''; }} />
+
+                    {/* Avertissement données temporaires */}
+                    <div className="flex items-center gap-2.5 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
+                      <ShieldCheck className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                      <p className="text-[12px] font-medium text-amber-700">
+                        Données temporaires — supprimées automatiquement à la déconnexion.
+                      </p>
                     </div>
-                    {npApiError ? (
-                      <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-600">
+
+                    {npApiError && (
+                      <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] font-medium text-red-600">
                         {npApiError}
                       </div>
-                    ) : null}
-                  </>
+                    )}
+                  </div>
                 ) : (
                   <>
                 {/* ── Mode tabs (yesmine) ────────────────────────────────────────────── */}
@@ -3293,7 +3406,25 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                 </div>
                 {/* ══ Fin en-tête ═══════════════════════════════════════════ */}
 
-                {!slicesLoading && !slicesError && slices.length > 0 && (
+                {!slicesLoading && !slicesError && slices.length > 0 && isEmergencySession && (
+                  <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-5 py-4 flex items-start gap-3">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-600 mt-0.5">
+                      <Zap className="h-4 w-4 text-white fill-white" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-blue-900">
+                        Volume complet sélectionné — {slices.length} coupe{slices.length > 1 ? 's' : ''}
+                      </p>
+                      <p className="mt-0.5 text-[12px] text-blue-700 leading-relaxed">
+                        En mode urgence, toutes les coupes sont automatiquement incluses.
+                        Pour affiner la sélection, filtrer par plage ou exclure des coupes,
+                        accédez au <span className="font-semibold">mode complet</span> une fois votre compte activé par l'administrateur.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {!slicesLoading && !slicesError && slices.length > 0 && !isEmergencySession && (
                   <div className="rounded-xl border border-blue-100 bg-gradient-to-br from-blue-50/70 to-indigo-50/30 px-5 py-4 shadow-sm">
 
                     {/* En-tête */}
@@ -3390,7 +3521,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                       </p>
                     )}
                   </div>
-                )}
+                )} {/* fin !isEmergencySession */}
 
                 {slicesLoading && (
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -3661,6 +3792,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                           Examinez chaque coupe, puis validez la segmentation pour continuer vers la modélisation 3D.
                         </p>
                         <div className="flex flex-wrap items-center gap-2">
+                          {!isEmergencySession && (
                           <button
                             type="button"
                             onClick={() => {
@@ -3675,25 +3807,46 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                             <ChevronLeft className="h-4 w-4" />
                             Modifier les coupes
                           </button>
+                          )}
                           <button
                             type="button"
-                            onClick={() => setValidateConfirmOpen(true)}
+                            onClick={() => {
+                              if (isEmergencySession) {
+                                const rid = effectiveRunId;
+                                if (!Number.isFinite(rid) || rid <= 0) return;
+                                navigate(`/segmentation/modelisation?run=${rid}`);
+                                return;
+                              }
+                              setValidateConfirmOpen(true);
+                            }}
                             disabled={
                               !Number.isFinite(effectiveRunId) ||
                               effectiveRunId <= 0 ||
-                              (reviewStats.total > 0 && reviewStats.rejected === reviewStats.total)
+                              (!isEmergencySession && reviewStats.total > 0 && reviewStats.rejected === reviewStats.total)
                             }
                             className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2 text-sm font-bold text-white shadow-sm shadow-emerald-200 transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             <CheckCircle2 className="h-4 w-4" />
-                            Valider la segmentation
+                            {isEmergencySession ? 'Voir les résultats 3D' : 'Valider la segmentation'}
                           </button>
                         </div>
                       </div>
                     </div>
 
+                    {/* ── Bandeau mode complet (urgence uniquement) ── */}
+                    {isEmergencySession && (
+                      <div className="flex items-start gap-3 rounded-xl border border-amber-100 bg-amber-50/70 px-5 py-3.5">
+                        <Zap className="w-4 h-4 text-amber-500 fill-amber-400 flex-shrink-0 mt-0.5" />
+                        <p className="text-[12px] text-amber-800 leading-relaxed">
+                          <span className="font-bold">Mode urgence —</span> Résultat du modèle par défaut (U-Net++).
+                          Pour comparer les modèles coupe par coupe, affiner la sélection ou relancer avec nnU-Net / Swin-UNETR,
+                          accédez au <span className="font-semibold">mode complet</span> une fois votre compte activé par l'administrateur.
+                        </p>
+                      </div>
+                    )}
+
                     {/* ── Section : Relancer toutes les coupes avec un autre modèle ── */}
-                    {!resultsLoading && persistedResults.length > 0 && (
+                    {!isEmergencySession && !resultsLoading && persistedResults.length > 0 && (
                       <div className="rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50/60 to-indigo-50/40 px-5 py-4">
                         <div className="flex items-start gap-3 mb-4">
                           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-100">
@@ -3986,11 +4139,13 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                                   <span className="rounded-lg bg-blue-600 px-2.5 py-1 text-xs font-black text-white tabular-nums">
                                     {coupeLabel}
                                   </span>
-                                  <span
-                                    className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${badge.className}`}
-                                  >
-                                    {badge.label}
-                                  </span>
+                                  {!isEmergencySession && (
+                                    <span
+                                      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${badge.className}`}
+                                    >
+                                      {badge.label}
+                                    </span>
+                                  )}
                                   <span className="rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">
                                     {modelLabel}
                                   </span>
@@ -4303,7 +4458,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                                   ) : null}
                                 </>
                               )}
-                              {canActions ? (
+                              {canActions && !isEmergencySession ? (
                               <div className="border-t border-slate-200 bg-slate-50/95 px-4 py-3">
                                 <div className="flex flex-col gap-3">
                                   <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">

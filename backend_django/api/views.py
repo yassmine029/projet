@@ -1,4 +1,5 @@
 import os
+import hashlib
 import html as html_module
 import io
 import sys
@@ -23,7 +24,7 @@ from django.contrib.auth.models import User
 from django.db import IntegrityError, transaction
 from django.http import JsonResponse, HttpResponse, FileResponse
 from django.views.decorators.http import require_http_methods
-from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.contrib.auth.decorators import login_required
 from rest_framework.decorators import api_view, permission_classes, parser_classes
 from rest_framework.permissions import AllowAny
@@ -32,6 +33,8 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import get_object_or_404, Http404
 from django.core.validators import RegexValidator
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.files.storage import default_storage
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.authentication import SessionAuthentication
@@ -54,6 +57,8 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from datetime import timedelta
 from django.utils import timezone
 from django.core.mail import send_mail
+
+from .emergency_access import is_emergency_session
 
 # WebSocket support for registration progress
 try:
@@ -185,11 +190,12 @@ Des questions ? support@neuroscan.com
     L'équipe NeuroScan
 """.strip()
 
+        safe_display_name = escape(display_name)
         html_message = f"""
         <html><body style=\"font-family: Arial, sans-serif; color: #0f172a;\">
             <div style=\"max-width: 680px; margin: 0 auto; padding: 20px;\">
                 <h2 style=\"margin: 0 0 16px; color: #1d4ed8;\">NeuroScan</h2>
-                <p>Bonjour Dr. <strong>{display_name}</strong>,</p>
+                <p>Bonjour Dr. <strong>{safe_display_name}</strong>,</p>
                 <p>Votre demande d'inscription est bien reçue et en cours d'examen. Vous recevrez une réponse sous <strong>24 à 48 heures</strong>.</p>
 
                 <h3 style="margin-top: 22px;">Mode Urgence disponible dès maintenant</h3>
@@ -231,11 +237,12 @@ Des questions ? support@neuroscan.com
 L'équipe NeuroScan
 """.strip()
 
+    safe_display_name = escape(display_name)
     html_message = f"""
     <html><body style=\"font-family: Arial, sans-serif; color: #0f172a;\">
         <div style=\"max-width: 680px; margin: 0 auto; padding: 20px;\">
             <h2 style=\"margin: 0 0 16px; color: #1d4ed8;\">NeuroScan</h2>
-            <p>Bonjour Dr. <strong>{display_name}</strong>,</p>
+            <p>Bonjour Dr. <strong>{safe_display_name}</strong>,</p>
             <p>Votre compte NeuroScan est activé. Vous pouvez dès maintenant accéder à toutes les fonctionnalités de la plateforme.</p>
 
             <p style=\"margin: 26px 0;\">
@@ -369,6 +376,16 @@ L'équipe NeuroScan
 class CsrfExemptSessionAuthentication(SessionAuthentication):
     def enforce_csrf(self, request):
         return
+
+    def authenticate(self, request):
+        # Fall back to Django's raw user to support inactive (emergency) accounts
+        # that use AllowAllUsersModelBackend in their session.
+        from django.contrib.auth import get_user as django_get_user
+        django_request = getattr(request, '_request', request)
+        user = django_get_user(django_request)
+        if not user or not getattr(user, 'pk', None):
+            return None
+        return (user, None)
 
 
 def send_email_async(subject, message, from_email, recipient_list, html_message=None):
@@ -935,7 +952,13 @@ def next_dossier_number(request):
     return JsonResponse({'ok': True, 'dossier_number': _next_dossier_number()})
 
 
-@csrf_exempt
+@ensure_csrf_cookie
+@require_http_methods(["GET"])
+def get_csrf_token(request):
+    """Force Django à poser le cookie csrftoken. Appelé par le frontend avant tout POST auth."""
+    return JsonResponse({'ok': True})
+
+
 @require_http_methods(["POST"])
 def register(request):
     try:
@@ -967,6 +990,11 @@ def register(request):
         return JsonResponse({'ok': False, 'error': 'Téléphone invalide: utilisez un numéro tunisien à 8 chiffres (ex: 22345678).'}, status=400)
 
     try:
+        validate_password(password)
+    except DjangoValidationError as e:
+        return JsonResponse({'ok': False, 'error': ' '.join(e.messages)}, status=400)
+
+    try:
         with transaction.atomic():
             if User.objects.filter(username=username).exists():
                 print(f"Yassmine now the register FAILED - username exists: {username}")
@@ -990,21 +1018,22 @@ def register(request):
                 is_staff=is_bootstrap_admin,
                 is_superuser=is_bootstrap_admin,
             )
-            DoctorProfile.objects.create(
-                user=user,
-                nom=nom,
-                prenom=prenom,
-                order_number=order_number,
-                affiliation=affiliation,
-                specialty=specialty,
-                grade=grade,
-                telephone=telephone,
-                status='actif' if is_bootstrap_admin else 'en_attente',
-            )
-            if is_bootstrap_admin:
-                transaction.on_commit(lambda: send_account_approved_email(username, nom, prenom))
-            else:
+            if not is_bootstrap_admin:
+                # Admin accounts are not doctors — only médecins get a DoctorProfile.
+                DoctorProfile.objects.create(
+                    user=user,
+                    nom=nom,
+                    prenom=prenom,
+                    order_number=order_number,
+                    affiliation=affiliation,
+                    specialty=specialty,
+                    grade=grade,
+                    telephone=telephone,
+                    status='en_attente',
+                )
                 transaction.on_commit(lambda: send_pending_registration_email(username, nom, prenom))
+            else:
+                transaction.on_commit(lambda: send_account_approved_email(username, nom, prenom))
             print(f"Yassmine now the register SUCCESS for user: {username}")
             if is_bootstrap_admin:
                 return JsonResponse({'ok': True, 'message': 'Compte admin initial créé avec succès'})
@@ -1014,7 +1043,6 @@ def register(request):
         return JsonResponse({'ok': False, 'error': 'username already exists'}, status=400)
 
 
-@csrf_exempt
 @require_http_methods(["POST"])
 def login_view(request):
     try:
@@ -1030,8 +1058,8 @@ def login_view(request):
         # Accept either username or account email as login identifier.
         account = User.objects.filter(Q(username=username) | Q(email__iexact=username)).first()
         if account is None:
-            print(f"Nadine Yassmine - login failed - account not found: {username}")
-            return JsonResponse({'ok': False, 'error': 'Compte introuvable', 'error_type': 'user_not_found'}, status=401)
+            # Message générique pour éviter l'énumération d'utilisateurs.
+            return JsonResponse({'ok': False, 'error': 'Identifiants invalides', 'error_type': 'user_not_found'}, status=401)
 
         profile = DoctorProfile.objects.filter(user=account).first()
         has_admin = User.objects.filter(Q(is_staff=True) | Q(is_superuser=True)).exists()
@@ -1041,8 +1069,7 @@ def login_view(request):
         # This prevents bypassing admin approval for later accounts.
         if profile and profile.status == 'en_attente' and not has_admin and total_users == 1:
             if not account.check_password(password):
-                print(f"Nadine Yassmine - bootstrap admin login failed - invalid password for: {account.username}")
-                return JsonResponse({'ok': False, 'error': 'Mot de passe incorrect', 'error_type': 'invalid_password'}, status=401)
+                return JsonResponse({'ok': False, 'error': 'Identifiants invalides', 'error_type': 'invalid_password'}, status=401)
 
             account.is_active = True
             account.is_staff = True
@@ -1069,8 +1096,7 @@ def login_view(request):
 
         user = authenticate(request, username=account.username, password=password)
         if user is None:
-            print(f"Nadine Yassmine - login failed - invalid password for: {account.username}")
-            return JsonResponse({'ok': False, 'error': 'Mot de passe incorrect', 'error_type': 'invalid_password'}, status=401)
+            return JsonResponse({'ok': False, 'error': 'Identifiants invalides', 'error_type': 'invalid_password'}, status=401)
 
         login(request, user)
         # Ensure normal login clears any leftover emergency session flag.
@@ -1099,6 +1125,7 @@ def login_view(request):
                 'last_name': (user.last_name or '').strip(),
                 'specialty': (profile.specialty if profile else ''),
                 'is_staff': user.is_staff,
+                'is_admin_dashboard': user.is_staff,
             }
         })
     except Exception as e:
@@ -1108,7 +1135,6 @@ def login_view(request):
         return JsonResponse({'ok': False, 'error': 'Internal Server Error'}, status=500)
 
 
-@csrf_exempt
 @require_http_methods(["POST"])
 def logout_view(request):
     print(f"Yassmine now the logout endpoint works")
@@ -1134,7 +1160,6 @@ def _portal_dashboard_credentials():
     return email, password
 
 
-@csrf_exempt
 @require_http_methods(["POST"])
 def admin_portal_login(request):
     """
@@ -1200,6 +1225,7 @@ def admin_portal_login(request):
     })
 
 
+@ensure_csrf_cookie
 @api_view(['GET'])
 def check_session(request):
     if request.user and request.user.is_authenticated:
@@ -1214,7 +1240,7 @@ def check_session(request):
             username_prefix = (request.user.username or '').split('@')[0].replace('.', ' ').replace('_', ' ').strip()
             full_name = username_prefix.title() if username_prefix else 'Medecin'
 
-        is_portal = request.user.username == PORTAL_ADMIN_USERNAME
+        is_admin = request.user.is_staff
         em = is_emergency_session(request)
         return JsonResponse({
             'logged_in': True,
@@ -1227,7 +1253,7 @@ def check_session(request):
                 'last_name': (request.user.last_name or '').strip(),
                 'specialty': (profile.specialty if profile else ''),
                 'is_staff': request.user.is_staff,
-                'is_admin_dashboard': is_portal,
+                'is_admin_dashboard': is_admin,
                 'is_emergency_session': em,
             },
             'is_staff': request.user.is_staff
@@ -1971,6 +1997,8 @@ def history(request):
     if not request.user or not request.user.is_authenticated:
         print(f"Yassmine now the history endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
+    if is_emergency_session(request):
+        return JsonResponse({'error': 'Historique non disponible en mode démo.'}, status=403)
     print(f"Yassmine now the history endpoint works - user: {request.user.username}")
     out = []
     qs = Series.objects.filter(user=request.user).order_by('-created_at')
@@ -2669,32 +2697,30 @@ def brodmann_intensity(request):
     else:
         patient_pid_raw = (qp.get('patient_id') or '').strip()
         if not patient_pid_raw:
-            return Response(
-                {
-                    'detail': (
-                        "Indiquez le patient (patient_id) pour choisir la référence "
-                        "d'intensité selon l'âge."
-                    ),
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            # Mode urgence : pas de patient en base → sujet3 (55-64 ans) par défaut
+            ref_nom, ref_band_fr = 'sujet3', '55-64 ans (référence par défaut)'
+            patient_for_age = None
+            age_years = None
+        else:
+            try:
+                patient_pid = int(patient_pid_raw)
+            except (TypeError, ValueError):
+                return Response(
+                    {'detail': 'patient_id invalide.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            patient_for_age = get_object_or_404(
+                Patient,
+                pk=patient_pid,
+                doctor=request.user,
             )
-        try:
-            patient_pid = int(patient_pid_raw)
-        except (TypeError, ValueError):
-            return Response(
-                {'detail': 'patient_id invalide.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        patient_for_age = get_object_or_404(
-            Patient,
-            pk=patient_pid,
-            doctor=request.user,
-        )
+            age_years = None
 
-    age_years = _compute_age(getattr(patient_for_age, 'date_naissance', None))
-    ref_nom, ref_band_fr, age_err = _brodmann_reference_nom_band_for_age(age_years)
-    if age_err:
-        return Response({'detail': age_err}, status=status.HTTP_400_BAD_REQUEST)
+    if patient_for_age is not None:
+        age_years = _compute_age(getattr(patient_for_age, 'date_naissance', None))
+        ref_nom, ref_band_fr, age_err = _brodmann_reference_nom_band_for_age(age_years)
+        if age_err:
+            return Response({'detail': age_err}, status=status.HTTP_400_BAD_REQUEST)
 
     ref_row = ReferenceIntensity.objects.filter(nom=ref_nom).first()
     if ref_row is None:
@@ -2936,20 +2962,23 @@ def brodmann_all_intensities(request):
     else:
         patient_pid_raw = (qp.get('patient_id') or '').strip()
         if not patient_pid_raw:
-            return Response(
-                {'detail': "Indiquez le patient (patient_id) pour choisir la référence d'intensité selon l'âge."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        try:
-            patient_pid = int(patient_pid_raw)
-        except (TypeError, ValueError):
-            return Response({'detail': 'patient_id invalide.'}, status=status.HTTP_400_BAD_REQUEST)
-        patient_for_age = get_object_or_404(Patient, pk=patient_pid, doctor=request.user)
+            # Mode urgence : pas de patient en base → sujet3 (55-64 ans) par défaut
+            ref_nom, ref_band_fr = 'sujet3', '55-64 ans (référence par défaut)'
+            patient_for_age = None
+            age_years = None
+        else:
+            try:
+                patient_pid = int(patient_pid_raw)
+            except (TypeError, ValueError):
+                return Response({'detail': 'patient_id invalide.'}, status=status.HTTP_400_BAD_REQUEST)
+            patient_for_age = get_object_or_404(Patient, pk=patient_pid, doctor=request.user)
+            age_years = None
 
-    age_years = _compute_age(getattr(patient_for_age, 'date_naissance', None))
-    ref_nom, ref_band_fr, age_err = _brodmann_reference_nom_band_for_age(age_years)
-    if age_err:
-        return Response({'detail': age_err}, status=status.HTTP_400_BAD_REQUEST)
+    if patient_for_age is not None:
+        age_years = _compute_age(getattr(patient_for_age, 'date_naissance', None))
+        ref_nom, ref_band_fr, age_err = _brodmann_reference_nom_band_for_age(age_years)
+        if age_err:
+            return Response({'detail': age_err}, status=status.HTTP_400_BAD_REQUEST)
 
     ref_row = ReferenceIntensity.objects.filter(nom=ref_nom).first()
     if ref_row is None:
@@ -4421,6 +4450,8 @@ def segmentation_run_finalize(request, run_id):
 @authentication_classes([CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
 def segmentation_run_report_pdf(request, run_id):
+    if is_emergency_session(request):
+        return JsonResponse({'ok': False, 'error': 'Génération de rapport non disponible en mode démo.'}, status=403)
     run = get_object_or_404(SegmentationRun, id=run_id, doctor=request.user)
     if run.status != 'done':
         return JsonResponse({'ok': False, 'error': 'Le run doit etre termine avant generation du rapport PDF.'}, status=400)
@@ -4952,6 +4983,8 @@ def download_registered_series(request):
     """Download registered and/or reference slices as a ZIP file."""
     if not request.user or not request.user.is_authenticated:
         return JsonResponse({'error': 'login required'}, status=401)
+    if is_emergency_session(request):
+        return JsonResponse({'error': 'Téléchargement non disponible en mode démo.'}, status=403)
 
     job_id = request.GET.get('jobId', '')
     panel  = request.GET.get('panel', 'patient')   # 'patient' | 'reference' | 'all'
@@ -5085,6 +5118,8 @@ def download_series(request, series_id):
     if not request.user or not request.user.is_authenticated:
         print(f"Yassmine now the download_series endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
+    if is_emergency_session(request):
+        return JsonResponse({'error': 'Téléchargement non disponible en mode démo.'}, status=403)
 
     print(f"Yassmine now the download_series endpoint works - series_id: {series_id}, user: {request.user.username}")
 
@@ -5128,6 +5163,8 @@ def download_patient(request, patient_id):
     if not request.user or not request.user.is_authenticated:
         print(f"Yassmine now the download_patient endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
+    if is_emergency_session(request):
+        return JsonResponse({'error': 'Téléchargement non disponible en mode démo.'}, status=403)
 
     print(f"Yassmine now the download_patient endpoint works - patient_id: {patient_id}, user: {request.user.username}")
 
@@ -5239,6 +5276,8 @@ def emergency_stage_patient(request):
             MAX_FILE_SIZE_MB = 500
             MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
+            batch_acquisition_id = uuid.uuid4()
+
             for index, uploaded_file in enumerate(files):
                 fname_lower = uploaded_file.name.lower()
                 ext = os.path.splitext(fname_lower)[1]
@@ -5260,16 +5299,37 @@ def emergency_stage_patient(request):
 
                 rel_from_client = relative_paths[index] if index < len(relative_paths) else ''
                 safe_rel = _safe_relative_path(rel_from_client, uploaded_file.name)
-                storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
+
+                # Windows path-length safety: reduce deep folder paths to a short hashed filename.
+                if os.name == 'nt':
+                    storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
+                    abs_path = os.path.join(settings.MEDIA_ROOT, *storage_path.split('/'))
+                    if len(abs_path) >= 240:
+                        base = os.path.basename(safe_rel) or os.path.basename(uploaded_file.name)
+                        lower = base.lower()
+                        if lower.endswith('.nii.gz'):
+                            stem = base[:-7]
+                            ext = '.nii.gz'
+                        else:
+                            stem, ext = os.path.splitext(base)
+                        digest = hashlib.sha1(safe_rel.encode('utf-8')).hexdigest()[:10]
+                        safe_rel = f"{stem[:32]}_{digest}{ext}"
+                        storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
+                else:
+                    storage_path = f"patients/{patient.id}/mri_files/{safe_rel}"
+
                 saved_path = default_storage.save(storage_path, uploaded_file)
 
-                MRIFile.objects.create(
+                mri_rec = MRIFile.objects.create(
                     patient=patient,
                     file=saved_path,
                     original_filename=uploaded_file.name,
                     relative_path=safe_rel,
                     file_size=int(getattr(uploaded_file, 'size', 0) or 0),
+                    file_type='original',
+                    acquisition_id=batch_acquisition_id,
                 )
+                _ensure_mri_file_dimensions(mri_rec)
 
             out_serializer = PatientSerializer(patient, context={'request': request})
             return JsonResponse(
@@ -5282,7 +5342,6 @@ def emergency_stage_patient(request):
         return JsonResponse({'ok': False, 'error': f'Erreur serveur: {str(e)}'}, status=500)
 
 
-@csrf_exempt
 @require_http_methods(["POST"])
 def emergency_login(request):
     try:
@@ -5313,55 +5372,55 @@ def emergency_login(request):
             return JsonResponse({'ok': False, 'error': "Le mode urgence est disponible uniquement pour les comptes en attente de validation."}, status=403)
 
         attempt, created = EmergencyLoginAttempt.objects.get_or_create(email=email)
-        if attempt.count >= 2:
-            return JsonResponse({'ok': False, 'error': 'Limite d\'accès d\'urgence atteinte (max 2).'}, status=403)
+        EMERGENCY_MAX = 10
+        if attempt.count >= EMERGENCY_MAX:
+            return JsonResponse({'ok': False, 'error': f'Vous avez épuisé vos {EMERGENCY_MAX} sessions démo. Attendez l\'activation de votre compte par l\'administrateur.'}, status=403)
         attempt.count += 1
         attempt.save()
-        login(request, user)
+        # EmergencyOnlyBackend bypasses the is_active check so pending accounts
+        # can maintain a valid session across requests without opening all inactive accounts.
+        login(request, user, backend='api.emergency_backend.EmergencyOnlyBackend')
         request.session['username'] = user.username
-        return JsonResponse({'ok': True, 'message': f'Connexion d\'urgence réussie ({attempt.count}/2)', 'user': user.username, 'count': attempt.count})
+        request.session['emergency_access'] = True
+        return JsonResponse({'ok': True, 'message': f'Session démo activée ({attempt.count}/{EMERGENCY_MAX}).', 'user': user.username, 'count': attempt.count, 'remaining': max(0, EMERGENCY_MAX - attempt.count)})
     except json.JSONDecodeError:
         return JsonResponse({'ok': False, 'error': 'JSON invalide'}, status=400)
     except Exception as e:
         return JsonResponse({'ok': False, 'error': 'Erreur serveur interne'}, status=500)
 
 
-@csrf_exempt
 @require_http_methods(["POST"])
 def check_emergency_limit(request):
     try:
         data = json.loads(request.body)
         email = (data.get('email') or '').strip().lower()
         order_number = normalize_order_number(data.get('order_number'))
-        if not email:
-            return JsonResponse({'ok': False, 'error': 'Email requis'}, status=400)
-        if not order_number:
-            return JsonResponse({'ok': False, 'error': "Numéro d'ordre requis"}, status=400)
-        if not is_valid_order_number(order_number):
-            return JsonResponse({'ok': False, 'error': "Format invalide du numéro d'ordre."}, status=400)
+        if not email or not order_number or not is_valid_order_number(order_number):
+            # Réponse neutre pour ne pas révéler si l'email/numéro est valide.
+            return JsonResponse({'ok': True, 'remaining': 10})
 
         user = User.objects.filter(Q(username=email) | Q(email__iexact=email)).first()
-        if not user:
-            return JsonResponse({'ok': False, 'error': 'Aucun compte trouvé avec cet email professionnel.'}, status=404)
+        profile = user and DoctorProfile.objects.filter(user=user).first()
 
-        profile = DoctorProfile.objects.filter(user=user).first()
-        if not profile:
-            return JsonResponse({'ok': False, 'error': 'Profil médecin introuvable.'}, status=403)
-        if (profile.order_number or '').strip().upper() != order_number:
-            return JsonResponse({'ok': False, 'error': "Email professionnel et numéro d'ordre ne correspondent pas."}, status=403)
-        if profile.status != 'en_attente':
-            return JsonResponse({'ok': False, 'error': "Le mode urgence est disponible uniquement pour les comptes en attente de validation."}, status=403)
+        # Retourner une valeur neutre si les données ne correspondent pas
+        # (évite d'énumérer les comptes ou les statuts).
+        if (
+            not user
+            or not profile
+            or (profile.order_number or '').strip().upper() != order_number
+            or profile.status != 'en_attente'
+        ):
+            return JsonResponse({'ok': True, 'remaining': 10})
 
         attempt = EmergencyLoginAttempt.objects.filter(email=email).first()
         count = attempt.count if attempt else 0
-        return JsonResponse({'ok': True, 'count': count, 'remaining': max(0, 2 - count)})
+        return JsonResponse({'ok': True, 'count': count, 'remaining': max(0, 10 - count)})
     except json.JSONDecodeError:
         return JsonResponse({'ok': False, 'error': 'JSON invalide'}, status=400)
-    except Exception as e:
+    except Exception:
         return JsonResponse({'ok': False, 'error': 'Erreur serveur interne'}, status=500)
 
 
-@csrf_exempt
 @require_http_methods(["POST"])
 def forgot_password(request):
     print(f"Nadine Yassmine - FORGOT_PASSWORD ENDPOINT CALLED", flush=True)
@@ -5485,7 +5544,6 @@ def forgot_password(request):
         return JsonResponse({'ok': False, 'error': 'Internal Server Error'}, status=500)
 
 
-@csrf_exempt
 @require_http_methods(["POST"])
 def validate_reset_token(request):
     try:
@@ -5508,7 +5566,6 @@ def validate_reset_token(request):
         return JsonResponse({'ok': False, 'error': 'Internal Server Error'}, status=500)
 
 
-@csrf_exempt
 @require_http_methods(["POST"])
 def reset_password(request):
     try:
@@ -5526,6 +5583,10 @@ def reset_password(request):
                 return JsonResponse({'ok': False, 'error_type': 'token_expired', 'error': 'Lien expiré'}, status=400)
             return JsonResponse({'ok': False, 'error_type': 'token_invalid', 'error': 'Lien déjà utilisé'}, status=400)
         user = reset_token.user
+        try:
+            validate_password(new_password, user)
+        except DjangoValidationError as e:
+            return JsonResponse({'ok': False, 'error': ' '.join(e.messages)}, status=400)
         user.set_password(new_password)
         user.save()
         reset_token.is_used = True
@@ -5537,7 +5598,6 @@ def reset_password(request):
         return JsonResponse({'ok': False, 'error': 'Internal Server Error'}, status=500)
 
 
-@csrf_exempt
 @require_http_methods(["POST"])
 def validate_activation_token(request):
     try:
@@ -5560,7 +5620,6 @@ def validate_activation_token(request):
         return JsonResponse({'ok': False, 'error': 'Internal Server Error'}, status=500)
 
 
-@csrf_exempt
 @require_http_methods(["POST"])
 def activate_account(request):
     try:
@@ -6215,11 +6274,15 @@ def _compute_slice_quality(file_path: str) -> dict:
 
 
 @api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
 @login_required
 def list_mri_files(request, patient_id: int):
     print(f"Nadine Yassmine - list_mri_files endpoint works - patient_id: {patient_id}, user: {request.user.username}")
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
-    mri_files = list(MRIFile.objects.filter(patient=patient, file_type='original').order_by('-uploaded_at'))
+    if patient.emergency_temp:
+        mri_files = list(MRIFile.objects.filter(patient=patient).order_by('-uploaded_at'))
+    else:
+        mri_files = list(MRIFile.objects.filter(patient=patient, file_type='original').order_by('-uploaded_at'))
 
     quality_map = {}
     for m in mri_files:
@@ -6626,6 +6689,8 @@ def _series_analysis_type(series):
 @api_view(['GET'])
 @login_required
 def admin_dashboard_analytics(request):
+    if not request.user.is_staff:
+        return JsonResponse({'ok': False, 'error': 'Permission denied'}, status=403)
     users_qs = _admin_scope_users(request)
     series_qs = _admin_scope_series(request)
     reclamations_qs = _admin_scope_reclamations(request)
@@ -6746,7 +6811,9 @@ def admin_dashboard_analytics(request):
 @api_view(['GET'])
 @login_required
 def admin_dashboard_overview(request):
-    series_qs = _admin_scope_series(request)
+    if not request.user.is_staff:
+        return JsonResponse({'ok': False, 'error': 'Permission denied'}, status=403)
+    series_qs = _admin_scope_series(request).exclude(user__is_staff=True)
     patients_qs = _admin_scope_patients(request)
     reclamations_qs = _admin_scope_reclamations(request)
 
@@ -6759,7 +6826,7 @@ def admin_dashboard_overview(request):
         analysis_type = _series_analysis_type(s)
         recent.append({
             'action': 'Analyse IRM cérébrale',
-            'user': (s.user.username if s.user else 'Utilisateur inconnu'),
+            'user': (s.user.get_full_name() or s.user.first_name or s.user.username) if s.user else 'Utilisateur',
             'type': 'Recalage' if analysis_type == 'recalage' else 'Segmentation',
             'status': analysis_type,
             'date': s.created_at.isoformat() if s.created_at else None,
@@ -6801,12 +6868,23 @@ def admin_dashboard_overview(request):
 @api_view(['GET'])
 @login_required
 def admin_dashboard_accounts(request):
-    users_qs = _admin_scope_users(request).order_by('-date_joined')
+    if not request.user.is_staff:
+        return JsonResponse({'ok': False, 'error': 'Permission denied'}, status=403)
+    users_qs = _admin_scope_users(request).exclude(username=PORTAL_ADMIN_USERNAME).order_by('-date_joined')
     accounts = []
     now = timezone.now()
     for i, u in enumerate(users_qs[:100], start=1):
         profile = DoctorProfile.objects.filter(user=u).first()
-        if profile:
+        if u.is_staff or u.is_superuser:
+            # Admin accounts: never shown as a médecin
+            status_label = 'Actif' if u.is_active else 'Inactif'
+            specialty = ''
+            affiliation = ''
+            order_number = '-'
+            grade = ''
+            telephone = ''
+            refusal_reason = ''
+        elif profile:
             has_pending_activation = AccountActivationToken.objects.filter(
                 user=u,
                 is_used=False,
@@ -7030,15 +7108,18 @@ def admin_account_create(request):
 @api_view(['GET'])
 @login_required
 def admin_dashboard_history(request):
-    series_qs = _admin_scope_series(request)
+    if not request.user.is_staff:
+        return JsonResponse({'ok': False, 'error': 'Permission denied'}, status=403)
+    series_qs = _admin_scope_series(request).exclude(user__is_staff=True)
     reclamations_qs = _admin_scope_reclamations(request)
 
     items = []
     for s in series_qs.order_by('-created_at')[:20]:
         analysis_type = _series_analysis_type(s)
+        doctor_name = (s.user.get_full_name() or s.user.first_name or s.user.username) if s.user else 'Utilisateur'
         items.append({
             'title': 'Analyse IRM cérébrale',
-            'subtitle': f"{s.user.username if s.user else 'Utilisateur'} · Série {s.job_id[:8]}",
+            'subtitle': f"{doctor_name} · Série {s.job_id[:8]}",
             'type': 'Recalage' if analysis_type == 'recalage' else 'Segmentation',
             'status': analysis_type,
             'date': s.created_at.isoformat() if s.created_at else None,
@@ -7060,6 +7141,8 @@ def admin_dashboard_history(request):
 @login_required
 def admin_dashboard_settings(request):
     user = request.user
+    if not user.is_staff:
+        return JsonResponse({'ok': False, 'error': 'Permission denied'}, status=403)
 
     user_settings_obj, _ = UserSettings.objects.get_or_create(user=user)
     admin_prefs = user_settings_obj.settings.get('admin_prefs', {})

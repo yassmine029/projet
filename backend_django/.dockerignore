@@ -1,0 +1,27 @@
+# Environnements virtuels (binaires Windows incompatibles avec Linux)
+venv/
+.venv/
+env/
+
+# Cache Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Base de données locale
+*.sqlite3
+db_backups/
+
+# Fichiers uploadés locaux
+media/
+
+# Docker ne doit pas copier ça
+Dockerfile
+.dockerignore
+
+# IDE
+.vscode/
+.idea/
+
+# Variables d'environnement locales
+.env

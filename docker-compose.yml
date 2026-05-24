@@ -1,0 +1,52 @@
+version: '3.9'
+
+services:
+
+  # --- Base de données PostgreSQL ---
+  db:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-visionmed}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Backend Django + Daphne (WebSocket) ---
+  backend:
+    build:
+      context: ./backend_django
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_HOST: db
+      MEDIA_ROOT: /app/media
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - media_files:/app/media
+    command: >
+      sh -c "python manage.py migrate &&
+             daphne -b 0.0.0.0 -p 8000 backend_django.asgi:application"
+
+  # --- Frontend React (sera complété par la binôme) ---
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #   ports:
+  #     - "3000:80"
+  #   depends_on:
+  #     - backend
+
+volumes:
+  pg_data:
+  media_files:

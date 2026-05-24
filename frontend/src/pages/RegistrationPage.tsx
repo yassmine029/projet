@@ -10,7 +10,7 @@ import {
   Box, Loader2, FileText, Users, ChevronRight, Search, ScanSearch, Zap, ChevronLeft, Columns2,
   Lightbulb, Microscope, Map as MapIcon, Target, Lock, ShieldCheck
 } from 'lucide-react';
-import api, { getBrodmannIntensitySlice } from '../api';
+import api, { getBrodmannIntensity } from '../api';
 import RegistrationModeSelector from '../components/RegistrationModeSelector';
 import AutoAlignOverlay from '../components/AutoAlignOverlay';
 import ExplorationPage from './ExplorationPage';
@@ -59,7 +59,6 @@ interface BrodmannIntensityPayload {
   ratio_percent: number | null;
   ratio_relative_percent?: number | null;
   n_voxels?: number;
-  n_voxels_reference?: number;
   patient_zone_mean?: number;
   patient_brain_mean?: number;
   reference_zone_mean?: number | null;
@@ -106,7 +105,6 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const [registrationDimension, setRegistrationDimension] = useState<RegistrationDimension | null>(null);
   const [referenceImage, setReferenceImage] = useState<ImageState>({ src: '', points: [] });
   const [patientImage, setPatientImage]     = useState<ImageState>({ src: '', points: [] });
-  const [referenceIntensityImage, setReferenceIntensityImage] = useState<ImageState>({ src: '', points: [] });
   const [uploadedFiles, setUploadedFiles]   = useState<{ ref?: File; patient?: File }>({});
   const [activeImage, setActiveImage]       = useState<'reference' | 'patient'>('reference');
   const [showResult, setShowResult]         = useState(false);
@@ -134,7 +132,6 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const [referenceJobId, setReferenceJobId] = useState('');
   const [refView, setRefView]               = useState<ViewTransform>(DEFAULT_VIEW);
   const [patView, setPatView]               = useState<ViewTransform>(DEFAULT_VIEW);
-  const [refIntensityView, setRefIntensityView] = useState<ViewTransform>(DEFAULT_VIEW);
   
   // 3D Navigation
   const [axis, setAxis]                     = useState('axial');
@@ -206,7 +203,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const [showRegisteredSeries, setShowRegisteredSeries] = useState(false);
   const [loadingCorticalZones, setLoadingCorticalZones] = useState(false);
   const [brodmannTooltip, setBrodmannTooltip] = useState<{
-    panel: 'reference' | 'patient' | 'referenceIntensity';
+    panel: 'reference' | 'patient';
     x: number;
     y: number;
     insideBrain: boolean;
@@ -285,7 +282,6 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
 
   const refCanvasRef       = useRef<HTMLCanvasElement>(null);
   const patCanvasRef       = useRef<HTMLCanvasElement>(null);
-  const refIntensityCanvasRef = useRef<HTMLCanvasElement>(null);
   const resultRefCanvasRef = useRef<HTMLCanvasElement>(null);
   const resultPatCanvasRef = useRef<HTMLCanvasElement>(null);
   const magnifierCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -294,7 +290,6 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const brodmannTooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refTransformRef    = useRef<ImageTransform>({ offsetX:0, offsetY:0, scale:1, baseScale:1, imageWidth:0, imageHeight:0 });
   const patTransformRef    = useRef<ImageTransform>({ offsetX:0, offsetY:0, scale:1, baseScale:1, imageWidth:0, imageHeight:0 });
-  const refIntensityTransformRef = useRef<ImageTransform>({ offsetX:0, offsetY:0, scale:1, baseScale:1, imageWidth:0, imageHeight:0 });
   const sliceFetchSeqRef   = useRef(0);
   const sliceDebounceRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoAlignWsRef     = useRef<WebSocket | null>(null);
@@ -318,11 +313,10 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       setBrodmannIntensityLoading(true);
       setBrodmannIntensityError(null);
       try {
-        const { data } = await getBrodmannIntensitySlice({
-          jobId,
-          patientId: brodmannPatientIdForIntensity,
-          axis,
-          index,
+        const { data } = await getBrodmannIntensity({
+          analyseId: brodmannAnalyseId ?? undefined,
+          jobId: useJob ? jobId : undefined,
+          patientId: brodmannAnalyseId != null ? undefined : brodmannPatientIdForIntensity ?? undefined,
           zoneNumber,
         });
         setBrodmannIntensityStats(data as BrodmannIntensityPayload);
@@ -337,13 +331,13 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         setBrodmannIntensityLoading(false);
       }
     },
-    [jobId, brodmannPatientIdForIntensity, axis, index]
+    [brodmannAnalyseId, jobId, brodmannPatientIdForIntensity]
   );
 
   /** Recalcule les intensités quand la zone ou l’analyse MNI devient disponible (évite le clic « trop tôt » avant la fin du chargement auto de l’id). */
   useEffect(() => {
     if (phase !== 3 || registrationDimension !== 'advanced') return;
-    const canIntensity = !!jobId && brodmannPatientIdForIntensity != null;
+    const canIntensity = brodmannAnalyseId != null || (jobId != null && jobId !== '');
     if (!canIntensity) {
       setBrodmannIntensityStats(null);
       setBrodmannIntensityError(null);
@@ -357,7 +351,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       return;
     }
     void loadBrodmannIntensity(zone.id);
-  }, [phase, jobId, brodmannPatientIdForIntensity, zone?.id, loadBrodmannIntensity, registrationDimension]);
+  }, [phase, brodmannAnalyseId, jobId, zone?.id, loadBrodmannIntensity, registrationDimension]);
 
   const applyPatientOrientationToScreen = useCallback((sx: number, sy: number, t: ImageTransform) => {
     const w = t.imageWidth * t.scale;
@@ -491,31 +485,11 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   }, [uploadedFiles, jobId]);
 
   // Draw canvas
-  const drawCanvas = useCallback((type: 'reference' | 'patient' | 'referenceIntensity') => {
-    const canvas =
-      type === 'reference'
-        ? refCanvasRef.current
-        : type === 'patient'
-          ? patCanvasRef.current
-          : refIntensityCanvasRef.current;
-    const imgState =
-      type === 'reference'
-        ? referenceImage
-        : type === 'patient'
-          ? patientImage
-          : referenceIntensityImage;
-    const tRef =
-      type === 'reference'
-        ? refTransformRef
-        : type === 'patient'
-          ? patTransformRef
-          : refIntensityTransformRef;
-    const view =
-      type === 'reference'
-        ? refView
-        : type === 'patient'
-          ? patView
-          : refIntensityView;
+  const drawCanvas = useCallback((type: 'reference' | 'patient') => {
+    const canvas   = type === 'reference' ? refCanvasRef.current : patCanvasRef.current;
+    const imgState = type === 'reference' ? referenceImage : patientImage;
+    const tRef     = type === 'reference' ? refTransformRef : patTransformRef;
+    const view     = type === 'reference' ? refView : patView;
     if (!canvas || !imgState.src) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -614,11 +588,10 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       // Optionnel: on pourrait mettre un message d'erreur dans l'état de l'image ici
     };
     img.src = imgState.src;
-  }, [referenceImage, patientImage, referenceIntensityImage, refView, patView, refIntensityView, phase, registrationMode, showGrid, gridSize, patientOrientation, applyPatientOrientationToScreen]);
+  }, [referenceImage, patientImage, refView, patView, phase, registrationMode, showGrid, gridSize, patientOrientation, applyPatientOrientationToScreen]);
 
   useEffect(() => { drawCanvas('reference'); }, [drawCanvas]);
   useEffect(() => { drawCanvas('patient');   }, [drawCanvas]);
-  useEffect(() => { drawCanvas('referenceIntensity'); }, [drawCanvas]);
 
   useEffect(() => {
     if ((autoAlignStatus !== 'processing' && applyingToSeriesStatus !== 'processing') || !jobId) return;
@@ -1200,10 +1173,10 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
 
   // Canvas interactions
   const addRipple=(x:number,y:number)=>{const id=Date.now();setRipples(p=>[...p,{x,y,id}]);setTimeout(()=>setRipples(p=>p.filter(r=>r.id!==id)),600);};
-  const handleWheel=(e:React.WheelEvent<HTMLCanvasElement>,type:'reference'|'patient'|'referenceIntensity')=>{e.preventDefault();const sv=type==='reference'?setRefView:type==='patient'?setPatView:setRefIntensityView;const f=e.deltaY<0?1.1:0.9;sv(p=>({...p,scale:Math.min(Math.max(p.scale*f,0.3),10)}));};
-  const handleMouseDown=(e:React.MouseEvent<HTMLCanvasElement>,type:'reference'|'patient'|'referenceIntensity')=>{if(e.button===1||e.altKey){e.preventDefault();setIsPanning(true);setLastMousePos({x:e.clientX,y:e.clientY});if(type==='reference'||type==='patient')setActiveImage(type);}};
-  const handleMouseMove=(e:React.MouseEvent<HTMLCanvasElement>,type:'reference'|'patient'|'referenceIntensity')=>{
-    if(isPanning){const sv=type==='reference'?setRefView:type==='patient'?setPatView:setRefIntensityView;const dx=e.clientX-lastMousePos.x;const dy=e.clientY-lastMousePos.y;sv(p=>({...p,panX:p.panX+dx,panY:p.panY+dy}));setLastMousePos({x:e.clientX,y:e.clientY});return;}
+  const handleWheel=(e:React.WheelEvent<HTMLCanvasElement>,type:'reference'|'patient')=>{e.preventDefault();const sv=type==='reference'?setRefView:setPatView;const f=e.deltaY<0?1.1:0.9;sv(p=>({...p,scale:Math.min(Math.max(p.scale*f,0.3),10)}));};
+  const handleMouseDown=(e:React.MouseEvent<HTMLCanvasElement>,type:'reference'|'patient')=>{if(e.button===1||e.altKey){e.preventDefault();setIsPanning(true);setLastMousePos({x:e.clientX,y:e.clientY});setActiveImage(type);}};
+  const handleMouseMove=(e:React.MouseEvent<HTMLCanvasElement>,type:'reference'|'patient')=>{
+    if(isPanning){const sv=type==='reference'?setRefView:setPatView;const dx=e.clientX-lastMousePos.x;const dy=e.clientY-lastMousePos.y;sv(p=>({...p,panX:p.panX+dx,panY:p.panY+dy}));setLastMousePos({x:e.clientX,y:e.clientY});return;}
     if(showMagnifier){const canvas=e.currentTarget;const rect=canvas.getBoundingClientRect();setMagnifierPos({x:e.clientX,y:e.clientY});const mc=magnifierCanvasRef.current;if(mc){const ctx=mc.getContext('2d');if(ctx){ctx.clearRect(0,0,150,150);const mx=e.clientX-rect.left;const my=e.clientY-rect.top;try{ctx.drawImage(canvas,mx-37.5,my-37.5,75,75,0,0,150,150);}catch{}ctx.strokeStyle='rgba(255,0,0,0.6)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(75,0);ctx.lineTo(75,150);ctx.moveTo(0,75);ctx.lineTo(150,75);ctx.stroke();}}}
   };
   const handleMouseUp=()=>setIsPanning(false);
@@ -2171,16 +2144,11 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
 
   const getImageRatioFromClick = (
     e: React.MouseEvent<HTMLCanvasElement>,
-    type: 'reference' | 'patient' | 'referenceIntensity'
+    type: 'reference' | 'patient'
   ) => {
     const canvas = e.currentTarget;
     const rect = canvas.getBoundingClientRect();
-    const t =
-      type === 'reference'
-        ? refTransformRef.current
-        : type === 'patient'
-          ? patTransformRef.current
-          : refIntensityTransformRef.current;
+    const t = type === 'reference' ? refTransformRef.current : patTransformRef.current;
 
     if (!t.imageWidth || !t.imageHeight || t.scale <= 0) {
       return null;
@@ -2201,8 +2169,8 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     };
   };
 
-  const handleBrodmannClick = async (e: React.MouseEvent<HTMLCanvasElement>, type: 'reference' | 'patient' | 'referenceIntensity') => {
-    if (phase !== 3 || registrationDimension !== 'advanced' || !jobId) return;
+  const handleBrodmannClick = async (e: React.MouseEvent<HTMLCanvasElement>, type: 'reference' | 'patient') => {
+    if (phase !== 3 || !jobId) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
@@ -2369,35 +2337,21 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     try {
       const axisMax = getAxisMax(nextAxis);
       const clampedIndex = Math.max(0, Math.min(nextIndex, axisMax));
-      const patientId = brodmannPatientIdForIntensity;
       const refUrl = referenceJobId
         ? `/api/volume/get-slice?jobId=${referenceJobId}&axis=${nextAxis}&index=${clampedIndex}`
         : `/api/volume/atlas_slice?jobId=${jobId}&axis=${nextAxis}&index=${clampedIndex}&showContour=1&showLabels=1`;
       const p1 = fetch(refUrl, { credentials: 'include' }).then(r => r.json());
       const p2 = fetch(`/api/volume/patient_slice?jobId=${jobId}&axis=${nextAxis}&index=${clampedIndex}&showContour=1`, { credentials: 'include' }).then(r => r.json());
-      const p3 =
-        registrationDimension === 'advanced' && patientId != null
-          ? fetch(`/api/brodmann/reference-slice/?job_id=${jobId}&patient_id=${patientId}&axis=${nextAxis}&index=${clampedIndex}`, { credentials: 'include' })
-              .then(r => (r.ok ? r.json() : null))
-              .catch(() => null)
-          : Promise.resolve(null);
-      const [ref, patient, refIntensity] = await Promise.all([p1, p2, p3]);
+      const [ref, patient] = await Promise.all([p1, p2]);
       const refImg = ref.image || ref.slice;
       if (refImg) setReferenceImage(p => ({ ...p, src: refImg }));
       if (!referenceJobId) setAtlasSource((ref.source === 'custom' ? 'custom' : 'official') as AtlasSourceOption);
       if (patient.image) setPatientImage(p => ({ ...p, src: patient.image }));
-      if (refIntensity?.image) {
-        setReferenceIntensityImage(p => ({ ...p, src: refIntensity.image }));
-      } else if (registrationDimension === 'advanced') {
-        setReferenceIntensityImage(p => ({ ...p, src: '' }));
-      }
       setAxis(nextAxis);
       const rm = typeof ref.max_index === 'number' ? ref.max_index : null;
       const pm = typeof patient.max_index === 'number' ? patient.max_index : null;
-      const im = typeof refIntensity?.max_index === 'number' ? refIntensity.max_index : null;
       let resolvedMax = axisMax;
-      if (rm !== null && pm !== null && im !== null) resolvedMax = Math.min(rm, pm, im, axisMax);
-      else if (rm !== null && pm !== null) resolvedMax = Math.min(rm, pm, axisMax);
+      if (rm !== null && pm !== null) resolvedMax = Math.min(rm, pm, axisMax);
       else if (pm !== null) resolvedMax = Math.min(pm, axisMax);
       else if (rm !== null) resolvedMax = Math.min(rm, axisMax);
       setMaxIndex(resolvedMax);
@@ -2406,11 +2360,6 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       console.error('3D Sync failed:', err);
     }
   };
-
-  useEffect(() => {
-    if (phase !== 3 || registrationDimension !== 'advanced' || !jobId) return;
-    void sync3DViews(axis, index);
-  }, [phase, registrationDimension, jobId, brodmannPatientIdForIntensity]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRefineManually = () => {
     if (!is2D) return;
@@ -4367,7 +4316,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
            {phase === 3 && registrationDimension === 'advanced' && (
             <div className="flex-1 min-h-0 flex gap-6 animate-in slide-in-from-right-12 duration-700">
               <div className="flex-[2] min-h-0 flex flex-col gap-4">
-                <div className="flex-1 min-h-0 grid grid-cols-3 gap-3">
+                <div className="flex-1 min-h-0 grid grid-cols-2 gap-4">
                     <div className="rounded-[2.5rem] overflow-hidden border border-slate-200 bg-white relative shadow-xl group">
                       <div className="absolute top-4 left-5 z-10 px-3 py-1 rounded-full bg-blue-600/80 text-[10px] font-black uppercase text-white shadow-xl backdrop-blur-md">Atlas de référence</div>
                       <canvas ref={refCanvasRef} onClick={e=>handleBrodmannClick(e,'reference')} onWheel={e=>handleWheel(e,'reference')} onMouseDown={e=>handleMouseDown(e,'reference')} onMouseMove={e=>handleMouseMove(e,'reference')} className="w-full h-full cursor-crosshair"/>
@@ -4396,30 +4345,6 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                       <div className="absolute top-4 left-5 z-10 px-3 py-1 rounded-full bg-slate-700/90 text-[10px] font-black uppercase text-white shadow-xl backdrop-blur-md">Patient recalé</div>
                       <canvas ref={patCanvasRef} onClick={e=>handleBrodmannClick(e,'patient')} onWheel={e=>handleWheel(e,'patient')} onMouseDown={e=>handleMouseDown(e,'patient')} onMouseMove={e=>handleMouseMove(e,'patient')} className="w-full h-full cursor-crosshair"/>
                       {brodmannTooltip?.panel === 'patient' && (
-                        <div
-                          className="pointer-events-none absolute z-20 w-[250px] rounded-xl border border-blue-200 bg-white/95 px-3 py-2 shadow-[0_10px_26px_rgba(15,23,42,0.18)] backdrop-blur-sm"
-                          style={{ left: brodmannTooltip.x, top: brodmannTooltip.y }}
-                        >
-                          {brodmannTooltip.insideBrain ? (
-                            <>
-                              <p className="text-[9px] font-black uppercase tracking-[0.12em] text-blue-700">Zone détectée</p>
-                              <p className="mt-0.5 text-[11px] font-black leading-snug text-slate-900">
-                                BA {brodmannTooltip.zoneId ?? '--'} - {brodmannTooltip.zoneName || 'Zone corticale'}
-                              </p>
-                            </>
-                          ) : (
-                            <>
-                              <p className="text-[9px] font-black uppercase tracking-[0.12em] text-amber-700">Hors cerveau</p>
-                              <p className="mt-0.5 text-[11px] font-semibold text-slate-600">Aucune aire Brodmann à cet endroit</p>
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    <div className="rounded-[2.5rem] overflow-hidden border border-slate-200 bg-white relative shadow-xl group">
-                      <div className="absolute top-4 left-5 z-10 px-3 py-1 rounded-full bg-violet-700/90 text-[10px] font-black uppercase text-white shadow-xl backdrop-blur-md">Référence d&apos;intensité</div>
-                      <canvas ref={refIntensityCanvasRef} onClick={e=>handleBrodmannClick(e,'referenceIntensity')} onWheel={e=>handleWheel(e,'referenceIntensity')} onMouseDown={e=>handleMouseDown(e,'referenceIntensity')} onMouseMove={e=>handleMouseMove(e,'referenceIntensity')} className="w-full h-full cursor-crosshair"/>
-                      {brodmannTooltip?.panel === 'referenceIntensity' && (
                         <div
                           className="pointer-events-none absolute z-20 w-[250px] rounded-xl border border-blue-200 bg-white/95 px-3 py-2 shadow-[0_10px_26px_rgba(15,23,42,0.18)] backdrop-blur-sm"
                           style={{ left: brodmannTooltip.x, top: brodmannTooltip.y }}
@@ -4529,7 +4454,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                     stats={brodmannIntensityStats}
                     loading={brodmannIntensityLoading}
                     error={brodmannIntensityError}
-                    analyseAvailable={!!jobId && brodmannPatientIdForIntensity != null}
+                    analyseAvailable={brodmannAnalyseId != null || (jobId != null && jobId !== '')}
                     referenceLabel={
                       brodmannIntensityStats?.reference_nom
                         ? `Référence (${brodmannIntensityStats.reference_nom}${

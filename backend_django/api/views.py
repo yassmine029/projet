@@ -4151,23 +4151,32 @@ def patient_segmentation_history(request, patient_id):
 
     for run in runs:
         # Calcul à la volée si volumes manquants
-        if run.left_volume_mm3 is None:
+        if run.left_volume_mm3 is None or run.right_volume_mm3 is None:
             try:
                 modelisation = run_modelisation_3d(run=run)
                 vols = modelisation.get('volumes_mm3', {}) or {}
                 ci   = modelisation.get('clinical_indices', {}) or {}
-                run.left_volume_mm3  = float(vols.get('left')  or 0) or None
-                run.right_volume_mm3 = float(vols.get('right') or 0) or None
-                run.total_volume_mm3 = float(vols.get('total') or 0) or None
-                run.asymmetry_index  = float(ci.get('asymmetry_index_percent') or 0) or None
-                run.normality_index  = float(ci.get('normality_index_percent') or 0) or None
-                run.z_score          = float(ci.get('z_score') or 0) or None
+                def _f(v):
+                    try:
+                        f = float(v)
+                        return f if f != 0.0 else None
+                    except (TypeError, ValueError):
+                        return None
+                run.left_volume_mm3  = _f(vols.get('left'))
+                run.right_volume_mm3 = _f(vols.get('right'))
+                run.total_volume_mm3 = _f(vols.get('total'))
+                run.asymmetry_index  = _f(ci.get('asymmetry_index_percent'))
+                run.normality_index  = _f(ci.get('normality_index_percent'))
+                run.z_score          = _f(ci.get('z_score'))
                 run.save(update_fields=[
                     'left_volume_mm3', 'right_volume_mm3', 'total_volume_mm3',
                     'asymmetry_index', 'normality_index', 'z_score',
                 ])
-            except Exception:
-                pass
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    'run_modelisation_3d failed for run %s: %s', run.id, exc
+                )
         # Inclure le run même sans volumes : le frontend affiche la zone d'import
 
         run_mri_ids = frozenset(r.mri_file_id for r in run.results.all() if r.mri_file_id)
@@ -6879,13 +6888,17 @@ def save_patient_report(request, patient_id):
                 ),
             }, status=409)
 
-        # Récupérer le volume total du nouveau run (envoyé par le frontend ou stocké en base)
-        try:
-            new_volume = float(request.POST.get("total_volume_mm3") or 0) or None
-        except (TypeError, ValueError):
-            new_volume = None
-        if new_volume is None and run.total_volume_mm3:
-            new_volume = run.total_volume_mm3
+        # Récupérer les volumes envoyés par le frontend ou déjà stockés en base
+        def _parse_vol(key):
+            try:
+                v = float(request.POST.get(key) or 0)
+                return v if v != 0.0 else None
+            except (TypeError, ValueError):
+                return None
+
+        new_volume = _parse_vol("total_volume_mm3") or run.total_volume_mm3 or None
+        new_left   = _parse_vol("left_volume_mm3")  or run.left_volume_mm3  or None
+        new_right  = _parse_vol("right_volume_mm3") or run.right_volume_mm3 or None
 
         # Cas 2 : même IRM ET même modèle déjà archivé — bloquer le doublon exact
         # On autorise différents modèles sur le même IRM (chaque modèle = rapport distinct)
@@ -6955,10 +6968,19 @@ def save_patient_report(request, patient_id):
                     ),
                 }, status=409)
 
-        # Stocker le volume dans le run pour les comparaisons futures
+        # Stocker les volumes dans le run pour les comparaisons futures
+        update_fields = []
         if new_volume and run.total_volume_mm3 is None:
             run.total_volume_mm3 = new_volume
-            run.save(update_fields=['total_volume_mm3'])
+            update_fields.append('total_volume_mm3')
+        if new_left and run.left_volume_mm3 is None:
+            run.left_volume_mm3 = new_left
+            update_fields.append('left_volume_mm3')
+        if new_right and run.right_volume_mm3 is None:
+            run.right_volume_mm3 = new_right
+            update_fields.append('right_volume_mm3')
+        if update_fields:
+            run.save(update_fields=update_fields)
 
     report = PatientReport.objects.create(
         patient=patient,

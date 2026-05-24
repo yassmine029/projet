@@ -1242,6 +1242,10 @@ export default function Modelisation3D({ user = null }) {
       ));
       const totalVol = modelingResult?.volumes_mm3?.total;
       if (totalVol) formData.append('total_volume_mm3', String(totalVol));
+      const leftVol  = modelingResult?.volumes_mm3?.left;
+      const rightVol = modelingResult?.volumes_mm3?.right;
+      if (leftVol  != null) formData.append('left_volume_mm3',  String(leftVol));
+      if (rightVol != null) formData.append('right_volume_mm3', String(rightVol));
       const res = await api.post(`/patients/${runInfo.patient}/reports/`, formData, {
         headers: { 'Content-Type': 'multipart/form-data', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       });

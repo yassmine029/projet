@@ -14,8 +14,12 @@ from django.http import JsonResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+from django.conf import settings
 from rest_framework.decorators import api_view
 from .utils.volume_utils import extract_slice, MAX_FILE_SIZE_BYTES
+from .models import Patient, ReferenceIntensity
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
 
 try:
     from asgiref.sync import async_to_sync
@@ -2028,6 +2032,141 @@ def get_patient_slice(request):
         'z': idx if axis == 'axial' else None,
         'max_z': _max_index(vol.shape, axis) if axis == 'axial' else None,
         'patient_volume_state': vol_state,
+        'image': _encode_png_data_url(img_to_encode),
+    })
+
+
+def _compute_age_years(date_naissance):
+    if date_naissance is None:
+        return None
+    today = timezone.now().date()
+    years = today.year - date_naissance.year
+    if (today.month, today.day) < (date_naissance.month, date_naissance.day):
+        years -= 1
+    return max(years, 0)
+
+
+def _reference_nom_band_for_age(age_years):
+    if age_years is None:
+        return None, None, (
+            'La date de naissance du patient est absente sur la fiche dossier. '
+            "Renseignez-la pour comparer aux normes d'intensité par tranche d'âge."
+        )
+    if age_years < 16:
+        return 'sujet1', 'moins de 16 ans (référence jeune adulte)', None
+    if 16 <= age_years <= 24:
+        return 'sujet1', '16-24 ans', None
+    if 25 <= age_years <= 54:
+        return 'sujet2', '25-54 ans', None
+    if 55 <= age_years <= 64:
+        return 'sujet3', '55-64 ans', None
+    if 65 <= age_years <= 75:
+        return 'sujet4', '65-75 ans', None
+    return 'sujet5', 'plus de 75 ans', None
+
+
+@api_view(['GET'])
+def get_reference_intensity_slice(request):
+    """
+    Affiche la référence d'intensité avec le même pipeline que le patient :
+    même extraction de coupe, même normalisation, même projection de contour.
+    """
+    job_id = (request.GET.get('jobId') or '').strip()
+    patient_id_raw = (request.GET.get('patientId') or '').strip()
+    axis = request.GET.get('axis', 'axial')
+    if not job_id:
+        return JsonResponse({'error': 'jobId not found'}, status=404)
+    if not patient_id_raw:
+        return JsonResponse({'error': 'patientId requis'}, status=400)
+    try:
+        patient_id = int(patient_id_raw)
+    except (TypeError, ValueError):
+        return JsonResponse({'error': 'patientId invalide'}, status=400)
+
+    entry = _get_job_entry(job_id)
+    if entry is None:
+        return JsonResponse({'error': 'jobId not found'}, status=404)
+
+    patient = get_object_or_404(Patient, pk=patient_id)
+    age_years = _compute_age_years(getattr(patient, 'date_naissance', None))
+    ref_nom, ref_band_fr, age_err = _reference_nom_band_for_age(age_years)
+    if age_err:
+        return JsonResponse({'error': age_err}, status=400)
+    ref_row = ReferenceIntensity.objects.filter(nom=ref_nom).first()
+    if ref_row is None:
+        return JsonResponse({'error': f'référence {ref_nom} introuvable'}, status=404)
+
+    rel_media = (ref_row.mri_registered_path or '').strip().replace('\\', '/')
+    ref_path = rel_media if os.path.isabs(rel_media) else os.path.join(str(settings.MEDIA_ROOT), rel_media)
+    if not ref_path or not os.path.isfile(ref_path):
+        return JsonResponse({'error': 'volume référence introuvable'}, status=404)
+
+    if nib is None:
+        return JsonResponse({'error': 'nibabel indisponible'}, status=500)
+
+    patient_vol = entry.get('registered_data')
+    if patient_vol is None:
+        patient_vol = entry.get('pending_registered_data')
+    if patient_vol is None:
+        return JsonResponse({'error': 'Pas encore de volume patient recalé.'}, status=400)
+    patient_data = np.asarray(patient_vol, dtype=np.float32)
+    try:
+        ref_img = nib.load(ref_path)
+        ref_vol = np.asanyarray(ref_img.dataobj).astype(np.float32, copy=False)
+        if nilearn_image is not None:
+            _ensure_atlas()
+            atlas_affine = np.asarray(VOLUMES_CACHE['atlas'].get('affine', np.eye(4)), dtype=np.float32)
+            # Important: use MNI/patient affine (not identity) to keep the same spatial frame as patient.
+            patient_img = nib.Nifti1Image(patient_data.astype(np.float32), atlas_affine)
+            ref_on_patient = nilearn_image.resample_to_img(
+                ref_img,
+                patient_img,
+                interpolation='continuous',
+                force_resample=True,
+            )
+            ref_vol = np.asanyarray(ref_on_patient.dataobj).astype(np.float32, copy=False)
+    except Exception as exc:
+        return JsonResponse({'error': f'lecture référence impossible: {exc}'}, status=500)
+
+    idx = int(request.GET.get('index', request.GET.get('z', _max_index(ref_vol.shape, axis) // 2)))
+    idx = int(np.clip(idx, 0, _max_index(ref_vol.shape, axis)))
+    img_u8 = _normalize_u8(_render_slice(ref_vol, idx, axis))
+
+    _ensure_atlas()
+    atlas_labels = VOLUMES_CACHE['atlas']['labels']
+    atlas_max_idx = _max_index(atlas_labels.shape, axis)
+    atlas_idx = int(np.clip(idx, 0, atlas_max_idx))
+
+    show_contour = request.GET.get('showContour', '1') in ('1', 'true', 'True')
+    selected_label = entry.get('selected_label') if show_contour else None
+
+    if selected_label:
+        img_rgb = cv2.cvtColor(img_u8, cv2.COLOR_GRAY2RGB)
+        sl_labels = _render_slice(atlas_labels, atlas_idx, axis)
+        mask = (sl_labels == selected_label).astype(np.uint8) * 255
+        mask = _resize_mask_to_shape(mask, img_u8.shape)
+        atlas_img_u8 = _normalize_u8(_render_slice(VOLUMES_CACHE['atlas']['data'], atlas_idx, axis))
+        contours = _extract_patient_contours(
+            mask,
+            img_u8,
+            atlas_u8=atlas_img_u8,
+            max_shift_ratio=0.25,
+            min_phase_response=0.015,
+        )
+        img_to_encode = _draw_clinical_contour(img_rgb, contours)
+    else:
+        img_to_encode = img_u8
+
+    return JsonResponse({
+        'success': True,
+        'axis': axis,
+        'index': idx,
+        'max_index': _max_index(ref_vol.shape, axis),
+        'z': idx if axis == 'axial' else None,
+        'max_z': _max_index(ref_vol.shape, axis) if axis == 'axial' else None,
+        'reference_nom': ref_nom,
+        'reference_age_band_fr': ref_band_fr,
+        'patient_age_years': age_years,
         'image': _encode_png_data_url(img_to_encode),
     })
 

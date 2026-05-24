@@ -130,6 +130,10 @@ export default function App() {
   })
 
   useEffect(() => {
+    const guard = window.setTimeout(() => {
+      setChecking(false)
+    }, 15000)
+
     checkSession()
       .then(r => {
         if (r.data.logged_in) {
@@ -160,7 +164,12 @@ export default function App() {
       .catch(() => {
         /* en cas d’erreur réseau, on garde l’optimistic user du localStorage si présent */
       })
-      .finally(() => setChecking(false))
+      .finally(() => {
+        window.clearTimeout(guard)
+        setChecking(false)
+      })
+
+    return () => window.clearTimeout(guard)
   }, [])
 
   useEffect(() => {

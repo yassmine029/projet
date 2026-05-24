@@ -88,6 +88,7 @@ from .models import (
     PatientReport,
     ReferenceIntensity,
     Analyse,
+    VolumeRegistrationJob,
 )
 from .serializers import (
     ReclamationSerializer, PatientSerializer, MRIFileSerializer, SegmentationRunSerializer,
@@ -2329,6 +2330,312 @@ def _brodmann_reference_nom_band_for_age(age_years):
     return 'sujet5', 'plus de 75 ans', None
 
 
+def _load_reference_intensity_row_for_patient(patient_for_age: Patient):
+    age_years = _compute_age(getattr(patient_for_age, 'date_naissance', None))
+    ref_nom, ref_band_fr, age_err = _brodmann_reference_nom_band_for_age(age_years)
+    if age_err:
+        return None, None, None, None, age_err
+
+    ref_row = ReferenceIntensity.objects.filter(nom=ref_nom).first()
+    if ref_row is None:
+        return None, ref_nom, ref_band_fr, age_years, (
+            f'Aucune référence d\'intensité « {ref_nom} » en base pour la tranche « {ref_band_fr} ». '
+            'Enregistrez ce sujet via setup_reference_intensity (REFERENCE_INTENSITY_NOM).'
+        )
+    return ref_row, ref_nom, ref_band_fr, age_years, None
+
+
+def _extract_axis_slice(arr3d: np.ndarray, axis: str, index: int):
+    axis_key = str(axis or 'axial').lower()
+    if axis_key == 'axial':
+        max_idx = max(0, int(arr3d.shape[2]) - 1)
+        idx = int(np.clip(index, 0, max_idx))
+        return arr3d[:, :, idx], idx, max_idx
+    if axis_key == 'coronal':
+        max_idx = max(0, int(arr3d.shape[1]) - 1)
+        idx = int(np.clip(index, 0, max_idx))
+        return arr3d[:, idx, :], idx, max_idx
+    max_idx = max(0, int(arr3d.shape[0]) - 1)
+    idx = int(np.clip(index, 0, max_idx))
+    return arr3d[idx, :, :], idx, max_idx
+
+
+def _encode_png_data_url(gray_or_rgb: np.ndarray):
+    ok, buf = cv2.imencode('.png', gray_or_rgb)
+    if not ok:
+        raise RuntimeError('Échec encodage PNG')
+    b64 = base64.b64encode(buf).decode('ascii')
+    return f'data:image/png;base64,{b64}'
+
+
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def brodmann_reference_slice(request):
+    """
+    Coupe 2D de la référence d'intensité recalée (choisie selon l'âge patient),
+    synchronisée avec la coupe patient affichée.
+    """
+    job_raw = (request.query_params.get('job_id') or '').strip()
+    patient_pid_raw = (request.query_params.get('patient_id') or '').strip()
+    axis = (request.query_params.get('axis') or 'axial').strip().lower()
+    if axis not in ('axial', 'coronal', 'sagittal'):
+        axis = 'axial'
+
+    if not job_raw:
+        return Response({'detail': 'Paramètre job_id requis.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not patient_pid_raw:
+        return Response({'detail': 'Paramètre patient_id requis.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        patient_pid = int(patient_pid_raw)
+    except (TypeError, ValueError):
+        return Response({'detail': 'patient_id invalide.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        index_raw = int(request.query_params.get('index', '0'))
+    except (TypeError, ValueError):
+        return Response({'detail': 'index invalide.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    patient_for_age = get_object_or_404(Patient, pk=patient_pid, doctor=request.user)
+    ref_row, ref_nom, ref_band_fr, age_years, ref_err = _load_reference_intensity_row_for_patient(patient_for_age)
+    if ref_err:
+        return Response({'detail': ref_err}, status=status.HTTP_400_BAD_REQUEST)
+
+    rel_media = (ref_row.mri_registered_path or '').strip().replace('\\', '/')
+    ref_path = rel_media if os.path.isabs(rel_media) else os.path.join(str(settings.MEDIA_ROOT), rel_media)
+    if not ref_path or not os.path.isfile(ref_path):
+        return Response(
+            {'detail': 'Volume de référence d’intensité introuvable sur disque.'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    try:
+        ref_img = nib.load(ref_path)
+        ref_data = np.asanyarray(ref_img.dataobj).astype(np.float32, copy=False)
+    except Exception as exc:
+        return Response({'detail': f'Erreur lecture volume référence : {exc}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    from api.volume_api import (
+        _draw_clinical_contour,
+        _ensure_atlas,
+        _extract_patient_contours,
+        _get_job_entry,
+        _normalize_u8,
+        _render_slice,
+        _resize_mask_to_shape,
+        VOLUMES_CACHE,
+    )
+    entry = _get_job_entry(job_raw)
+    if entry is None:
+        return Response({'detail': 'Session de recalage introuvable.'}, status=status.HTTP_404_NOT_FOUND)
+    patient_vol = entry.get('registered_data')
+    if patient_vol is None:
+        patient_vol = entry.get('pending_registered_data')
+    if patient_vol is None:
+        return Response({'detail': 'Pas encore de volume patient recalé.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    patient_data = np.asarray(patient_vol, dtype=np.float32)
+    try:
+        from api.official_atlas import load_official_mni_atlas_bundle
+        template_img, _labels_img, _lut = load_official_mni_atlas_bundle()
+        patient_img = nib.Nifti1Image(patient_data.astype(np.float32), template_img.affine, template_img.header)
+        ref_on_patient = resample_to_img(ref_img, patient_img, interpolation='continuous', force_resample=True)
+        ref_data = np.asanyarray(ref_on_patient.dataobj).astype(np.float32, copy=False)
+    except Exception:
+        # Fallback doux si resampling indisponible : utilise le volume tel quel.
+        pass
+
+    patient_slice, _, patient_max = _extract_axis_slice(patient_data, axis, index_raw)
+    ref_slice, ref_index, ref_max = _extract_axis_slice(ref_data, axis, index_raw)
+
+    # Même niveau de gris clinique que les autres vues.
+    p_u8 = cv2.normalize(patient_slice, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    r_u8 = cv2.normalize(ref_slice, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+    show_contour = request.query_params.get('showContour', '1') in ('1', 'true', 'True')
+    selected_label = entry.get('selected_label') if show_contour else None
+    if selected_label:
+        _ensure_atlas()
+        atlas_labels = VOLUMES_CACHE['atlas']['labels']
+        atlas_max_idx = max(0, int(atlas_labels.shape[2 if axis == 'axial' else 1 if axis == 'coronal' else 0]) - 1)
+        atlas_idx = int(np.clip(ref_index, 0, atlas_max_idx))
+        sl_labels = _render_slice(atlas_labels, atlas_idx, axis)
+        mask = (sl_labels == selected_label).astype(np.uint8) * 255
+        mask = _resize_mask_to_shape(mask, r_u8.shape)
+        atlas_img_u8 = _normalize_u8(_render_slice(VOLUMES_CACHE['atlas']['data'], atlas_idx, axis))
+        contours = _extract_patient_contours(
+            mask,
+            r_u8,
+            atlas_u8=atlas_img_u8,
+            max_shift_ratio=0.25,
+            min_phase_response=0.015,
+        )
+        ref_to_encode = _draw_clinical_contour(cv2.cvtColor(r_u8, cv2.COLOR_GRAY2RGB), contours)
+    else:
+        ref_to_encode = r_u8
+
+    return Response({
+        'success': True,
+        'axis': axis,
+        'index': ref_index,
+        'max_index': int(min(patient_max, ref_max)),
+        'image': _encode_png_data_url(ref_to_encode),
+        'reference_nom': ref_nom,
+        'reference_age_band_fr': ref_band_fr,
+        'patient_age_years': age_years,
+    })
+
+
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def brodmann_intensity_slice(request):
+    """
+    Comparaison d'intensité sur la coupe 2D actuellement affichée (patient recalé vs référence recalée).
+    """
+    qp = request.query_params
+    job_raw = (qp.get('job_id') or '').strip()
+    patient_pid_raw = (qp.get('patient_id') or '').strip()
+    axis = (qp.get('axis') or 'axial').strip().lower()
+    if axis not in ('axial', 'coronal', 'sagittal'):
+        axis = 'axial'
+
+    try:
+        zone_number = int(qp.get('zone_number', ''))
+    except (TypeError, ValueError):
+        return Response({'detail': 'Paramètre zone_number (entier) requis.'}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        index_raw = int(qp.get('index', '0'))
+    except (TypeError, ValueError):
+        return Response({'detail': 'Paramètre index invalide.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not job_raw:
+        return Response({'detail': 'Paramètre job_id requis.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not patient_pid_raw:
+        return Response({'detail': 'Paramètre patient_id requis.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        patient_pid = int(patient_pid_raw)
+    except (TypeError, ValueError):
+        return Response({'detail': 'patient_id invalide.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    patient_for_age = get_object_or_404(Patient, pk=patient_pid, doctor=request.user)
+    ref_row, ref_nom, ref_band_fr, age_years, ref_err = _load_reference_intensity_row_for_patient(patient_for_age)
+    if ref_err:
+        return Response({'detail': ref_err}, status=status.HTTP_400_BAD_REQUEST)
+
+    rel_media = (ref_row.mri_registered_path or '').strip().replace('\\', '/')
+    ref_path = rel_media if os.path.isabs(rel_media) else os.path.join(str(settings.MEDIA_ROOT), rel_media)
+    if not ref_path or not os.path.isfile(ref_path):
+        return Response(
+            {'detail': 'Volume de référence d’intensité introuvable sur disque.'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    from api.volume_api import _get_job_entry
+    entry = _get_job_entry(job_raw)
+    if entry is None:
+        return Response({'detail': 'Session de recalage introuvable.'}, status=status.HTTP_404_NOT_FOUND)
+    patient_vol = entry.get('registered_data')
+    if patient_vol is None:
+        patient_vol = entry.get('pending_registered_data')
+    if patient_vol is None:
+        return Response({'detail': 'Pas encore de volume patient recalé.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        from api.official_atlas import load_official_mni_atlas_bundle
+        template_img, labels_img, _lut = load_official_mni_atlas_bundle()
+    except Exception as exc:
+        return Response({'detail': f'Impossible de charger la carte des régions : {exc}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    patient_data = np.asarray(patient_vol, dtype=np.float64)
+    patient_img = nib.Nifti1Image(patient_data.astype(np.float64), template_img.affine, template_img.header)
+
+    try:
+        atlas_on_patient = resample_to_img(labels_img, patient_img, interpolation='nearest', force_resample=True)
+        labels_patient = np.rint(np.asanyarray(atlas_on_patient.dataobj)).astype(np.int32)
+    except Exception as exc:
+        return Response({'detail': f'Erreur atlas sur patient : {exc}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    try:
+        ref_img = nib.load(ref_path)
+        ref_on_patient = resample_to_img(ref_img, patient_img, interpolation='continuous', force_resample=True)
+        ref_data = np.asanyarray(ref_on_patient.dataobj).astype(np.float64, copy=False)
+    except Exception as exc:
+        return Response({'detail': f'Erreur alignement référence sur patient : {exc}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    if labels_patient.shape != patient_data.shape:
+        return Response({'detail': 'Shape atlas != shape volume patient.'}, status=status.HTTP_400_BAD_REQUEST)
+    if ref_data.shape != patient_data.shape:
+        return Response({'detail': 'Shape volume référence != shape volume patient.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    _, _, patient_max = _extract_axis_slice(patient_data, axis, index_raw)
+    _, _, ref_max = _extract_axis_slice(ref_data, axis, index_raw)
+    index = int(np.clip(index_raw, 0, min(patient_max, ref_max)))
+
+    patient_slice, _, _ = _extract_axis_slice(patient_data, axis, index)
+    labels_patient_slice, _, _ = _extract_axis_slice(labels_patient, axis, index)
+    ref_slice, _, _ = _extract_axis_slice(ref_data, axis, index)
+
+    mask_patient = labels_patient_slice == zone_number
+    if not np.any(mask_patient):
+        return Response({'detail': f'Zone {zone_number} absente sur la coupe patient sélectionnée.'}, status=status.HTTP_404_NOT_FOUND)
+    # Même projection de zone que le patient (même masque atlas sur la même coupe).
+    mask_ref = mask_patient.copy()
+
+    brain_patient = labels_patient_slice > 0
+    brain_ref = brain_patient.copy()
+    if not np.any(brain_patient) or not np.any(brain_ref):
+        return Response({'detail': 'Masque cerveau vide sur la coupe.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # ✅ SUVR normalization: divide by brain mean for comparability
+    patient_brain_mean = float(np.mean(patient_slice[brain_patient]))
+    patient_slice_suvr = patient_slice / max(patient_brain_mean, 1e-12)
+    
+    reference_brain_mean = float(np.mean(ref_slice[brain_ref]))
+    ref_slice_suvr = ref_slice / max(reference_brain_mean, 1e-12)
+
+    somme_patient = float(np.sum(patient_slice_suvr[mask_patient]))
+    somme_reference = float(np.sum(ref_slice_suvr[mask_ref]))
+    n_vox_patient = int(np.sum(mask_patient))
+    n_vox_reference = int(np.sum(mask_ref))
+
+    patient_zone_mean = somme_patient / max(n_vox_patient, 1)
+    patient_rel_index = patient_zone_mean
+
+    reference_zone_mean = somme_reference / max(n_vox_reference, 1)
+    reference_rel_index = reference_zone_mean
+
+    ratio_relative_percent = None
+    if reference_rel_index > 0:
+        ratio_relative_percent = float((patient_rel_index / reference_rel_index) * 100.0)
+
+    difference = somme_patient - somme_reference
+    ratio_percent = None if somme_reference == 0.0 else (somme_patient / somme_reference) * 100.0
+
+    return Response({
+        'zone_number': zone_number,
+        'axis': axis,
+        'index': index,
+        'somme_patient': somme_patient,
+        'somme_reference': somme_reference,
+        'difference': difference,
+        'ratio_percent': ratio_percent,
+        'ratio_relative_percent': ratio_relative_percent,
+        'n_voxels': n_vox_patient,
+        'n_voxels_reference': n_vox_reference,
+        'patient_zone_mean': patient_zone_mean,
+        'patient_brain_mean': patient_brain_mean,
+        'reference_zone_mean': reference_zone_mean,
+        'reference_brain_mean': reference_brain_mean,
+        'patient_relative_index': patient_rel_index,
+        'reference_relative_index': reference_rel_index,
+        'reference_nom': ref_nom,
+        'reference_age_band_fr': ref_band_fr,
+        'patient_age_years': age_years,
+    })
+
+
 @api_view(['GET'])
 @authentication_classes([CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
@@ -2825,6 +3132,85 @@ def patient_latest_brodmann_analyse(request, patient_id):
     if analyse is None:
         return Response({'analyse_id': None})
     return Response({'analyse_id': analyse.pk})
+
+
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def patient_volume_registration_jobs(request, patient_id):
+    """
+    Liste tous les recalages (VolumeRegistrationJob) d'un patient.
+    GET /patients/<patient_id>/volume-registration-jobs/
+    
+    Retourne une liste des jobs de recalage avec:
+    - job_id, status, created_at
+    - registration_metrics (MI, NCC, processing_time)
+    """
+    patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
+    
+    jobs = (
+        VolumeRegistrationJob.objects
+        .filter(patient=patient)
+        .order_by('-created_at')
+    )
+    
+    results = []
+    for job in jobs:
+        metrics = job.registration_metrics or {}
+        results.append({
+            'job_id': str(job.job_id),
+            'status': job.status,
+            'created_at': job.created_at.isoformat() if job.created_at else None,
+            'updated_at': job.updated_at.isoformat() if job.updated_at else None,
+            'mutual_information': metrics.get('mutual_information'),
+            'ncc': metrics.get('ncc'),
+            'processing_time_ms': metrics.get('processing_time_ms'),
+            'device': metrics.get('device'),
+        })
+    
+    return Response({
+        'ok': True,
+        'patient_id': patient_id,
+        'jobs': results,
+        'total': len(results),
+    })
+
+
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def volume_registration_job_detail(request, job_id):
+    """
+    Détails complets d'un VolumeRegistrationJob.
+    GET /volume-registration-jobs/<job_id>/
+    
+    Retourne les infos du job + métriques de recalage.
+    """
+    try:
+        job = VolumeRegistrationJob.objects.select_related('patient').get(
+            job_id=job_id,
+            patient__doctor=request.user
+        )
+    except VolumeRegistrationJob.DoesNotExist:
+        return Response(
+            {'detail': 'Recalage introuvable ou accès refusé.'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    metrics = job.registration_metrics or {}
+    
+    return Response({
+        'ok': True,
+        'job': {
+            'job_id': str(job.job_id),
+            'patient_id': job.patient.id,
+            'status': job.status,
+            'created_at': job.created_at.isoformat() if job.created_at else None,
+            'updated_at': job.updated_at.isoformat() if job.updated_at else None,
+            'volume_paths': job.volume_paths or {},
+            'registration_metrics': metrics,
+        }
+    })
 
 
 @require_http_methods(["POST"])

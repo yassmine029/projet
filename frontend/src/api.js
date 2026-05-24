@@ -8,6 +8,7 @@ const apiBase =
 const api = axios.create({
   baseURL: apiBase,
   withCredentials: true,
+  timeout: 12000,
 });
 
 api.interceptors.request.use((config) => {
@@ -105,6 +106,27 @@ export const getBrodmannIntensity = ({ analyseId, jobId, patientId, zoneNumber }
   }
   return api.get("/brodmann/intensity/", { params });
 };
+
+/** Intensités Brodmann calculées sur la coupe affichée (patient vs référence d'intensité recalée). */
+export const getBrodmannIntensitySlice = ({ jobId, patientId, axis, index, zoneNumber }) => {
+  const params = { zone_number: zoneNumber, job_id: jobId, patient_id: patientId, axis, index };
+  return api.get("/brodmann/intensity-slice/", { params });
+};
+
+// Volume Registration (Recalages)
+export const getPatientVolumeRegistrationJobs = (patientId) => 
+  api.get(`/patients/${patientId}/volume-registration-jobs/`);
+
+export const getVolumeRegistrationJobDetail = (jobId) =>
+  api.get(`/volume-registration-jobs/${encodeURIComponent(jobId)}/`);
+
+export const saveRegisteredToPatient = (jobId, patientId, mode = '3d', metrics = {}) =>
+  api.post('/volume/save-registered-to-patient', {
+    jobId,
+    patientId,
+    mode,
+    ...metrics,
+  });
 
 // Dashboard Patients
 export const getDashboardPatients = (params) => api.get("/patients/", { params });

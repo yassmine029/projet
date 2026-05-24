@@ -942,12 +942,17 @@ export default function Modelisation3D({ user = null }) {
   };
 
   const handleDownloadReportPdf = async () => {
-    if (!Number.isFinite(runId) || runId <= 0 || !reportPreviewRef.current) return;
+    if (!Number.isFinite(runId) || runId <= 0 || !reportPreviewRef.current) {
+      console.error('Invalid state for PDF export:', { runId, refExists: !!reportPreviewRef.current });
+      return;
+    }
     setReportLoading(true);
     setReportError('');
 
     try {
       const target = reportPreviewRef.current;
+      console.log('Starting PDF export with target:', target);
+      
       const scale = Math.min(2.2, Math.max(1.4, window.devicePixelRatio || 1.5));
       const canvas = await html2canvas(target, {
         useCORS: true,
@@ -957,6 +962,8 @@ export default function Modelisation3D({ user = null }) {
         logging: false,
       });
 
+      console.log('Canvas created:', canvas.width, 'x', canvas.height);
+      
       const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF('p', 'mm', 'a4');
       const pageWidth = pdf.internal.pageSize.getWidth();
@@ -989,8 +996,10 @@ export default function Modelisation3D({ user = null }) {
       }
 
       pdf.save(`rapport_segmentation_run_${runId}.pdf`);
+      console.log('PDF exported successfully');
     } catch (err) {
-      setReportError('Echec generation du rapport PDF depuis l\'apercu.');
+      console.error('PDF export error:', err);
+      setReportError(`Echec generation du rapport PDF: ${err.message}`);
     } finally {
       setReportLoading(false);
     }

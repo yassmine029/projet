@@ -46,7 +46,7 @@ PG --> UM : ligne ou vide
 UM --> LV : account ou None
 
 alt [account introuvable]
-  LV --> API : HTTP 401\n{ ok:false, error_type: "user_not_found",\nerror: "Compte introuvable" }
+  LV --> API : HTTP 401\n{\n  "ok": false,\n  "error_type": "user_not_found",\n  "error": "Compte introuvable"\n}
   API --> LJ : response
   LJ -> LJ : setEmailError(errMsg)
 else [account trouve]
@@ -57,7 +57,7 @@ else [account trouve]
   AUTH --> LV : user ou None
 
   alt [mot de passe invalide]
-    LV --> API : HTTP 401\n{ ok:false, error_type: "invalid_password",\nerror: "Mot de passe incorrect" }
+    LV --> API : HTTP 401\n{\n  "ok": false,\n  "error_type": "invalid_password",\n  "error": "Mot de passe incorrect"\n}
     API --> LJ : response
     LJ -> LJ : increment loginAttempts\nlocalStorage login_attempts
     opt [loginAttempts >= 3]
@@ -65,7 +65,7 @@ else [account trouve]
     end
   else [authentification OK]
     LV -> LV : login(request, user)\nsession Django + cookie
-    LV --> API : HTTP 200\n{ ok:true, message, user: username }
+    LV --> API : HTTP 200\n{\n  "ok": true,\n  "message": "Connexion réussie",\n  "user": { "username": "...", "fullName": "..." }\n}
     API --> LJ : response
     LJ -> LJ : onLogin(user)\nredirection /
   end
@@ -118,5 +118,57 @@ else [utilisateur present]
   end
 end
 API2 --> EL : response
+
+newpage
+
+actor "Medecin" as Doc3
+
+box "FrontEnd React" #LightBlue
+  participant "ForgotPasswordPage.jsx" as FP
+  participant "api.js" as API3
+end box
+
+box "BackEnd Django" #MistyRose
+  participant "forgot_password\n(views.py)" as FPV
+  participant "send_mail()" as SM
+end box
+
+box "Donnees" #LightGreen
+  participant "PasswordResetToken\n(models.py)" as PRT
+  participant "User" as UM3
+  database "PostgreSQL" as PG3
+end box
+
+== Mot de passe oublie POST /api/forgot_password ==
+
+Doc3 -> FP : soumettre email (formulaire)\nhandleSendResetLink()
+opt [isBlocked == true depuis localStorage]
+  FP -> FP : return (aucun appel reseau)
+end
+
+FP -> API3 : forgotPassword(email.toLowerCase())
+API3 -> FPV : POST /forgot_password\nJSON { email }\nwithCredentials: true
+
+FPV -> FPV : json.loads(request.body)
+FPV -> UM3 : User.objects.filter\n(Q(username)|Q(email)).first()
+UM3 -> PG3 : SELECT
+PG3 --> UM3
+
+alt [email inexistant]
+  UM3 --> FPV : None
+  FPV --> API3 : HTTP 200\n{\n  "ok": true,\n  "message": "Si cet email existe,\n  un lien de reinitialisation\n  sera envoye."\n}
+  note over FPV : Pas de révélation d'email\n(sécurité: anti-enumeration)
+else [email existe]
+  UM3 --> FPV : user
+  FPV -> PRT : PasswordResetToken.create()\nexpires_at = now + 15min
+  PRT -> PG3 : INSERT
+  FPV -> SM : send_mail()\nreset_link avec token
+  SM --> FPV : envoi (DEBUG sync / PROD async)
+  FPV --> API3 : HTTP 200\n{\n  "ok": true,\n  "message": "Si cet email existe,\n  un lien de reinitialisation\n  sera envoye."\n}
+  note over FPV : Même réponse que si email inexistant\n(sécurité: les deux cas identiques)
+end
+
+API3 --> FP : response
+FP -> FP : setStep('sent')
 
 @enduml

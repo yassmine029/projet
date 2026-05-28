@@ -93,9 +93,7 @@ const AutoAlignOverlay: React.FC<AutoAlignOverlayProps> = ({
             </div>
             <h2 className="overlay-title">Recalage en cours…</h2>
             <p className="overlay-subtitle">
-              {algorithm === 'MINE'
-                ? 'Alignement neuronal automatique — veuillez patienter.'
-                : 'Optimisation ANTs SyN en cours — veuillez patienter.'}
+              Alignement automatique en cours — veuillez patienter.
             </p>
             {stageMessage && (
               <div className="stage-badge">

@@ -17,6 +17,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copie du reste du code backend
 COPY . .
 
+# Pré-télécharger l'atlas Nilearn au build (évite le download au runtime pendant la segmentation)
+RUN python -c "from nilearn import datasets; datasets.fetch_atlas_harvard_oxford('cort-maxprob-thr25-2mm'); print('Atlas téléchargé')" || echo "Atlas download skipped"
+
 EXPOSE 8000
 
 CMD ["daphne", "-b", "0.0.0.0", "-p", "8000", "backend_django.asgi:application"]

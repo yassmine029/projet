@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
 
   # --- Base de données PostgreSQL ---
@@ -34,18 +32,21 @@ services:
       - "8000:8000"
     volumes:
       - media_files:/app/media
+      - ./backend_django/models:/app/models
     command: >
       sh -c "python manage.py migrate &&
              daphne -b 0.0.0.0 -p 8000 backend_django.asgi:application"
 
-  # --- Frontend React (sera complété par la binôme) ---
-  # frontend:
-  #   build:
-  #     context: ./frontend
-  #   ports:
-  #     - "3000:80"
-  #   depends_on:
-  #     - backend
+  # --- Frontend React (build production + Nginx) ---
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    volumes:
+      - media_files:/app/media:ro
 
 volumes:
   pg_data:

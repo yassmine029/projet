@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import { ArrowLeft, Loader2, Moon, Sun } from 'lucide-react';
 import api, { getBrodmannIntensity } from '../api';
 import BrodmannIdentificationView from '../components/BrodmannIdentificationView';
 import BrodmannZone3D from '../components/BrodmannZone3D';

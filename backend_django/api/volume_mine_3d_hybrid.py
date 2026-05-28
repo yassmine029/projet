@@ -293,13 +293,15 @@ def run_mine_3d_hybrid(
     t0 = time.time()
     os.makedirs(output_dir, exist_ok=True)
 
-    if progress_callback:
-        try:
-            progress_callback(0, 'Initialisation recalage hybride')
-        except Exception:
-            pass
+    def _cb(pct: int, msg: str):
+        if progress_callback:
+            try:
+                progress_callback(pct, msg)
+            except Exception:
+                pass
 
     # ── Chargement NIfTI ──────────────────────────────────────────────────────
+    _cb(2, 'Chargement des volumes NIfTI…')
     I_nib = nib.as_closest_canonical(nib.load(fixed_path))
     J_nib = nib.as_closest_canonical(nib.load(moving_path))
 
@@ -315,6 +317,7 @@ def run_mine_3d_hybrid(
     shape_mismatch = I_raw.shape != J_raw.shape
     affine_mismatch = not np.allclose(I_nib.affine, J_nib.affine, atol=1e-4)
     if shape_mismatch or affine_mismatch:
+        _cb(5, 'Rééchantillonnage des grilles…')
         if resample_from_to is not None:
             try:
                 J_resampled = resample_from_to(
@@ -341,13 +344,10 @@ def run_mine_3d_hybrid(
         )
         I_raw = scipy_zoom(I_raw, factors, order=1)
         J_raw = scipy_zoom(J_raw, factors, order=1)
-        if progress_callback:
-            try:
-                progress_callback(2, f'Entraînement à {I_raw.shape} — warp final pleine résolution')
-            except Exception:
-                pass
+        _cb(7, f'Sous-échantillonnage à {I_raw.shape} — warp final pleine résolution')
 
     # ── Normalisation & pyramides ──────────────────────────────────────────────
+    _cb(8, 'Normalisation et construction des pyramides…')
     I0 = robust_norm01(I_raw)
     J0 = robust_norm01(J_raw)
     I0s = gaussian_filter(I0, sigma=1.0)
@@ -419,6 +419,8 @@ def run_mine_3d_hybrid(
     log_every = max(1, min(50, n_iters // 8))
     progress_step = max(1, n_iters // 100)
 
+    _cb(10, 'Démarrage de l\'optimisation hybride…')
+
     for itr in range(n_iters):
         optimizer.zero_grad(set_to_none=True)
 
@@ -455,11 +457,9 @@ def run_mine_3d_hybrid(
 
         if progress_callback:
             if (itr + 1) % progress_step == 0 or itr + 1 == n_iters or itr == 0:
-                try:
-                    pct = int(round(((itr + 1) / max(1, n_iters)) * 100.0))
-                    progress_callback(pct, f'Recalage hybride {itr+1}/{n_iters}')
-                except Exception:
-                    pass
+                # Map training 0→n_iters to progress 10→100 (setup used 0-9).
+                pct = 10 + int(round(((itr + 1) / max(1, n_iters)) * 90.0))
+                _cb(pct, f'Recalage hybride {itr+1}/{n_iters}')
 
     # ── Warp pleine résolution sur les volumes ORIGINAUX (pas le 80³) ────────
     I_full = robust_norm01(I_raw_orig)

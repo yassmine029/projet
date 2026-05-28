@@ -1629,6 +1629,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
           headers: {
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
+          timeout: 300000,
         }
       );
 
@@ -2760,7 +2761,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                       )}
                     </div>
 
-                    <div className="max-h-[400px] space-y-2 overflow-y-auto pr-1">
+                    <div className="space-y-2 pr-1">
                       {filteredPatients.length === 0 && (
                         <div className="flex flex-col items-center gap-3 py-16 text-slate-400">
                           <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100">

@@ -108,8 +108,14 @@ def _build_session(model_path: str):
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Modele ONNX introuvable: {model_path}")
 
+    import multiprocessing
+    n_cores = max(1, multiprocessing.cpu_count())
+    opts = ort.SessionOptions()
+    opts.intra_op_num_threads = n_cores
+    opts.inter_op_num_threads = n_cores
+    opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     providers = ["CPUExecutionProvider"]
-    return ort.InferenceSession(model_path, providers=providers)
+    return ort.InferenceSession(model_path, sess_options=opts, providers=providers)
 
 
 def get_session(model_key: str):

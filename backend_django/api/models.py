@@ -276,10 +276,23 @@ class VolumeRegistrationJob(models.Model):
 
 class ReferenceIntensity(models.Model):
     """
-    Baseline d'intensité par zone de Brodmann pour un sujet de référence (ex. sujet1)
-    recalé en espace MNI152. Rempli une fois par le script setup_reference_intensity.
+    Baseline d'intensité par zone de Brodmann pour un sujet de référence (sujet1..sujet5)
+    recalé en espace MNI152. Une entrée par (nom, mode) : affine ou deformable.
+    Rempli par le script setup_reference_intensity (relancer après changement de fichiers source).
     """
-    nom = models.CharField(max_length=100, unique=True, db_index=True)
+    MODE_CHOICES = [
+        ('affine', 'Affine (MINE 3D)'),
+        ('deformable', 'Déformable (Hybrid)'),
+    ]
+
+    nom = models.CharField(max_length=100, db_index=True)
+    mode = models.CharField(
+        max_length=20,
+        choices=MODE_CHOICES,
+        default='affine',
+        db_index=True,
+        help_text='Mode de recalage utilisé pour produire ce volume de référence.',
+    )
     mri_original_path = models.TextField(
         help_text='Chemin absolu du NIfTI source avant recalage.',
     )
@@ -294,11 +307,12 @@ class ReferenceIntensity(models.Model):
 
     class Meta:
         ordering = ['-date_creation']
+        unique_together = [('nom', 'mode')]
         verbose_name = 'Référence intensité Brodmann'
         verbose_name_plural = 'Références intensité Brodmann'
 
     def __str__(self):
-        return f'ReferenceIntensity({self.nom}, {self.date_creation:%Y-%m-%d})'
+        return f'ReferenceIntensity({self.nom}, {self.mode}, {self.date_creation:%Y-%m-%d})'
 
 
 class Analyse(models.Model):

@@ -292,6 +292,8 @@ def warp_full_resolution_3d(I_np: np.ndarray, J_np: np.ndarray,
 
     Jw_dhw = affine_transform_3d(J4, M, grid).detach().cpu().numpy()
     J_warped = np.transpose(Jw_dhw, (2, 1, 0))
+    # Clean NaN/Inf that can appear if the affine diverges during optimization
+    J_warped = np.nan_to_num(J_warped, nan=0.0, posinf=1.0, neginf=0.0)
     M_np = M.detach().cpu().numpy()
     return I_np, J_warped, M_np
 
@@ -349,9 +351,27 @@ def run_mine_3d_nifti(
     t0 = time.time()
     os.makedirs(output_dir, exist_ok=True)
 
+    def _cb(pct: int, msg: str):
+        if progress_callback is not None:
+            try:
+                progress_callback(pct, msg)
+            except Exception:
+                pass
+
     # ──── Load NIfTI images ────────────────────────────────────────────────
-    I_nib = nib.load(fixed_path)
-    J_nib = nib.load(moving_path)
+    _cb(2, 'Chargement des volumes NIfTI…')
+    
+    def _robust_load(p):
+        try:
+            return nib.load(p)
+        except Exception as e:
+            if "not a gzip file" in str(e).lower():
+                print(f"[RECOVERY] {p} is not a gzip file, trying from_filename.")
+                return nib.Nifti1Image.from_filename(p)
+            raise e
+
+    I_nib = _robust_load(fixed_path)
+    J_nib = _robust_load(moving_path)
 
     # Bring both volumes to RAS-like canonical axis order first.
     I_nib = nib.as_closest_canonical(I_nib)
@@ -370,6 +390,7 @@ def run_mine_3d_nifti(
     shape_mismatch = I_raw.shape != J_raw.shape
     affine_mismatch = not np.allclose(I_nib.affine, J_nib.affine, atol=1e-4)
     if shape_mismatch or affine_mismatch:
+        _cb(5, 'Rééchantillonnage des grilles…')
         if resample_from_to is not None:
             try:
                 J_resampled_nib = resample_from_to(
@@ -390,6 +411,7 @@ def run_mine_3d_nifti(
             J_raw = scipy_zoom(J_raw, factors, order=3)
 
     # ──── Normalize & smooth ───────────────────────────────────────────────
+    _cb(7, 'Normalisation des intensités…')
     I0 = robust_norm01(I_raw)
     J0 = robust_norm01(J_raw)
 
@@ -397,6 +419,7 @@ def run_mine_3d_nifti(
     J0_smooth = gaussian_filter(J0, sigma=1.0)
 
     # ──── Build pyramids ───────────────────────────────────────────────────
+    _cb(9, 'Construction des pyramides gaussiennes…')
     pyramid_I = pyramid_gaussian_3d(I0_smooth, downscale=2.0, max_levels=max_levels)
     pyramid_J = pyramid_gaussian_3d(J0_smooth, downscale=2.0, max_levels=max_levels)
     L = min(levels_used, len(pyramid_I), len(pyramid_J))
@@ -469,11 +492,7 @@ def run_mine_3d_nifti(
     log_every = max(1, min(50, n_iters // 8))
     progress_step = max(1, n_iters // 100)
 
-    if progress_callback is not None:
-        try:
-            progress_callback(0, 'Initialisation MINE 3D')
-        except Exception:
-            pass
+    _cb(10, 'Démarrage de l\'optimisation MINE…')
 
     for itr in range(n_iters):
         optimizer.zero_grad(set_to_none=True)
@@ -513,11 +532,9 @@ def run_mine_3d_nifti(
         if progress_callback is not None:
             should_emit = ((itr + 1) % progress_step == 0) or (itr + 1 == n_iters) or (itr == 0)
             if should_emit:
-                try:
-                    pct = int(round(((itr + 1) / max(1, n_iters)) * 100.0))
-                    progress_callback(pct, f'Optimisation MINE {itr + 1}/{n_iters}')
-                except Exception:
-                    pass
+                # Map training 0→n_iters to progress 10→100 (setup used 0-9).
+                pct = 10 + int(round(((itr + 1) / max(1, n_iters)) * 90.0))
+                _cb(pct, f'Itération {itr + 1}/{n_iters}')
 
     # ──── Warp full resolution ─────────────────────────────────────────────
     I_full = robust_norm01(I_raw)

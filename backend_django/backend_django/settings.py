@@ -227,9 +227,10 @@ NNUNET_MODEL_PATH = (
 MINE_FORCE_GPU = os.getenv('MINE_FORCE_GPU', '1').strip().lower() in ('1', 'true', 'yes')
 
 # Carte des régions pour l'identification et les intensités : api.official_atlas (Nilearn, Harvard–Oxford).
-# Sujet de référence d'intensité (une seule exécution du script runscript).
-REFERENCE_INTENSITY_NIFTI_SOURCE = os.getenv(
-    'REFERENCE_INTENSITY_NIFTI_SOURCE',
-    r'C:\Users\yassm\Desktop\donnée 3d\registration 3d\sujet1.nii',
+# Dossier contenant les 5 sujets de référence (sujet1.nii à sujet5.nii).
+# Chaque fichier correspond à une tranche d'âge. Remplacer les fichiers et relancer
+# setup_reference_intensity pour mettre à jour les références en base.
+REFERENCE_SUBJECTS_DIR = os.getenv(
+    'REFERENCE_SUBJECTS_DIR',
+    r'C:\Users\yassm\sujet_reference',
 )
-REFERENCE_INTENSITY_NOM = os.getenv('REFERENCE_INTENSITY_NOM', 'sujet1')

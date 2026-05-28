@@ -622,13 +622,15 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
 
           if (autoAlignStatus === 'processing') {
             if (Number.isFinite(p)) {
-              setAutoAlignProgress(Math.max(0, Math.min(100, Math.round(p))));
+              const clamped = Math.max(0, Math.min(100, Math.round(p)));
+              setAutoAlignProgress((prev) => Math.max(typeof prev === 'number' ? prev : 0, clamped));
               lastProgressUpdateRef.current = Date.now();
             }
             if (msg) setAutoAlignStageMessage(msg);
           } else if (applyingToSeriesStatus === 'processing') {
             if (Number.isFinite(p)) {
-              setApplyingToSeriesProgress(Math.max(0, Math.min(100, Math.round(p))));
+              const clamped = Math.max(0, Math.min(100, Math.round(p)));
+              setApplyingToSeriesProgress((prev) => Math.max(typeof prev === 'number' ? prev : 0, clamped));
             }
             if (msg) setApplyingToSeriesMessage(msg);
           }
@@ -688,13 +690,13 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         setAutoAlignProgress((prev) => {
           const pct = typeof prev === 'number' ? prev : 0;
           if (pct < 20) {
-            setAutoAlignStageMessage('Initialisation des pyramides multi-résolution...');
+            setAutoAlignStageMessage('Préparation en cours…');
           } else if (pct < 50) {
-            setAutoAlignStageMessage('Optimisation MINE — itérations en cours...');
+            setAutoAlignStageMessage('Calcul en cours…');
           } else if (pct < 80) {
-            setAutoAlignStageMessage('Calcul des transformations affines 3D...');
+            setAutoAlignStageMessage('Calcul en cours…');
           } else {
-            setAutoAlignStageMessage('Finalisation — déformation du volume patient...');
+            setAutoAlignStageMessage('Finalisation…');
           }
           return prev;
         });

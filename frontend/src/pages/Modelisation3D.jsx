@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Box, ArrowLeft, X, FileText, Download, UserRound, Hash, CalendarDays, Brain, Activity, BarChart3, CheckCircle2, Loader2, FolderOpen } from 'lucide-react';
+import { Box, ArrowLeft, ArrowRight, X, FileText, Download, UserRound, Hash, CalendarDays, Brain, Activity, BarChart3, CheckCircle2, Loader2, FolderOpen } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import ModelViewerBlender from '../components/ModelViewerBlender.jsx';
@@ -918,6 +918,7 @@ export default function Modelisation3D({ user = null }) {
           headers: {
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
+          timeout: 300000,
         });
 
         const result = response?.data?.modelisation;
@@ -2009,17 +2010,29 @@ export default function Modelisation3D({ user = null }) {
                         <p className="mb-3 text-xs font-medium text-red-600">{archiveError}</p>
                       )}
 
-                      <button
-                        type="button"
-                        onClick={handleArchiveReport}
-                        disabled={archiving || !modelingResult || !runInfo?.patient}
-                        className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-slate-700 to-slate-800 px-5 py-2.5 text-sm font-bold text-white hover:from-slate-800 hover:to-slate-900 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm transition-all"
-                      >
-                        {archiving
-                          ? <Loader2 className="h-4 w-4 animate-spin" />
-                          : <FolderOpen className="h-4 w-4" />}
-                        {archiving ? 'Enregistrement…' : existingReport && !existingReport.same_mri ? 'Ré-archiver le rapport' : 'Enregistrer dans le dossier'}
-                      </button>
+                      <div className="flex items-center justify-between gap-3">
+                        <button
+                          type="button"
+                          onClick={handleArchiveReport}
+                          disabled={archiving || !modelingResult || !runInfo?.patient}
+                          className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-slate-700 to-slate-800 px-5 py-2.5 text-sm font-bold text-white hover:from-slate-800 hover:to-slate-900 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm transition-all"
+                        >
+                          {archiving
+                            ? <Loader2 className="h-4 w-4 animate-spin" />
+                            : <FolderOpen className="h-4 w-4" />}
+                          {archiving ? 'Enregistrement…' : existingReport && !existingReport.same_mri ? 'Ré-archiver le rapport' : 'Enregistrer dans le dossier'}
+                        </button>
+
+                        {runInfo?.patient && (
+                          <button
+                            onClick={() => navigate(`/dashboard/patients/${runInfo.patient}`)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-600 hover:bg-blue-100 hover:border-blue-300 transition-all"
+                          >
+                            Dossier patient
+                            <ArrowRight className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
 
                       {/* Autres rapports du même patient */}
                       {otherPatientReports.length > 0 && (

@@ -2722,13 +2722,22 @@ def brodmann_intensity(request):
         if age_err:
             return Response({'detail': age_err}, status=status.HTTP_400_BAD_REQUEST)
 
-    ref_row = ReferenceIntensity.objects.filter(nom=ref_nom).first()
+    # Déterminer le mode de recalage utilisé → chercher la référence correspondante
+    if not use_analyse and job_raw:
+        from api.volume_api import _get_job_entry as _gje
+        _job_entry = _gje(job_raw)
+        reg_mode = (_job_entry or {}).get('registration_transform', 'affine')
+    else:
+        reg_mode = 'affine'
+
+    ref_row = ReferenceIntensity.objects.filter(nom=ref_nom, mode=reg_mode).first()
     if ref_row is None:
         return Response(
             {
                 'detail': (
-                    f'Aucune référence d\'intensité « {ref_nom} » en base pour la tranche « {ref_band_fr} ». '
-                    'Enregistrez ce sujet via setup_reference_intensity (REFERENCE_INTENSITY_NOM).'
+                    f'Aucune référence d\'intensité « {ref_nom} » (mode {reg_mode}) en base '
+                    f'pour la tranche « {ref_band_fr} ». '
+                    'Relancez setup_reference_intensity pour générer les deux modes.'
                 ),
             },
             status=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -2980,10 +2989,21 @@ def brodmann_all_intensities(request):
         if age_err:
             return Response({'detail': age_err}, status=status.HTTP_400_BAD_REQUEST)
 
-    ref_row = ReferenceIntensity.objects.filter(nom=ref_nom).first()
+    # Déterminer le mode de recalage utilisé → chercher la référence correspondante
+    if not use_analyse and job_raw:
+        from api.volume_api import _get_job_entry as _gje
+        _job_entry = _gje(job_raw)
+        reg_mode = (_job_entry or {}).get('registration_transform', 'affine')
+    else:
+        reg_mode = 'affine'
+
+    ref_row = ReferenceIntensity.objects.filter(nom=ref_nom, mode=reg_mode).first()
     if ref_row is None:
         return Response(
-            {'detail': f"Aucune référence d'intensité « {ref_nom} » en base pour la tranche « {ref_band_fr} »."},
+            {'detail': (
+                f"Aucune référence d'intensité « {ref_nom} » (mode {reg_mode}) en base "
+                f"pour la tranche « {ref_band_fr} »."
+            )},
             status=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
@@ -3336,6 +3356,133 @@ def preprocess_image(request):
 @api_view(['GET'])
 @authentication_classes([CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
+def mri_file_nifti_slice(request, file_id):
+    """
+    Returns one slice of a NIfTI MRI file along a given axis.
+    Query params:
+        axis  : 'axial' | 'coronal' | 'sagittal'  (default: axial)
+        index : int slice index  (default: middle)
+    Response JSON:
+        { shape: [X,Y,Z], index: int, max_index: int, image: "data:image/png;base64,..." }
+    """
+    mri_file = get_object_or_404(
+        MRIFile.objects.select_related('patient'),
+        id=file_id,
+        patient__doctor=request.user,
+    )
+    abs_path = getattr(mri_file.file, 'path', None)
+    if not abs_path or not os.path.exists(abs_path):
+        return JsonResponse({'ok': False, 'error': 'Fichier introuvable.'}, status=404)
+
+    name_lower = abs_path.lower()
+    if not (name_lower.endswith('.nii') or name_lower.endswith('.nii.gz')):
+        return JsonResponse({'ok': False, 'error': 'Seuls les fichiers NIfTI sont supportés.'}, status=415)
+
+    axis = (request.GET.get('axis') or 'axial').strip().lower()
+    if axis not in ('axial', 'coronal', 'sagittal'):
+        axis = 'axial'
+
+    try:
+        import nibabel as nib
+        import base64
+
+        # Load file. nib.load is lazy, but img.get_fdata() is not.
+        img = nib.load(abs_path)
+        # Using mmap to avoid loading the whole file into RAM at once if possible.
+        # But get_fdata(dtype=np.float32) will still allocate the full array.
+        # Still, we can try to be more efficient with normalization.
+        data = img.get_fdata(dtype=np.float32)
+
+        if data.ndim == 4:
+            data = data[..., 0]
+        if data.ndim != 3:
+            return JsonResponse({'ok': False, 'error': f'Volume {data.ndim}D non supporté.'}, status=422)
+
+        # Optimization: Calculation of vmin/vmax can be done on a subsample of data to save RAM/CPU
+        mask = data > 1e-6
+        if np.any(mask):
+            # Sample 10% of non-zero voxels for percentile calc if too many
+            non_zero_vals = data[mask]
+            if non_zero_vals.size > 200000:
+                sample = non_zero_vals[::max(1, non_zero_vals.size // 100000)]
+            else:
+                sample = non_zero_vals
+            vmin, vmax = float(np.percentile(sample, 0.5)), float(np.percentile(sample, 99.5))
+        else:
+            vmin, vmax = 0.0, 1.0
+
+        if vmax <= vmin:
+            vmax = vmin + 1.0
+
+        # Auto-detect best starting slice: find the slice with most non-zero content
+        ax_map = {'axial': 2, 'coronal': 1, 'sagittal': 0}
+        ax_idx = ax_map[axis]
+        max_index = data.shape[ax_idx] - 1
+
+        raw_index = request.GET.get('index')
+        if raw_index is None:
+            # OPTIMIZATION: Only sample a subset of slices to find the "best" one
+            # This is much faster than checking every single slice for large volumes.
+            try:
+                step = max(1, data.shape[ax_idx] // 60)
+                indices_to_check = range(0, data.shape[ax_idx], step)
+                counts = []
+                for i in indices_to_check:
+                    slice_data = np.take(data, i, axis=ax_idx)
+                    counts.append(np.count_nonzero(slice_data > vmin))
+                
+                best_sub_idx = np.argmax(counts)
+                index = int(indices_to_check[best_sub_idx])
+            except Exception:
+                index = max_index // 2
+        else:
+            try:
+                index = int(raw_index)
+            except (TypeError, ValueError):
+                index = max_index // 2
+        index = int(np.clip(index, 0, max_index))
+
+        # Extract and orient the slice
+        if axis == 'axial':
+            slice_2d = data[:, :, index].copy()
+            slice_2d = np.rot90(slice_2d)
+        elif axis == 'coronal':
+            slice_2d = data[:, index, :].copy()
+            slice_2d = np.rot90(slice_2d)
+        else:  # sagittal
+            slice_2d = data[index, :, :].copy()
+            slice_2d = np.rot90(slice_2d)
+
+        slice_2d = np.nan_to_num(slice_2d, nan=0.0)
+        slice_norm = np.clip((slice_2d - vmin) / (vmax - vmin), 0.0, 1.0)
+        slice_u8 = (slice_norm * 255).astype(np.uint8)
+
+        # Check if the slice has meaningful content
+        is_empty = bool(np.count_nonzero(slice_u8) == 0)
+
+        ok, encoded = cv2.imencode('.png', slice_u8)
+        if not ok:
+            return JsonResponse({'ok': False, 'error': 'Encodage PNG échoué.'}, status=500)
+
+        b64 = base64.b64encode(encoded.tobytes()).decode('utf-8')
+        return JsonResponse({
+            'ok': True,
+            'shape': list(data.shape),
+            'axis': axis,
+            'index': index,
+            'max_index': max_index,
+            'is_empty': is_empty,
+            'vmin': round(float(vmin), 5),
+            'vmax': round(float(vmax), 5),
+            'image': f'data:image/png;base64,{b64}',
+        })
+    except Exception as e:
+        return JsonResponse({'ok': False, 'error': f'Lecture NIfTI échouée : {e}'}, status=500)
+
+
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
 def mri_file_preview(request, file_id):
     mri_file = get_object_or_404(
         MRIFile.objects.select_related('patient'),
@@ -3377,7 +3524,8 @@ def mri_file_preview(request, file_id):
             mid = data.shape[2] // 2
             slice_2d = data[:, :, mid]
             slice_2d = np.rot90(slice_2d)
-            vmin, vmax = np.percentile(slice_2d[slice_2d > 0], [1, 99]) if slice_2d.any() else (0, 1)
+            valid_px = slice_2d[np.isfinite(slice_2d) & (slice_2d > 0)]
+            vmin, vmax = np.percentile(valid_px, [1, 99]) if valid_px.size > 0 else (0, 1)
             slice_norm = np.clip((slice_2d - vmin) / max(vmax - vmin, 1e-6), 0, 1)
             slice_u8 = (slice_norm * 255).astype(np.uint8)
             ok, encoded = cv2.imencode('.png', slice_u8)
@@ -3793,6 +3941,23 @@ def segmentation_run_modelisation_3d(request, run_id):
             normative_total_mean_mm3=normative_total_mean_mm3,
             normative_total_std_mm3=normative_total_std_mm3,
         )
+        # Sauvegarder les volumes en DB pour que has_3d_reconstruction = True
+        try:
+            vols = result.get('volumes_mm3', {}) or {}
+            ci   = result.get('clinical_indices', {}) or {}
+            _f = lambda v: float(v) if v not in (None, '', 0) else None
+            run.left_volume_mm3  = _f(vols.get('left'))
+            run.right_volume_mm3 = _f(vols.get('right'))
+            run.total_volume_mm3 = _f(vols.get('total'))
+            run.asymmetry_index  = _f(ci.get('asymmetry_index_percent'))
+            run.normality_index  = _f(ci.get('normality_index_percent'))
+            run.z_score          = _f(ci.get('z_score'))
+            run.save(update_fields=[
+                'left_volume_mm3', 'right_volume_mm3', 'total_volume_mm3',
+                'asymmetry_index', 'normality_index', 'z_score',
+            ])
+        except Exception:
+            pass
         return JsonResponse({'ok': True, 'modelisation': result}, status=200)
     except FileNotFoundError as e:
         return JsonResponse({'ok': False, 'error': str(e)}, status=404)

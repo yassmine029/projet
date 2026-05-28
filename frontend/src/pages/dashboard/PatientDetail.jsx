@@ -1,14 +1,338 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import ReactDOM from 'react-dom';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, Calendar, FileText, Phone, Mail, Stethoscope, Clock, ShieldCheck,
   MapPin, Activity, Star, Plus, Boxes, Layers, ChevronRight, ChevronDown,
   Lock, Eye, Download, Edit3, ArrowLeftRight, Trash2, Hash, User, Search, Filter, ArrowUpDown,
   HardDrive, FolderOpen, FolderTree, Settings, CheckCircle2, LineChart, AlertCircle,
-  Brain, Box
+  Brain, Box, X, ChevronLeft, ChevronRight as ChevronR, Maximize2
 } from 'lucide-react';
 import api from '../../api';
 import LongitudinalDashboard from '../../components/LongitudinalDashboard';
+
+// ── NIfTI 3-axis viewer modal ──────────────────────────────────────────────────
+function NiftiViewerModal({ fileId, filename, onClose }) {
+  const AXES = ['axial', 'coronal', 'sagittal'];
+  const LABELS = { axial: 'Axial (Z)', coronal: 'Coronal (Y)', sagittal: 'Sagittal (X)' };
+
+  const [activeAxis, setActiveAxis] = useState('axial');
+  const [shape, setShape] = useState(null);
+  const [indices, setIndices] = useState({ axial: 0, coronal: 0, sagittal: 0 });
+  const [images, setImages] = useState({ axial: null, coronal: null, sagittal: null });
+  const [loading, setLoading] = useState({ axial: true, coronal: true, sagittal: true });
+  const [isEmpty, setIsEmpty] = useState({ axial: false, coronal: false, sagittal: false });
+  const [allEmpty, setAllEmpty] = useState(false);
+  const [error, setError] = useState(null);
+  const fetchControllers = useRef({});
+  const shapeRef = useRef(null);
+
+  const maxIndex = (axis) => {
+    const s = shapeRef.current;
+    return s ? (axis === 'axial' ? s[2] : axis === 'coronal' ? s[1] : s[0]) - 1 : 0;
+  };
+
+  const fetchSlice = useCallback(async (axis, index) => {
+    if (fetchControllers.current[axis]) fetchControllers.current[axis].abort();
+    const ctrl = new AbortController();
+    fetchControllers.current[axis] = ctrl;
+    setLoading(prev => ({ ...prev, [axis]: true }));
+    try {
+      const params = { axis };
+      if (index !== undefined && index >= 0) params.index = index;
+      // omit index to let backend auto-detect best slice
+      const res = await api.get(`/mri-files/${fileId}/nifti-slice/`, {
+        params,
+        signal: ctrl.signal,
+        timeout: 60000, // 60s for heavy NIfTI processing
+      });
+      if (res.data.ok) {
+        shapeRef.current = res.data.shape;
+        setShape(res.data.shape);
+        setImages(prev => ({ ...prev, [axis]: res.data.image }));
+        setIndices(prev => ({ ...prev, [axis]: res.data.index }));
+        setIsEmpty(prev => {
+          const next = { ...prev, [axis]: res.data.is_empty };
+          if (Object.values(next).every(Boolean)) setAllEmpty(true);
+          return next;
+        });
+      } else {
+        setError(res.data.error || 'Erreur inconnue lors de la lecture du fichier.');
+      }
+    } catch (e) {
+      if (e.name !== 'CanceledError' && e.name !== 'AbortError') {
+        console.error("NIfTI View Error:", e);
+        if (e.code === 'ECONNABORTED') {
+          setError('Délai d\'attente dépassé. Le fichier est peut-être trop volumineux.');
+        } else {
+          setError('Erreur de chargement de la coupe.');
+        }
+      }
+    } finally {
+      setLoading(prev => ({ ...prev, [axis]: false }));
+    }
+  }, [fileId]);
+
+  // Initial load: backend auto-detects the best (most content-rich) slice
+  useEffect(() => {
+    AXES.forEach(ax => fetchSlice(ax, undefined));
+    return () => Object.values(fetchControllers.current).forEach(c => { try { c.abort(); } catch {} });
+  }, [fileId]);
+
+  const handleSlider = (axis, val) => {
+    const clamped = Math.max(0, Math.min(val, maxIndex(axis)));
+    setIndices(prev => ({ ...prev, [axis]: clamped }));
+    fetchSlice(axis, clamped);
+  };
+
+  // Keyboard navigation
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+        handleSlider(activeAxis, indices[activeAxis] + 1);
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+        handleSlider(activeAxis, indices[activeAxis] - 1);
+      } else if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [activeAxis, indices]);
+
+  const isLoadingAny = Object.values(loading).some(Boolean);
+  const isCorrupt = allEmpty && !isLoadingAny;
+  const pct = maxIndex(activeAxis) > 0 ? (indices[activeAxis] / maxIndex(activeAxis)) * 100 : 0;
+  const AXIS_ICONS = { axial: 'Z', coronal: 'Y', sagittal: 'X' };
+
+  // Detect registration type from filename
+  const regType = filename.includes('_advanced_') ? 'atlas'
+    : filename.includes('_3d_') ? 'p2p'
+    : null;
+
+  return ReactDOM.createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+         style={{ background: 'rgba(15,23,60,0.75)', backdropFilter: 'blur(12px)' }}
+         onClick={(e) => e.target === e.currentTarget && onClose()}>
+
+      {/* Card */}
+      <div className="relative flex flex-col rounded-3xl overflow-hidden w-full bg-white"
+           style={{ maxWidth: 880, maxHeight: '90vh', minHeight: 540,
+                    boxShadow: '0 24px 80px rgba(30,58,138,0.25), 0 4px 20px rgba(30,58,138,0.15)',
+                    border: '1px solid #bfdbfe' }}>
+
+        {/* Top accent bar */}
+        <div className="h-1 w-full shrink-0"
+             style={{ background: 'linear-gradient(90deg,#1e3a8a,#2563eb,#60a5fa,#2563eb,#1e3a8a)' }} />
+
+        {/* ── Header ── */}
+        <div className="flex items-center justify-between px-6 py-4 shrink-0 bg-white border-b border-blue-100">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0"
+                 style={{ background: 'linear-gradient(135deg,#1e3a8a,#2563eb)',
+                          boxShadow: '0 4px 14px rgba(37,99,235,0.35)' }}>
+              <Brain className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h2 className="text-blue-900 font-black text-base leading-tight">Visualiseur NIfTI</h2>
+              <p className="text-blue-400 text-[11px] font-mono mt-0.5 truncate" style={{ maxWidth: 340 }}>{filename}</p>
+              {regType === 'atlas' && (
+                <div className="flex items-center gap-1.5 mt-1.5">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold text-white"
+                        style={{ background: 'linear-gradient(90deg,#1e3a8a,#4f46e5)' }}>
+                    <Brain style={{ width: 9, height: 9 }} />
+                    MNI152
+                  </span>
+                  <span className="text-[10px] text-blue-400 font-semibold">Recalé sur atlas · identification des zones de Brodmann</span>
+                </div>
+              )}
+              {regType === 'p2p' && (
+                <div className="flex items-center gap-1.5 mt-1.5">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold text-blue-700 bg-blue-100 border border-blue-200">
+                    <ArrowLeftRight style={{ width: 9, height: 9 }} />
+                    Vol→Vol
+                  </span>
+                  <span className="text-[10px] text-blue-400 font-semibold">Recalé sur volume de référence · MI</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {shape && (
+              <span className="px-3 py-1.5 rounded-xl text-[11px] font-mono font-bold text-blue-700 bg-blue-50 border border-blue-200">
+                {shape[0]} × {shape[1]} × {shape[2]}
+              </span>
+            )}
+            <button onClick={onClose}
+              className="w-9 h-9 flex items-center justify-center rounded-xl text-blue-300 hover:text-red-500 hover:bg-red-50 border border-blue-100 hover:border-red-200 transition-all">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* ── Axis tabs ── */}
+        <div className="flex items-center gap-2 px-6 py-3 shrink-0 bg-blue-50/60 border-b border-blue-100">
+          <span className="text-blue-300 text-[9px] font-black uppercase tracking-widest mr-1">Vue</span>
+          {AXES.map(ax => (
+            <button key={ax} onClick={() => setActiveAxis(ax)}
+              className="flex items-center gap-2 px-4 py-1.5 rounded-xl text-xs font-bold transition-all"
+              style={activeAxis === ax
+                ? { background: 'linear-gradient(135deg,#1e3a8a,#2563eb)',
+                    color: '#fff', boxShadow: '0 4px 14px rgba(37,99,235,0.35)',
+                    border: '1px solid #3b82f6' }
+                : { background: '#fff', color: '#3b82f6',
+                    border: '1px solid #bfdbfe' }}>
+              <span className="w-5 h-5 rounded-lg flex items-center justify-center text-[9px] font-black"
+                    style={{ background: activeAxis === ax ? 'rgba(255,255,255,0.22)' : '#eff6ff', color: activeAxis === ax ? '#fff' : '#2563eb' }}>
+                {AXIS_ICONS[ax]}
+              </span>
+              {LABELS[ax]}
+            </button>
+          ))}
+
+          {/* Status dots */}
+          <div className="ml-auto flex items-center gap-2">
+            {AXES.map(ax => (
+              <div key={ax} className="flex items-center gap-1">
+                <div className="w-1.5 h-1.5 rounded-full transition-all duration-300"
+                     style={{ background: loading[ax] ? '#2563eb' : images[ax] ? '#22c55e' : '#bfdbfe',
+                              boxShadow: loading[ax] ? '0 0 6px #2563eb' : images[ax] ? '0 0 5px rgba(34,197,94,0.6)' : 'none' }} />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Image area — dark canvas for medical imaging ── */}
+        <div className="flex-1 relative flex items-center justify-center min-h-0 overflow-hidden"
+             style={{ background: 'linear-gradient(160deg,#0c1845 0%,#071033 100%)' }}>
+
+          {/* Subtle dot pattern */}
+          <div className="absolute inset-0 opacity-[0.04]"
+               style={{ backgroundImage: 'radial-gradient(circle,#60a5fa 1px,transparent 1px)', backgroundSize: '28px 28px' }} />
+
+          {/* Corner accents */}
+          {[['top-3','left-3','borderTop','borderLeft'],['top-3','right-3','borderTop','borderRight'],
+            ['bottom-3','left-3','borderBottom','borderLeft'],['bottom-3','right-3','borderBottom','borderRight']
+          ].map(([y,x,b1,b2],i) => (
+            <div key={i} className={`absolute ${y} ${x} w-5 h-5`}
+                 style={{ [b1]: '1.5px solid rgba(96,165,250,0.35)', [b2]: '1.5px solid rgba(96,165,250,0.35)' }} />
+          ))}
+
+          {error && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-4 py-2 rounded-xl text-white text-xs font-semibold"
+                 style={{ background: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.5)' }}>
+              <AlertCircle className="w-4 h-4 shrink-0" /> {error}
+            </div>
+          )}
+
+          {isCorrupt ? (
+            <div className="flex flex-col items-center gap-5 text-center px-12">
+              <div className="w-14 h-14 rounded-2xl flex items-center justify-center bg-red-500/10 border border-red-400/20">
+                <AlertCircle className="w-7 h-7 text-red-400" />
+              </div>
+              <div>
+                <p className="text-white font-bold text-sm mb-2">Volume vide ou corrompu</p>
+                <p className="text-blue-200/50 text-xs leading-relaxed max-w-xs">
+                  Ce volume ne contient pas de données valides. Il a probablement été sauvegardé avant la correction du format NIfTI.
+                </p>
+                <p className="text-blue-400 text-xs font-semibold mt-3">Veuillez relancer un nouveau recalage.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="relative flex items-center justify-center w-full h-full p-5">
+              {loading[activeAxis] && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 z-10"
+                     style={{ background: 'rgba(7,16,51,0.75)' }}>
+                  <div className="relative w-12 h-12">
+                    <div className="absolute inset-0 rounded-full border-2 border-blue-500/20" />
+                    <div className="absolute inset-0 rounded-full border-2 border-t-blue-400 border-r-transparent border-b-transparent border-l-transparent animate-spin" />
+                    <div className="absolute inset-2 rounded-full border border-t-blue-300/40 animate-spin"
+                         style={{ animationDuration: '1.8s', animationDirection: 'reverse' }} />
+                  </div>
+                  <span className="text-blue-300/60 text-[11px] font-medium tracking-wide">Chargement…</span>
+                </div>
+              )}
+
+              {images[activeAxis] ? (
+                <img src={images[activeAxis]} alt={`Coupe ${activeAxis}`}
+                  className="object-contain rounded-xl"
+                  style={{ imageRendering: 'pixelated',
+                           maxHeight: 'calc(90vh - 230px)', maxWidth: '100%',
+                           boxShadow: '0 0 0 1px rgba(96,165,250,0.2), 0 16px 48px rgba(0,0,0,0.6)' }} />
+              ) : (
+                <div className="flex flex-col items-center gap-3">
+                  <div className="w-10 h-10 rounded-full border-2 border-t-blue-400 border-blue-500/10 animate-spin" />
+                  <span className="text-blue-300/40 text-xs">Analyse du volume…</span>
+                </div>
+              )}
+
+              {/* HUD bottom-left */}
+              {images[activeAxis] && !loading[activeAxis] && (
+                <div className="absolute bottom-4 left-4 flex items-center gap-2 px-3 py-1.5 rounded-xl"
+                     style={{ background: 'rgba(7,16,51,0.7)', border: '1px solid rgba(96,165,250,0.15)', backdropFilter: 'blur(8px)' }}>
+                  <span className="text-blue-400 text-[9px] font-black uppercase tracking-widest">{activeAxis}</span>
+                  <span className="w-px h-3 bg-blue-400/20" />
+                  <span className="text-white font-bold text-xs font-mono">{indices[activeAxis]}</span>
+                  <span className="text-blue-300/40 text-xs font-mono">/ {maxIndex(activeAxis)}</span>
+                  {regType && (
+                    <>
+                      <span className="w-px h-3 bg-blue-400/20" />
+                      <span className="text-[9px] font-bold tracking-wide"
+                            style={{ color: regType === 'atlas' ? '#818cf8' : '#60a5fa' }}>
+                        {regType === 'atlas' ? 'MNI152' : 'Vol→Vol'}
+                      </span>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {isEmpty[activeAxis] && !loading[activeAxis] && images[activeAxis] && (
+                <div className="absolute bottom-4 right-4 px-3 py-1.5 rounded-xl text-[10px] font-semibold text-yellow-300"
+                     style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.2)', backdropFilter: 'blur(8px)' }}>
+                  Coupe vide
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ── Slider footer ── */}
+        <div className={`px-6 py-4 shrink-0 bg-white border-t border-blue-100 ${isCorrupt ? 'opacity-30 pointer-events-none' : ''}`}>
+          <div className="flex items-center gap-3">
+            <button onClick={() => handleSlider(activeAxis, indices[activeAxis] - 1)}
+              className="w-8 h-8 flex items-center justify-center rounded-xl border border-blue-200 text-blue-400 hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-all shrink-0">
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+
+            {/* Custom slider */}
+            <div className="flex-1 relative h-6 flex items-center">
+              <div className="absolute w-full h-1.5 rounded-full bg-blue-100" />
+              <div className="absolute h-1.5 rounded-full transition-all"
+                   style={{ width: `${pct}%`, background: 'linear-gradient(90deg,#1e3a8a,#2563eb,#60a5fa)' }} />
+              <input type="range" min={0} max={maxIndex(activeAxis)} value={indices[activeAxis]}
+                onChange={e => handleSlider(activeAxis, Number(e.target.value))}
+                className="absolute w-full opacity-0 cursor-pointer h-6" />
+              <div className="absolute w-4 h-4 rounded-full pointer-events-none border-2 border-white"
+                   style={{ left: `calc(${pct}% - 8px)`,
+                            background: '#2563eb',
+                            boxShadow: '0 0 0 3px rgba(37,99,235,0.25), 0 2px 8px rgba(30,58,138,0.4)' }} />
+            </div>
+
+            <button onClick={() => handleSlider(activeAxis, indices[activeAxis] + 1)}
+              className="w-8 h-8 flex items-center justify-center rounded-xl border border-blue-200 text-blue-400 hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-all shrink-0">
+              <ChevronR className="w-4 h-4" />
+            </button>
+
+            <span className="text-blue-700 text-xs font-mono font-bold bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-lg min-w-[72px] text-center">
+              {indices[activeAxis]} / {maxIndex(activeAxis)}
+            </span>
+          </div>
+          <p className="text-blue-200 text-[10px] text-center mt-2">← → ou les flèches pour naviguer · Échap pour fermer</p>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
 
 // --- UI Sub-components ---
 
@@ -61,6 +385,7 @@ function FileActionRow({ file, sessionColor, onOpen }) {
 
 function ResultsSection({ sessions, analysisFiles, resolveFileUrl, formatDate, formatSize }) {
   const [filter, setFilter] = React.useState('all');
+  const [niftiViewer, setNiftiViewer] = React.useState(null);
 
   const serieFiles = analysisFiles.filter(f =>
     /^reg_serie_/i.test(String(f.original_filename || '')) && String(f.original_filename || '').endsWith('.zip')
@@ -74,6 +399,7 @@ function ResultsSection({ sessions, analysisFiles, resolveFileUrl, formatDate, f
   const showRec = filter === 'all' || filter === 'recalage';
 
   return (
+    <>
     <div id="analyses-start" className="relative pl-12 pb-4">
       {/* Timeline dot */}
       <div className="absolute left-[20px] top-4 -translate-x-1/2 z-10">
@@ -258,6 +584,7 @@ function ResultsSection({ sessions, analysisFiles, resolveFileUrl, formatDate, f
                 const modeM   = fname.match(/_(2d|3d|advanced)_/i);
                 const mode    = modeM ? ({ '2d':'2D','3d':'3D','advanced':'3D avec identification des zones' }[modeM[1].toLowerCase()] || '2D') : '2D';
                 const fileUrl = resolveFileUrl(file.file_url || file.file);
+                const isNifti = fname.endsWith('.nii.gz') || fname.endsWith('.nii');
                 return (
                   <div key={file.id} className="group flex items-center gap-4 bg-white/80 px-5 py-4 rounded-2xl border border-white hover:border-violet-300 hover:shadow-sm transition-all">
                     <div className="w-11 h-11 rounded-xl bg-violet-500 flex items-center justify-center shrink-0">
@@ -278,9 +605,17 @@ function ResultsSection({ sessions, analysisFiles, resolveFileUrl, formatDate, f
                         <span>{formatSize(file.file_size)}</span>
                       </div>
                     </div>
-                    <a href={fileUrl} download className="opacity-0 group-hover:opacity-100 flex items-center gap-1.5 px-4 py-2 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-[11px] font-bold hover:bg-violet-600 hover:text-white transition-all shrink-0">
-                      <Download className="w-3.5 h-3.5" /> Télécharger
-                    </a>
+                    <div className="opacity-0 group-hover:opacity-100 flex items-center gap-2 transition-opacity shrink-0">
+                      {isNifti && (
+                        <button onClick={() => setNiftiViewer({ fileId: file.id, filename: fname })}
+                          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-bold hover:bg-emerald-600 hover:text-white transition-all">
+                          <Eye className="w-3.5 h-3.5" /> Voir
+                        </button>
+                      )}
+                      <a href={fileUrl} download className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-[11px] font-bold hover:bg-violet-600 hover:text-white transition-all">
+                        <Download className="w-3.5 h-3.5" /> Télécharger
+                      </a>
+                    </div>
                   </div>
                 );
               })}
@@ -290,6 +625,16 @@ function ResultsSection({ sessions, analysisFiles, resolveFileUrl, formatDate, f
         </div>
       </div>
     </div>
+
+    {/* NIfTI viewer modal */}
+    {niftiViewer && (
+      <NiftiViewerModal
+        fileId={niftiViewer.fileId}
+        filename={niftiViewer.filename}
+        onClose={() => setNiftiViewer(null)}
+      />
+    )}
+    </>
   );
 }
 

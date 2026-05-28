@@ -1,23 +1,24 @@
 """
-Script django-extensions : même flux recalage 3D que la plateforme (MINE / Hybrid
-via `volume_api.mine_register_nifti_for_reference_pipeline`), puis sommes d'intensité
-par zone (carte Harvard–Oxford Nilearn = identification volume_api).
+Script django-extensions : génère les sujets de référence d'intensité pour les deux modes
+de recalage (affine via MINE 3D et déformable via Hybrid), en utilisant exactement les mêmes
+paramètres que le recalage patient dans auto_align_volume.
 
-Exécution (une fois ou après changement d'atlas) depuis le dossier backend_django :
+Structure du dossier source (REFERENCE_SUBJECTS_DIR) :
+    sujet_reference/
+        sujet1.nii(.gz)   ← tranche < 24 ans
+        sujet2.nii(.gz)   ← tranche 25-54 ans
+        sujet3.nii(.gz)   ← tranche 55-64 ans
+        sujet4.nii(.gz)   ← tranche 65-75 ans
+        sujet5.nii(.gz)   ← tranche > 75 ans
 
+Remplacer les fichiers dans ce dossier et relancer le script pour mettre à jour les références.
+
+Exécution depuis backend_django/ :
     python manage.py runscript setup_reference_intensity
 
-Prérequis : dépendances MINE (PyTorch, etc.) comme pour l'upload 3D — pas ANTsPy.
-
-Variables d'environnement (optionnelles) :
-    REFERENCE_INTENSITY_NIFTI_SOURCE   Chemin du NIfTI source (même entrée qu'un patient)
-    REFERENCE_INTENSITY_NOM           Nom unique en base : sujet1 ... sujet5 (tranches d'âge
-                                      côté application). Relancer le script pour chaque volume
-                                      en changeant NOM et SOURCE.
-    REFERENCE_INTENSITY_N_ITERS       Itérations MINE (défaut : 60 ; Hybrid : 100–250)
-    REFERENCE_INTENSITY_DEVICE        cuda | cpu | auto (défaut : cuda)
-    REFERENCE_INTENSITY_HYBRID        1 pour HYBRID, sinon MINE (défaut : 0)
-    REFERENCE_INTENSITY_STRICT_GRID   0 pour désactiver strict_atlas_grid (défaut : 1)
+Variables d'environnement optionnelles :
+    REFERENCE_SUBJECTS_DIR   Chemin du dossier (défaut : settings.REFERENCE_SUBJECTS_DIR)
+    REFERENCE_DEVICE         cuda | cpu | auto (défaut : cuda)
 """
 
 from __future__ import annotations
@@ -31,15 +32,78 @@ from pathlib import Path
 import numpy as np
 
 
-def run():
-    import django
+# Tranches d'âge correspondant à chaque sujet
+AGE_BANDS = {
+    'sujet1': '< 24 ans',
+    'sujet2': '25-54 ans',
+    'sujet3': '55-64 ans',
+    'sujet4': '65-75 ans',
+    'sujet5': '> 75 ans',
+}
 
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend_django.settings')
-    django.setup()
+# Paramètres identiques à auto_align_volume pour chaque mode.
+# MINE affine  : frontend envoie 300, backend clip [30-1000] → 300 réelles.
+# Hybrid dèfor.: frontend envoie 300, backend clip [100-250] → 250 réelles.
+PARAMS_AFFINE = dict(
+    n_iters=300,
+    max_levels=3,
+    levels_used=2,
+    max_samples=16384,
+    early_stop_patience=22,
+    early_stop_min_iters=35,
+    early_stop_min_delta=5e-4,
+    save_extended_outputs=False,
+)
 
-    from django.conf import settings
-    from nilearn.image import resample_to_img
+PARAMS_DEFORMABLE = dict(
+    n_iters=250,
+    max_levels=3,
+    levels_used=2,
+    max_samples=8192,
+    early_stop_patience=30,
+    early_stop_min_iters=80,
+    early_stop_min_delta=5e-4,
+    save_extended_outputs=False,
+    base=16,
+    max_disp=0.05,
+)
+
+
+def _find_nifti(folder: Path, nom: str) -> Path | None:
+    """Cherche sujetX.nii.gz puis sujetX.nii dans le dossier."""
+    for ext in ('.nii.gz', '.nii'):
+        p = folder / f'{nom}{ext}'
+        if p.exists():
+            return p
+    return None
+
+
+def _ascii_copy(src: Path, dst_dir: Path, ext: str) -> Path:
+    """Copie vers un chemin ASCII si le source contient des caractères non-ASCII."""
+    try:
+        str(src).encode('ascii')
+        return src
+    except UnicodeEncodeError:
+        dst = dst_dir / f'_source_ascii{ext}'
+        shutil.copy2(src, dst)
+        print(f'      Copie ASCII : {dst}')
+        return dst
+
+
+def _register_one(
+    source_path: Path,
+    nom: str,
+    mode: str,
+    work_base: Path,
+    out_dir: Path,
+    device_name: str,
+):
+    """
+    Recale un sujet de référence sur l'atlas MNI152 avec le mode indiqué,
+    calcule les sommes d'intensité par zone Harvard-Oxford, et sauvegarde en base.
+    """
     import nibabel as nib
+    from nilearn.image import resample_to_img
 
     from api.models import ReferenceIntensity
     from api.official_atlas import load_official_mni_atlas_bundle
@@ -49,109 +113,48 @@ def run():
         mine_register_nifti_for_reference_pipeline,
     )
 
-    source_path = os.getenv(
-        'REFERENCE_INTENSITY_NIFTI_SOURCE',
-        getattr(settings, 'REFERENCE_INTENSITY_NIFTI_SOURCE', ''),
+    label = f'{nom} [{mode}]'
+    use_hybrid = (mode == 'deformable')
+    params = PARAMS_DEFORMABLE if use_hybrid else PARAMS_AFFINE
+
+    work_dir = str(work_base / f'{nom}_{mode}_{uuid.uuid4().hex[:8]}')
+    os.makedirs(work_dir, exist_ok=True)
+
+    # Copie ASCII si nécessaire
+    ext = '.nii.gz' if str(source_path).endswith('.nii.gz') else '.nii'
+    src = _ascii_copy(source_path, Path(work_dir), ext)
+
+    print(f'\n  [{label}] Recalage en cours...')
+    print(f'    Source    : {source_path}')
+    print(f'    Mode      : {mode} | n_iters={params["n_iters"]} | device={device_name}')
+
+    _ensure_atlas()
+
+    # Recalage via le même pipeline que auto_align_volume
+    ref_data, mine_info = mine_register_nifti_for_reference_pipeline(
+        str(src),
+        work_dir,
+        n_iters=params['n_iters'],
+        strict_atlas_grid=True,
+        use_hybrid=use_hybrid,
+        device_name=device_name,
     )
-    nom = os.getenv(
-        'REFERENCE_INTENSITY_NOM',
-        getattr(settings, 'REFERENCE_INTENSITY_NOM', 'sujet1'),
-    )
 
-    try:
-        n_iters = int(
-            os.getenv(
-                'REFERENCE_INTENSITY_N_ITERS',
-                str(getattr(settings, 'REFERENCE_INTENSITY_N_ITERS', 60)),
-            )
-        )
-    except ValueError:
-        n_iters = 60
+    mi = mine_info.get('mutual_information')
+    print(f'    MI finale : {mi:.4f}' if mi is not None else '    MI finale : N/A')
 
-    device_name = os.getenv(
-        'REFERENCE_INTENSITY_DEVICE',
-        getattr(settings, 'REFERENCE_INTENSITY_DEVICE', 'cuda'),
-    ).strip().lower()
-    if device_name not in ('cuda', 'cpu', 'auto', 'mps'):
-        device_name = 'cuda'
-
-    use_hybrid = os.getenv(
-        'REFERENCE_INTENSITY_HYBRID',
-        str(getattr(settings, 'REFERENCE_INTENSITY_HYBRID', '0')),
-    ).strip() in ('1', 'true', 'True', 'yes', 'YES')
-    strict_atlas_grid = os.getenv(
-        'REFERENCE_INTENSITY_STRICT_GRID',
-        str(getattr(settings, 'REFERENCE_INTENSITY_STRICT_GRID', '1')),
-    ).strip() not in ('0', 'false', 'False', 'no', 'NO')
-
-    if not source_path or not os.path.isfile(source_path):
-        print(f'[setup_reference_intensity] Fichier source introuvable : {source_path!r}')
-        return
-
-    original_source_abs = os.path.abspath(source_path)
-
-    # Copie vers un chemin ASCII si le disque contient des accents (ex. dossier « référence »).
-    # L’extension doit être la même que le fichier source (.nii vs .nii.gz), sinon nibabel refuse de l’ouvrir.
-    try:
-        source_path.encode('ascii')
-    except UnicodeEncodeError:
-        media_root = Path(settings.MEDIA_ROOT)
-        out_dir_pre = media_root / 'reference_intensity'
-        out_dir_pre.mkdir(parents=True, exist_ok=True)
-        src_lower = original_source_abs.lower()
-        if src_lower.endswith('.nii.gz'):
-            ascii_ext = '.nii.gz'
-        elif src_lower.endswith('.nii'):
-            ascii_ext = '.nii'
-        else:
-            ascii_ext = Path(original_source_abs).suffix or '.nii'
-        ascii_copy = out_dir_pre / f'_source_ascii_for_pipeline{ascii_ext}'
-        shutil.copy2(source_path, ascii_copy)
-        print(f'      Copie vers chemin ASCII : {ascii_copy}')
-        source_path = str(ascii_copy)
-
-    media_root = Path(settings.MEDIA_ROOT)
-    out_dir = media_root / 'reference_intensity'
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    registered_filename = f'{nom}_mni152_mine.nii.gz'
+    # Sauvegarder le volume recalé
+    registered_filename = f'{nom}_{mode}_mni152.nii.gz'
     registered_abs = out_dir / registered_filename
 
-    work_dir = os.path.join(
-        tempfile.gettempdir(),
-        f'reference_intensity_mine_{nom}_{uuid.uuid4().hex[:12]}',
-    )
-
-    mode = 'HYBRID' if use_hybrid else 'MINE'
-    print(f'[1/5] Source : {original_source_abs}')
-    print(f'[2/5] Mode plateforme : {mode} (device={device_name}, n_iters={n_iters}, '
-          f'strict_atlas_grid={strict_atlas_grid})')
-    print(f'      Dossier travail : {work_dir}')
-    print(f'      Sortie NIfTI : {registered_abs}')
-
-    try:
-        _ensure_atlas()
-        ref_data, mine_info = mine_register_nifti_for_reference_pipeline(
-            source_path,
-            work_dir,
-            n_iters=n_iters,
-            strict_atlas_grid=strict_atlas_grid,
-            use_hybrid=use_hybrid,
-            device_name=device_name,
-        )
-    except Exception as exc:
-        print(f'[setup_reference_intensity] Échec recalage MINE : {exc}')
-        raise
-
-    affine = np.asarray(VOLUMES_CACHE['atlas'].get('affine'), dtype=np.float64)
-    ref_img = nib.Nifti1Image(np.asarray(ref_data, dtype=np.float32), affine)
+    atlas_affine = np.asarray(VOLUMES_CACHE['atlas'].get('affine'), dtype=np.float64)
+    ref_img = nib.Nifti1Image(np.asarray(ref_data, dtype=np.float32), atlas_affine)
     ref_img.header.set_data_dtype(np.float32)
     nib.save(ref_img, str(registered_abs))
-    print(f'[3/5] Volume recalé (plateforme) sauvegardé : {registered_abs}')
-    if mine_info.get('mutual_information') is not None:
-        print(f'      MI finale : {mine_info.get("mutual_information"):.4f}')
+    print(f'    Volume sauvegardé : {registered_abs}')
 
-    print('[4/5] Calcul des sommes par label (indices Harvard–Oxford)...')
+    # Calcul des sommes d'intensité par label Harvard-Oxford
+    print(f'    Calcul des intensités par zone...')
     template_img, labels_img, _lut = load_official_mni_atlas_bundle()
     ref_nii = nib.load(str(registered_abs))
     ref_arr = np.asanyarray(ref_nii.dataobj).astype(np.float64)
@@ -165,10 +168,8 @@ def run():
     labels = np.rint(np.asanyarray(atlas_on_ref.dataobj)).astype(np.int32)
 
     if labels.shape != ref_arr.shape:
-        print(
-            f'[ERREUR] Shape atlas {labels.shape} != volume {ref_arr.shape} après resample.'
-        )
-        return
+        print(f'    [ERREUR] Shape atlas {labels.shape} != volume {ref_arr.shape}')
+        return False
 
     brodmann_intensities: dict[str, float] = {}
     for zone in sorted(np.unique(labels)):
@@ -177,20 +178,101 @@ def run():
         mask = labels == zone
         if not np.any(mask):
             continue
-        somme = float(np.sum(ref_arr[mask]))
-        brodmann_intensities[str(int(zone))] = somme
+        brodmann_intensities[str(int(zone))] = float(np.sum(ref_arr[mask]))
 
-    print(f'      {len(brodmann_intensities)} zones non nulles enregistrées.')
+    print(f'    {len(brodmann_intensities)} zones enregistrées.')
 
+    # Chemin relatif à MEDIA_ROOT
+    from django.conf import settings as dj_settings
     rel_media = str(Path('reference_intensity') / registered_filename).replace('\\', '/')
+
     obj, created = ReferenceIntensity.objects.update_or_create(
         nom=nom,
+        mode=mode,
         defaults={
-            'mri_original_path': original_source_abs,
+            'mri_original_path': str(source_path.resolve()),
             'mri_registered_path': rel_media,
             'brodmann_intensities': brodmann_intensities,
         },
     )
     action = 'créé' if created else 'mis à jour'
-    print(f'[5/5] ReferenceIntensity « {nom} » {action} (pk={obj.pk}).')
-    print('[setup_reference_intensity] Terminé (flux identique plateforme : MINE + stabilisation).')
+    print(f'    ReferenceIntensity « {nom} » [{mode}] {action} (pk={obj.pk}).')
+    return True
+
+
+def run():
+    import django
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend_django.settings')
+    django.setup()
+
+    from django.conf import settings
+
+    subjects_dir = Path(
+        os.getenv('REFERENCE_SUBJECTS_DIR', getattr(settings, 'REFERENCE_SUBJECTS_DIR', ''))
+    )
+    device_name = os.getenv(
+        'REFERENCE_DEVICE',
+        getattr(settings, 'REFERENCE_INTENSITY_DEVICE', 'cuda'),
+    ).strip().lower()
+    if device_name not in ('cuda', 'cpu', 'auto', 'mps'):
+        device_name = 'cuda'
+
+    if not subjects_dir or not subjects_dir.is_dir():
+        print(f'[setup_reference_intensity] Dossier introuvable : {subjects_dir!r}')
+        print('  → Créez le dossier et placez-y sujet1.nii(.gz) .. sujet5.nii(.gz)')
+        return
+
+    print('=' * 60)
+    print('  setup_reference_intensity')
+    print(f'  Dossier source : {subjects_dir}')
+    print(f'  Device         : {device_name}')
+    print('=' * 60)
+
+    from django.conf import settings as dj_settings
+    out_dir = Path(dj_settings.MEDIA_ROOT) / 'reference_intensity'
+    out_dir.mkdir(parents=True, exist_ok=True)
+    work_base = Path(tempfile.gettempdir()) / 'visionmed_ref_intensity'
+    work_base.mkdir(parents=True, exist_ok=True)
+
+    modes = ['affine', 'deformable']
+    sujets = list(AGE_BANDS.keys())  # sujet1 .. sujet5
+
+    total = len(sujets) * len(modes)
+    done = 0
+    errors = []
+
+    for nom in sujets:
+        src = _find_nifti(subjects_dir, nom)
+        if src is None:
+            print(f'\n  [MANQUANT] {nom}.nii(.gz) absent de {subjects_dir} — ignoré.')
+            errors.append(f'{nom} : fichier source introuvable')
+            continue
+
+        print(f'\n{"─"*60}')
+        print(f'  Sujet : {nom} | Tranche : {AGE_BANDS[nom]}')
+        print(f'  Fichier source : {src.name}')
+
+        for mode in modes:
+            try:
+                ok = _register_one(src, nom, mode, work_base, out_dir, device_name)
+                if ok:
+                    done += 1
+                else:
+                    errors.append(f'{nom}/{mode} : erreur shape atlas')
+            except Exception as exc:
+                print(f'    [ERREUR] {nom} [{mode}] : {exc}')
+                errors.append(f'{nom}/{mode} : {exc}')
+
+    print(f'\n{"=" * 60}')
+    print(f'  Terminé : {done}/{total} références créées/mises à jour.')
+    if errors:
+        print(f'  Erreurs ({len(errors)}) :')
+        for e in errors:
+            print(f'    - {e}')
+    else:
+        print('  Aucune erreur.')
+    print('=' * 60)
+    print()
+    print('  Pour mettre à jour une référence :')
+    print(f'    1. Remplacer le fichier dans {subjects_dir}')
+    print('    2. Relancer : python manage.py runscript setup_reference_intensity')

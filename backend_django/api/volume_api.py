@@ -2614,7 +2614,9 @@ def get_brain_surface_3d(request):
             return JsonResponse({'error': 'Job introuvable'}, status=404)
         if vol_type == 'registered':
             # Check pending first (before validation), then validated, then raw
-            vol = entry.get('pending_registered_data') or entry.get('registered_data') or entry.get('data')
+            _pnd = entry.get('pending_registered_data')
+            _reg2 = entry.get('registered_data')
+            vol = _pnd if _pnd is not None else (_reg2 if _reg2 is not None else entry.get('data'))
         else:
             # Original = before registration
             vol = entry.get('data_original') or entry.get('data')
@@ -3137,6 +3139,7 @@ def auto_align_volume(request):
         reg_transform_p2p = 'deformable' if use_hybrid else 'affine'
         entry['pending_registered_data'] = np.asarray(warped_vol_p2p, dtype=np.float32)
         entry['registration_transform'] = reg_transform_p2p
+        entry['fixed_job_id'] = fixed_job_id
         entry['pending_registration'] = {
             'mode': 'auto3d_p2p', 'axis': axis_p2p, 'index': idx_p2p,
             'n_iters': n_iters, 'warped_path': warped_path_p2p,
@@ -4075,7 +4078,7 @@ def save_registration_report(request):
 
     story.append(Spacer(1, 0.5*cm))
     story.append(Paragraph(
-        'Ce rapport a été généré automatiquement par NeuroScan Registration Hub '
+        'Ce rapport a été généré automatiquement par BrainCore Registration Hub '
         'suite à la validation et à l\'application du recalage sur la série IRM du patient.',
         ParagraphStyle('Footer', parent=styles['Normal'],
                        textColor=colors.HexColor('#94a3b8'), fontSize=8, alignment=TA_CENTER),
@@ -4152,18 +4155,37 @@ def download_volume_nifti(request):
         return _nifti_to_gz_bytes(img)
 
     def _patient_nifti_bytes():
-        vol = entry.get('registered_data') or entry.get('pending_registered_data')
+        _reg = entry.get('registered_data')
+        vol = _reg if _reg is not None else entry.get('pending_registered_data')
         if vol is None:
             return None, 'Volume recalé non disponible — relancez le recalage'
-        try:
-            _ensure_atlas()
-            affine = np.asarray(VOLUMES_CACHE['atlas'].get('affine', np.eye(4)), dtype=np.float64)
-        except Exception:
-            affine = np.eye(4, dtype=np.float64)
+        # Use the custom reference affine for P2P registration, else atlas affine.
+        fixed_job_id = entry.get('fixed_job_id') or (entry.get('pending_registration') or {}).get('fixed_job_id')
+        affine = np.eye(4, dtype=np.float64)
+        if fixed_job_id:
+            fentry = _get_job_entry(fixed_job_id)
+            if fentry is not None:
+                affine = np.asarray(fentry.get('affine', np.eye(4)), dtype=np.float64)
+        else:
+            try:
+                _ensure_atlas()
+                affine = np.asarray(VOLUMES_CACHE['atlas'].get('affine', np.eye(4)), dtype=np.float64)
+            except Exception:
+                pass
         return _vol_to_nifti_bytes(np.asarray(vol, dtype=np.float32), affine,
-                                   descrip='VisionMed registered volume MNI152'), None
+                                   descrip='VisionMed registered volume'), None
 
     def _reference_nifti_bytes():
+        # For patient-to-patient registration, return the actual imported reference volume.
+        fixed_job_id = entry.get('fixed_job_id') or (entry.get('pending_registration') or {}).get('fixed_job_id')
+        if fixed_job_id:
+            fixed_entry = _get_job_entry(fixed_job_id)
+            if fixed_entry is not None and fixed_entry.get('data') is not None:
+                ref_vol = np.asarray(fixed_entry['data'], dtype=np.float32)
+                ref_aff = np.asarray(fixed_entry.get('affine', np.eye(4)), dtype=np.float64)
+                return _vol_to_nifti_bytes(ref_vol, ref_aff,
+                                           descrip='VisionMed custom reference volume'), None
+        # Default fallback: MNI152 atlas
         _ensure_atlas()
         atlas_entry = VOLUMES_CACHE.get('atlas', {})
         atlas_data = atlas_entry.get('data')

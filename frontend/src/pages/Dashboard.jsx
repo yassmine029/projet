@@ -30,24 +30,31 @@ import api from '../api';
 
 function StatCard({ icon: Icon, label, value, sub, color = 'blue' }) {
   const palette = {
-    blue:    { bg: 'bg-blue-50',    text: 'text-blue-600',    border: 'border-blue-100',    bar: 'bg-blue-500' },
-    emerald: { bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-emerald-100', bar: 'bg-emerald-500' },
-    violet:  { bg: 'bg-violet-50',  text: 'text-violet-600',  border: 'border-violet-100',  bar: 'bg-violet-500' },
-    amber:   { bg: 'bg-amber-50',   text: 'text-amber-600',   border: 'border-amber-100',   bar: 'bg-amber-500' },
+    blue:    { bg: 'bg-blue-50',    text: 'text-blue-600',    border: 'border-slate-100',    bar: 'bg-blue-500' },
+    emerald: { bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-slate-100',    bar: 'bg-emerald-500' },
+    violet:  { bg: 'bg-violet-50',  text: 'text-violet-600',  border: 'border-slate-100',    bar: 'bg-violet-500' },
+    amber:   { bg: 'bg-amber-50',   text: 'text-amber-600',   border: 'border-slate-100',    bar: 'bg-amber-500' },
   };
   const c = palette[color] || palette.blue;
 
   return (
-    <div className={`group relative bg-white border ${c.border} rounded-2xl p-5 hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-300 overflow-hidden`}>
-      <div className={`absolute top-0 left-0 h-1 w-full ${c.bar} opacity-60`} />
-      <div className="flex items-start justify-between mb-3">
-        <div className={`w-10 h-10 ${c.bg} rounded-xl flex items-center justify-center`}>
-          <Icon className={`w-5 h-5 ${c.text}`} />
+    <div className={`group relative bg-white border ${c.border} rounded-[1.25rem] p-5 hover:shadow-md transition-all duration-300`}>
+      <div className="flex items-center justify-between mb-4">
+        <p style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 10, fontWeight: 700, color: '#94a3b8', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+          {label}
+        </p>
+        <div className={`w-8 h-8 ${c.bg} rounded-xl flex items-center justify-center`}>
+          <Icon className={`w-4 h-4 ${c.text}`} />
         </div>
       </div>
-      <p className="text-[26px] font-black text-slate-900 tracking-tight leading-none">{value}</p>
-      <p className="text-[12px] font-semibold text-slate-500 mt-1.5">{label}</p>
-      {sub && <p className="text-[10px] font-bold text-slate-400 mt-0.5 uppercase tracking-wider">{sub}</p>}
+      <p style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 26, fontWeight: 700, color: '#0f172a', lineHeight: 1 }}>
+        {value}
+      </p>
+      {sub && (
+        <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>
+          {sub}
+        </p>
+      )}
     </div>
   );
 }
@@ -89,14 +96,16 @@ function RecentActivityItem({ title, subtitle, time, status, onClick }) {
   const b = badge[status] || badge.pending;
 
   return (
-    <div onClick={onClick} className="flex items-center gap-4 py-3 border-b border-slate-50 last:border-0 hover:bg-blue-50/40 -mx-3 px-3 rounded-xl transition-colors cursor-pointer group">
-      <div className={`w-2 h-2 rounded-full ${dot[status] || dot.pending} ring-4 ring-white`} />
+    <div onClick={onClick} className="flex items-center gap-5 py-4 border-b border-slate-50 last:border-0 hover:bg-slate-50/80 -mx-2 px-2 rounded-xl transition-all cursor-pointer group">
+      <div className={`w-2.5 h-2.5 rounded-full ${dot[status] || dot.pending} ring-4 ring-white shadow-sm`} />
       <div className="flex-1 min-w-0">
-        <p className="text-[13px] font-semibold text-slate-900 truncate group-hover:text-blue-600 transition-colors">{title}</p>
-        <p className="text-[11px] text-slate-400 font-medium truncate">{subtitle}</p>
+        <p className="text-[14px] font-bold text-slate-800 truncate group-hover:text-blue-600 transition-colors" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{title}</p>
+        <p className="text-[11px] text-slate-400 font-medium truncate mt-0.5">{subtitle}</p>
       </div>
-      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${b.cls} whitespace-nowrap`}>{b.text}</span>
-      <span className="text-[10px] text-slate-400 font-medium whitespace-nowrap hidden sm:block">{time}</span>
+      <div className="flex flex-col items-end gap-1.5">
+        <span className={`text-[9px] font-bold px-2.5 py-1 rounded-full border ${b.cls} uppercase tracking-wider`} style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{b.text}</span>
+        <span className="text-[10px] text-slate-400 font-medium whitespace-nowrap hidden sm:block">{time}</span>
+      </div>
     </div>
   );
 }
@@ -179,73 +188,59 @@ function DashboardHome() {
   const doctorName = userProfile?.full_name || userProfile?.username || 'Docteur';
 
   return (
-    <div className="max-w-[1160px] space-y-7 pb-12 animate-fade-in relative">
-      <div className="absolute top-0 right-0 -z-10 w-1/2 h-[400px] bg-blue-50/50 blur-[120px] rounded-full pointer-events-none" />
+    <div className="max-w-[1100px] space-y-4 pb-8 animate-fade-in">
 
-      {/* ── Hero Banner ── */}
-      <div className="relative overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-blue-700 via-blue-600 to-indigo-600 text-white shadow-xl shadow-blue-600/10 border border-blue-400/20">
-        {/* Animated Background Gradients (Lighter) */}
-        <div className="absolute top-[-20%] right-[-10%] w-[60%] h-[140%] bg-blue-300 rotate-12 blur-[120px] opacity-20" />
-        <div className="absolute bottom-[-20%] left-[-10%] w-[50%] h-[120%] bg-white -rotate-12 blur-[100px] opacity-10" />
-
-        <div className="relative z-10 grid lg:grid-cols-12 gap-8 p-10 md:p-12 items-center">
-          <div className="lg:col-span-12 xl:col-span-7 space-y-6">
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-white/10 backdrop-blur-md border border-white/20 rounded-full text-[10px] font-black uppercase tracking-[0.1em] text-blue-100 shadow-sm">
-              <Sparkles className="w-3.5 h-3.5 text-blue-300" /> Plateforme Médicale NeuroScan
+      {/* ── Hero Banner compact ── */}
+      <div
+        className="relative overflow-hidden rounded-2xl text-white shadow-lg"
+        style={{
+          backgroundImage: 'linear-gradient(to right, rgba(29,78,216,0.92), rgba(30,58,138,0.75)), url(/images/dashbord.jpeg)',
+          backgroundSize: 'cover', backgroundPosition: 'center',
+        }}
+      >
+        <div className="relative z-10 flex items-center justify-between px-8 py-6 gap-8">
+          {/* Left */}
+          <div className="space-y-3 flex-1">
+            <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/15 border border-white/20 rounded-full text-[9px] font-black uppercase tracking-[0.18em] text-blue-100">
+              <Sparkles className="w-3 h-3 text-blue-300" /> Plateforme Médicale BrainCore
             </div>
-            
-            <div className="space-y-1">
-              <h1 className="text-2xl md:text-4xl font-black tracking-tight leading-tight">
-                {getGreeting()}, <span className="text-transparent bg-clip-text bg-gradient-to-r from-white via-blue-100 to-blue-200">{doctorName}</span>.
+            <div>
+              <h1 className="text-2xl font-black tracking-tight leading-tight">
+                {getGreeting()}, <span className="text-blue-100">{doctorName}</span>.
               </h1>
-              <p className="text-xl md:text-2xl font-medium text-blue-100/80 tracking-tight">
-                Bienvenue dans votre espace de travail.
-              </p>
+              <p className="text-sm text-blue-100/80 mt-0.5">Bienvenue dans votre espace de travail clinique.</p>
             </div>
-
-            <p className="text-white/80 text-[13px] font-medium max-w-md leading-relaxed">
-              Votre tableau de bord unifié est prêt pour vos segmentations hippocampiques et analyses multimodales sécurisées.
-            </p>
-
-            <div className="flex flex-wrap gap-3 pt-4">
-              <button
-                onClick={() => navigate('/segmentation/nouvelle')}
-                className="group relative px-6 py-3 bg-white text-blue-600 text-[12px] font-black rounded-xl hover:bg-blue-50 shadow-lg shadow-blue-900/10 transition-all active:scale-95 flex items-center gap-2 overflow-hidden"
-              >
-                <div className="absolute inset-0 bg-blue-50 translate-y-full group-hover:translate-y-0 transition-transform duration-300 -z-10" />
-                <Brain className="w-3.5 h-3.5" /> Nouvelle segmentation
+            <div className="flex gap-3 pt-1">
+              <button onClick={() => navigate('/segmentation/nouvelle')}
+                className="px-5 py-2 bg-white text-blue-700 text-[12px] font-bold rounded-xl hover:bg-blue-50 shadow transition-all flex items-center gap-1.5">
+                <Brain className="w-3.5 h-3.5" /> Segmentation
               </button>
-              <button
-                onClick={() => navigate('/registration')}
-                className="px-6 py-3 bg-white/10 backdrop-blur-md border border-white/30 text-white text-[12px] font-bold rounded-xl hover:bg-white/20 transition-all active:scale-95 flex items-center gap-2"
-              >
-                <GitMerge className="w-3.5 h-3.5" /> Lancer un recalage
+              <button onClick={() => navigate('/registration')}
+                className="px-5 py-2 bg-white/10 border border-white/30 text-white text-[12px] font-bold rounded-xl hover:bg-white/20 transition-all flex items-center gap-1.5">
+                <GitMerge className="w-3.5 h-3.5" /> Recalage
               </button>
             </div>
-            
-            <div className="flex items-center gap-4 pt-4 border-t border-white/20">
-               <div className="flex items-center gap-2">
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.6)]" />
-                  <span className="text-[10px] font-bold text-white/70 uppercase tracking-widest">Système Opérationnel</span>
-               </div>
-               <span className="w-1 h-1 rounded-full bg-white/30" />
-               <span className="text-[10px] font-bold text-white/70 uppercase tracking-widest">{today}</span>
+            <div className="flex items-center gap-3 text-[9px] font-bold text-white/50 uppercase tracking-[0.15em] pt-1">
+              <span className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />Système opérationnel</span>
+              <span>·</span>
+              <span>{today}</span>
             </div>
           </div>
 
-          <div className="lg:col-span-12 xl:col-span-5 hidden xl:flex flex-col gap-3">
+          {/* Right — mini cards */}
+          <div className="hidden xl:flex flex-col gap-2 w-64 flex-shrink-0">
             {[
-              { icon: Cpu, label: 'Segmentation IA', desc: 'Précision hippocampique par Deep Learning', color: 'bg-white/20' },
-              { icon: Boxes, label: 'Recalage MINE', desc: 'Algorithmes de recalage 2D & 3D multimodaux', color: 'bg-white/20' },
-              { icon: ShieldCheck, label: 'Standard HDS', desc: 'Sécurité et confidentialité des données patients', color: 'bg-white/20' },
+              { icon: Cpu,        label: 'Segmentation IA',  desc: 'Deep Learning hippocampique' },
+              { icon: Boxes,      label: 'Recalage MINE',    desc: 'Multimodal 2D & 3D' },
+              { icon: ShieldCheck,label: 'Données sécurisées', desc: 'Confidentialité garantie' },
             ].map((item, i) => (
-              <div key={i} className="group flex items-center gap-4 bg-white/10 hover:bg-white/20 backdrop-blur-xl border border-white/20 rounded-2xl p-4 transition-all duration-300">
-                <div className={`w-10 h-10 ${item.color} rounded-xl flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform shadow-inner`}>
-                  <item.icon className="w-4 h-4 text-white" />
+              <div key={i} className="flex items-center gap-3 bg-white/8 border border-white/10 rounded-xl px-3 py-2.5 backdrop-blur-sm">
+                <div className="w-7 h-7 bg-white/10 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <item.icon className="w-3.5 h-3.5 text-white" />
                 </div>
                 <div>
-                  <p className="text-[13px] font-black text-white leading-tight mb-0.5">{item.label}</p>
-                  <p className="text-[10px] text-white/60 font-medium leading-relaxed">{item.desc}</p>
+                  <p className="text-[12px] font-bold text-white leading-none">{item.label}</p>
+                  <p className="text-[10px] text-white/50 mt-0.5">{item.desc}</p>
                 </div>
               </div>
             ))}
@@ -253,82 +248,57 @@ function DashboardHome() {
         </div>
       </div>
 
-
-      {/* ── Stats Row ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
-        <StatCard icon={Users} label="Patients enregistrés" value={loading ? '—' : stats.patients} sub="Base active" color="blue" />
-        <StatCard icon={FileImage} label="Analyses MRI" value={loading ? '—' : stats.analyses} sub="Segmentations" color="emerald" />
-        <StatCard icon={GitMerge} label="Recalages" value="2D & 3D" sub="Multimodal" color="blue" />
-        <StatCard icon={Zap} label="Performance IA" value="< 30s" sub="Temps moyen" color="amber" />
-      </div>
-
-      {/* ── Quick Access Grid ── */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-[16px] font-black text-slate-900 tracking-tight">Modules de diagnostic</h2>
-            <p className="text-[11px] text-slate-400 font-medium mt-0.5">Accès direct aux outils d'analyse</p>
-          </div>
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-          {[
-            { id: 'seg', icon: Brain, title: 'Segmentation', desc: 'Volumétrie hippocampique IA', color: 'blue', to: '/segmentation/nouvelle' },
-            { id: 'reg', icon: GitMerge, title: 'Recalage', desc: 'Multimodalité 2D / 3D', color: 'blue', to: '/registration' },
-            { id: 'pat', icon: Users, title: 'Patients', desc: 'Gestion de la base clinique', color: 'emerald', to: '/dashboard/patients' },
-            { id: 'rep', icon: FileText, title: 'Rapports', desc: 'Résultats et exports cliniques', color: 'amber', to: '/dashboard/analysesMRI' },
-          ].map((m) => (
-            <div
-              key={m.id}
-              onClick={() => navigate(m.to)}
-              className="group relative bg-white border border-slate-100 rounded-2xl p-5 hover:shadow-card-hover hover:-translate-y-1 transition-all duration-300 cursor-pointer overflow-hidden"
-            >
-              <div className="flex items-center gap-4">
-                <div className="w-11 h-11 bg-slate-50 rounded-xl flex items-center justify-center text-slate-400 group-hover:bg-blue-600 group-hover:text-white transition-all duration-300 shadow-sm">
-                  <m.icon className="w-5 h-5" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors">{m.title}</h3>
-                  <p className="text-[10px] text-slate-400 font-medium truncate">{m.desc}</p>
-                </div>
-                <ChevronRight className="w-4 h-4 text-slate-200 group-hover:text-blue-600 transition-colors" />
-              </div>
+      {/* ── Stats Row compact ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {[
+          { icon: Users,    label: 'Patients',      value: loading ? '—' : stats.patients, sub: 'Enregistrés',    color: 'blue' },
+          { icon: FileImage,label: 'Analyses MRI',  value: loading ? '—' : stats.analyses, sub: 'Segmentations',  color: 'emerald' },
+          { icon: GitMerge, label: 'Recalages',     value: '2D & 3D',                       sub: 'Multimodal',    color: 'violet' },
+          { icon: Zap,      label: 'Performance IA',value: '< 30s',                         sub: 'Temps moyen',   color: 'amber' },
+        ].map((s, i) => (
+          <div key={i} className={`bg-white border border-slate-100 rounded-xl px-4 py-3 flex items-center gap-3`}>
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+              s.color === 'blue' ? 'bg-blue-50' : s.color === 'emerald' ? 'bg-emerald-50' : s.color === 'violet' ? 'bg-violet-50' : 'bg-amber-50'
+            }`}>
+              <s.icon className={`w-4 h-4 ${
+                s.color === 'blue' ? 'text-blue-600' : s.color === 'emerald' ? 'text-emerald-600' : s.color === 'violet' ? 'text-violet-600' : 'text-amber-600'
+              }`} />
             </div>
-          ))}
-        </div>
+            <div>
+              <p className="text-[18px] font-black text-slate-900 leading-none">{s.value}</p>
+              <p className="text-[10px] text-slate-400 font-semibold mt-0.5">{s.label}</p>
+            </div>
+          </div>
+        ))}
       </div>
 
-      {/* ── Main Dashboard Content ── */}
-      <div className="grid lg:grid-cols-3 gap-6">
-        
-        {/* Left: Recent Activity (Spans 2 columns) */}
-        <div className="lg:col-span-2 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-[15px] font-black text-slate-900 tracking-tight">Activité récente</h2>
-            <button onClick={() => navigate('/dashboard/analysesMRI')} className="text-[10px] font-bold text-blue-600 uppercase tracking-widest hover:underline px-2 py-1">Tout voir</button>
+      {/* ── Modules + Activity ── */}
+      <div className="grid lg:grid-cols-3 gap-4">
+
+        {/* Activity (2 cols) */}
+        <div className="lg:col-span-2 bg-white border border-slate-100 rounded-xl shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-50">
+            <h2 className="text-[13px] font-bold text-slate-800">Activité récente</h2>
+            <button onClick={() => navigate('/dashboard/analysesMRI')}
+              className="text-[10px] font-bold text-blue-600 uppercase tracking-widest hover:underline">
+              Tout voir
+            </button>
           </div>
-          
-          <div className="bg-white border border-slate-100 rounded-3xl p-2 shadow-sm overflow-hidden">
+          <div className="px-2">
             {loading ? (
-              <div className="py-20 flex justify-center"><span className="h-6 w-6 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" /></div>
+              <div className="py-10 flex justify-center"><span className="h-5 w-5 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" /></div>
             ) : recentRuns.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-center">
-                <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center mb-4">
-                  <FileImage className="w-8 h-8 text-slate-300" />
-                </div>
-                <p className="text-sm font-bold text-slate-500 mb-1">Aucune analyse récente</p>
-                <p className="text-[11px] text-slate-400 max-w-xs leading-relaxed mb-4">
-                  Lancez votre première analyse hippocampique pour voir apparaître vos analyses ici.
-                </p>
-                <button
-                  onClick={() => navigate('/segmentation/nouvelle')}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white text-[12px] font-bold rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-600/20 transition-all active:scale-95"
-                >
+              <div className="flex flex-col items-center justify-center py-10 text-center">
+                <FileImage className="w-8 h-8 text-slate-200 mb-3" />
+                <p className="text-[13px] font-bold text-slate-700 mb-1">Aucune analyse récente</p>
+                <p className="text-[11px] text-slate-400 mb-4">Lancez votre première segmentation.</p>
+                <button onClick={() => navigate('/segmentation/nouvelle')}
+                  className="px-4 py-2 bg-blue-600 text-white text-[11px] font-bold rounded-lg hover:bg-blue-700 transition-all flex items-center gap-1.5">
                   <Plus className="w-3.5 h-3.5" /> Nouvelle segmentation
                 </button>
               </div>
             ) : (
-              <div className="divide-y divide-slate-50">
+              <div>
                 {recentRuns.map((run, i) => (
                   <RecentActivityItem
                     key={run.id || i}
@@ -344,54 +314,55 @@ function DashboardHome() {
           </div>
         </div>
 
-        {/* Right: System & Capabilities */}
-        <div className="space-y-6">
-          {/* System Status Section */}
-          <div className="space-y-4">
-             <h2 className="text-[15px] font-black text-slate-900 tracking-tight">Plateforme</h2>
-             <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm space-y-4">
-               {[
-                 { label: 'Calcul IA', ok: true, detail: 'U-Net++ ONNX' },
-                 { label: 'Base de données', ok: true, detail: 'Disponible' },
-                 { label: 'Accès Patient', ok: true, detail: 'Sécurisé' },
-               ].map((item, i) => (
-                 <div key={i} className="flex items-center justify-between group">
-                   <div className="flex items-center gap-3">
-                     <div className={`w-1.5 h-1.5 rounded-full ${item.ok ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]' : 'bg-red-500'}`} />
-                     <span className="text-[12px] font-bold text-slate-600">{item.label}</span>
-                   </div>
-                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{item.detail}</span>
-                 </div>
-               ))}
-               <div className="mt-4 pt-4 border-t border-slate-50">
-                  <div className="bg-slate-50 rounded-2xl p-4 flex items-center gap-3 group hover:bg-blue-50 transition-colors cursor-pointer" onClick={() => navigate('/parametres')}>
-                    <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-400 group-hover:text-blue-600 transition-colors shadow-sm">
-                      <Settings className="w-5 h-5" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-[11px] font-bold text-slate-900">Préférences</p>
-                      <p className="text-[9px] text-slate-500 font-medium">Configurez vos options</p>
-                    </div>
-                    <ChevronRight className="w-3 h-3 text-slate-300" />
+        {/* Right col */}
+        <div className="space-y-3">
+          {/* Modules */}
+          <div className="bg-white border border-slate-100 rounded-xl shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-50">
+              <h2 className="text-[13px] font-bold text-slate-800">Modules</h2>
+            </div>
+            <div className="p-2 space-y-1">
+              {[
+                { icon: Brain,    title: 'Segmentation',  desc: 'Hippocampe IA',    to: '/segmentation/nouvelle' },
+                { icon: GitMerge, title: 'Recalage',      desc: '2D / 3D',          to: '/registration' },
+                { icon: Users,    title: 'Patients',      desc: 'Base clinique',    to: '/dashboard/patients' },
+                { icon: FileText, title: 'Rapports',      desc: 'Exports cliniques',to: '/dashboard/analysesMRI' },
+              ].map((m, i) => (
+                <div key={i} onClick={() => navigate(m.to)}
+                  className="group flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-50 cursor-pointer transition-colors">
+                  <div className="w-7 h-7 bg-slate-100 rounded-lg flex items-center justify-center group-hover:bg-blue-600 transition-colors flex-shrink-0">
+                    <m.icon className="w-3.5 h-3.5 text-slate-500 group-hover:text-white transition-colors" />
                   </div>
-               </div>
-             </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[12px] font-bold text-slate-800 group-hover:text-blue-600 transition-colors">{m.title}</p>
+                    <p className="text-[10px] text-slate-400">{m.desc}</p>
+                  </div>
+                  <ChevronRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-blue-500 transition-colors" />
+                </div>
+              ))}
+            </div>
           </div>
 
-          {/* Mini Capabilities List */}
-          <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-3xl p-6 text-white shadow-xl shadow-slate-900/10">
-             <div className="flex items-center gap-2 mb-4">
-               <ShieldCheck className="w-4 h-4 text-emerald-400" />
-               <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Sécurité & Normes</span>
-             </div>
-             <p className="text-sm font-bold leading-snug">Données patients chiffrées de bout en bout (HDS).</p>
-             <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">Conformité RGPD et ISO 27001 pour la gestion des données médicales.</p>
-             <button onClick={() => navigate('/')} className="mt-4 w-full py-2 bg-white/5 border border-white/10 rounded-xl text-[10px] font-bold hover:bg-white/10 transition-all uppercase tracking-widest">Voir les garanties</button>
+          {/* Plateforme status */}
+          <div className="bg-white border border-slate-100 rounded-xl shadow-sm p-4 space-y-3">
+            <h2 className="text-[13px] font-bold text-slate-800">Plateforme</h2>
+            {[
+              { label: 'Calcul IA',       detail: 'U-Net++ ONNX', ok: true },
+              { label: 'Base de données', detail: 'Disponible',   ok: true },
+              { label: 'Accès Patient',   detail: 'Sécurisé',     ok: true },
+            ].map((item, i) => (
+              <div key={i} className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  <span className="text-[12px] font-medium text-slate-600">{item.label}</span>
+                </div>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{item.detail}</span>
+              </div>
+            ))}
           </div>
         </div>
 
       </div>
-
     </div>
   );
 }

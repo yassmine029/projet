@@ -104,6 +104,8 @@ urlpatterns = [
     ),
     path('patients/<int:patient_id>/mri-files/', views.mri_files_list_upload, name='mri_files_list_upload'),
     path('mri-files/<int:file_id>/preview/', views.mri_file_preview, name='mri_file_preview'),
+    path('mri-files/<int:file_id>/zip-image/', views.zip_series_image, name='zip_series_image'),
+    path('mri-files/<int:file_id>/download/', views.download_mri_file, name='download_mri_file'),
     path('mri-files/<int:file_id>/nifti-slice/', views.mri_file_nifti_slice, name='mri_file_nifti_slice'),
     path('patients/<int:patient_id>/segment/', views.launch_patient_segmentation, name='launch_patient_segmentation'),
     path('segmentation-runs/', views.segmentation_runs_list, name='segmentation_runs_list'),

@@ -269,7 +269,7 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
             <div className="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-600/20">
               <Brain className="w-5 h-5 text-white" />
             </div>
-            <span className="text-lg font-bold tracking-tight text-slate-900">NeuroScan</span>
+            <span className="text-lg font-bold tracking-tight text-slate-900">BrainCore</span>
           </div>
 
           {/* Desktop Nav */}
@@ -344,7 +344,7 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
         <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
           {/* Halos colorés */}
           <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[70%] bg-blue-100/50 blur-[100px] rounded-full" />
-          <div className="absolute top-[20%] right-[-10%] w-[40%] h-[60%] bg-cyan-50/50 blur-[100px] rounded-full" />
+          <div className="absolute top-[20%] right-[-10%] w-[40%] h-[60%] bg-blue-50/50 blur-[100px] rounded-full" />
           <div className="absolute inset-0 bg-[url('/grid-pattern.svg')] opacity-[0.03]" />
 
           {/* Cerveau SVG — arrière-plan décoratif centré */}
@@ -390,10 +390,10 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
 
           {/* Points décoratifs */}
           <div className="absolute top-[15%] left-[8%] h-2 w-2 rounded-full bg-blue-400/30" />
-          <div className="absolute top-[25%] left-[12%] h-1.5 w-1.5 rounded-full bg-cyan-400/30" />
+          <div className="absolute top-[25%] left-[12%] h-1.5 w-1.5 rounded-full bg-blue-400/30" />
           <div className="absolute top-[10%] right-[8%] h-2 w-2 rounded-full bg-blue-300/30" />
           <div className="absolute top-[30%] right-[14%] h-1.5 w-1.5 rounded-full bg-blue-400/25" />
-          <div className="absolute bottom-[20%] left-[6%] h-2 w-2 rounded-full bg-cyan-300/30" />
+          <div className="absolute bottom-[20%] left-[6%] h-2 w-2 rounded-full bg-blue-300/30" />
           <div className="absolute bottom-[15%] right-[10%] h-2 w-2 rounded-full bg-blue-300/25" />
         </div>
 
@@ -497,25 +497,25 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
                 }
               }}
               onClick={() => handleFeatureAccess('/registration')}
-              className="group relative bg-white border border-slate-200 rounded-[2.5rem] p-10 hover:border-cyan-300 hover:shadow-2xl hover:shadow-cyan-600/10 transition-all duration-500 cursor-pointer overflow-hidden outline-none focus-visible:ring-4 focus-visible:ring-cyan-100 flex flex-col"
+              className="group relative bg-white border border-slate-200 rounded-[2.5rem] p-10 hover:border-blue-300 hover:shadow-2xl hover:shadow-blue-600/10 transition-all duration-500 cursor-pointer overflow-hidden outline-none focus-visible:ring-4 focus-visible:ring-blue-100 flex flex-col"
             >
               {/* Card Background Decoration */}
               <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity duration-500 pointer-events-none transform translate-x-1/4 -translate-y-1/4 group-hover:scale-110">
-                <GitMerge className="w-64 h-64 text-cyan-600" />
+                <GitMerge className="w-64 h-64 text-blue-600" />
               </div>
 
               <div className="relative z-10 flex flex-col flex-grow">
                 <div className="flex items-center justify-between mb-8">
-                  <div className="w-16 h-16 rounded-2xl bg-cyan-50 flex items-center justify-center text-cyan-600 shadow-inner group-hover:bg-cyan-600 group-hover:text-white transition-colors duration-500">
+                  <div className="w-16 h-16 rounded-2xl bg-blue-50 flex items-center justify-center text-blue-600 shadow-inner group-hover:bg-blue-600 group-hover:text-white transition-colors duration-500">
                     <GitMerge className="w-8 h-8" />
                   </div>
-                  <span className="px-3 py-1.5 bg-slate-100 text-slate-500 text-[10px] font-extrabold uppercase tracking-widest rounded-lg group-hover:bg-cyan-50 group-hover:text-cyan-600 transition-colors">
+                  <span className="px-3 py-1.5 bg-slate-100 text-slate-500 text-[10px] font-extrabold uppercase tracking-widest rounded-lg group-hover:bg-blue-50 group-hover:text-blue-600 transition-colors">
                     Axe Clinique 2
                   </span>
                 </div>
 
                 <div className="mb-8">
-                  <h3 className="text-3xl font-bold text-slate-900 mb-4 tracking-tight group-hover:text-cyan-600 transition-colors">
+                  <h3 className="text-3xl font-bold text-slate-900 mb-4 tracking-tight group-hover:text-blue-600 transition-colors">
                     Recalage d'images <br /> multimodal
                   </h3>
                   <p className="text-slate-500 text-base leading-relaxed font-medium">
@@ -527,15 +527,15 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
                 <div className="space-y-3 mb-10 flex-grow">
                   {['Fusion IRM et TEP/IRM', 'Alignement spatial 2D/3D', 'Navigation interactive superposée'].map((feature, idx) => (
                     <div key={idx} className="flex items-center gap-3 text-sm font-semibold text-slate-700">
-                      <div className="w-5 h-5 rounded-full bg-cyan-50 flex items-center justify-center flex-shrink-0 group-hover:bg-cyan-100 transition-colors">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-cyan-600" />
+                      <div className="w-5 h-5 rounded-full bg-blue-50 flex items-center justify-center flex-shrink-0 group-hover:bg-blue-100 transition-colors">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />
                       </div>
                       {feature}
                     </div>
                   ))}
                 </div>
 
-                <div className="mt-auto inline-flex items-center gap-2 text-cyan-600 font-bold text-sm uppercase tracking-widest group-hover:translate-x-2 transition-transform duration-300">
+                <div className="mt-auto inline-flex items-center gap-2 text-blue-600 font-bold text-sm uppercase tracking-widest group-hover:translate-x-2 transition-transform duration-300">
                   Fusionner les images <ArrowRight className="w-4 h-4" />
                 </div>
               </div>
@@ -921,7 +921,7 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
                     <textarea
                       required
                       rows={4}
-                      placeholder="Partagez votre expérience clinique avec NeuroScan..."
+                      placeholder="Partagez votre expérience clinique avec BrainCore..."
                       value={formData.text}
                       onChange={(e) => setFormData({ ...formData, text: e.target.value })}
                       className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all placeholder:text-slate-300 resize-none"
@@ -957,7 +957,7 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
       {/* CTA */}
       <section className="py-28 md:py-32 bg-[#edf3ff] relative overflow-hidden">
         <div className="pointer-events-none absolute inset-0">
-          <div className="absolute -top-16 left-1/2 h-64 w-[52rem] -translate-x-1/2 rounded-full bg-gradient-to-r from-cyan-200/40 via-blue-200/50 to-indigo-200/40 blur-3xl"></div>
+          <div className="absolute -top-16 left-1/2 h-64 w-[52rem] -translate-x-1/2 rounded-full bg-gradient-to-r from-blue-200/40 via-blue-200/50 to-indigo-200/40 blur-3xl"></div>
           <div className="absolute bottom-0 left-1/2 h-56 w-[58rem] -translate-x-1/2 rounded-full bg-gradient-to-r from-blue-100/70 via-white/80 to-blue-100/70 blur-2xl"></div>
         </div>
 
@@ -971,7 +971,7 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
                 Prêt à transformer votre analyse neurologique ?
               </h2>
               <p className="mt-4 text-base md:text-lg text-slate-600 font-medium">
-                Activez votre espace NeuroScan et démarrez une évaluation clinique assistée, structurée et sécurisée.
+                Activez votre espace BrainCore et démarrez une évaluation clinique assistée, structurée et sécurisée.
               </p>
 
               <div className="mt-9 flex flex-col sm:flex-row items-center justify-center gap-4 md:gap-5">
@@ -1146,7 +1146,7 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Email</p>
-                  <p className="mt-1 text-sm font-black text-slate-900">contact@neuroscan</p>
+                  <p className="mt-1 text-sm font-black text-slate-900">contact@braincore</p>
                 </div>
                 <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Téléphone</p>
@@ -1254,14 +1254,14 @@ export function LandingPage({ user, onNavigate, onLogout }: LandingPageProps) {
             <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
               <Brain className="w-4 h-4 text-white" />
             </div>
-            <span className="text-lg font-bold text-slate-900">NeuroScan</span>
+            <span className="text-lg font-bold text-slate-900">BrainCore</span>
           </div>
           <div className="flex gap-8">
             {["Légal", "Confidentialité", "Contact"].map((link) => (
               <a key={link} href="#" className="text-xs font-bold text-slate-400 hover:text-blue-600 uppercase tracking-widest">{link}</a>
             ))}
           </div>
-          <p className="text-[10px] font-bold text-slate-300 uppercase">© 2026 NeuroScan Platform.</p>
+          <p className="text-[10px] font-bold text-slate-300 uppercase">© 2026 BrainCore Platform.</p>
         </div>
       </footer>
     </div>

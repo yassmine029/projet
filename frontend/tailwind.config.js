@@ -7,10 +7,10 @@ export default {
     extend: {
       colors: {
         primary: {
-          DEFAULT: '#2563eb',
-          dark: '#1d4ed8',
-          medium: '#3b82f6',
-          light: '#eff6ff',
+          DEFAULT: '#2563EB',
+          dark: '#1D4ED8',
+          medium: '#3B82F6',
+          light: '#EFF6FF',
         },
         accent: {
           DEFAULT: '#e85d7a',
@@ -30,7 +30,8 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['Inter', 'DM Sans', 'system-ui', 'sans-serif'],
+        sans: ['Noto Sans', 'system-ui', 'sans-serif'],
+        heading: ['Figtree', 'system-ui', 'sans-serif'],
       },
       borderRadius: {
         sm: '8px',

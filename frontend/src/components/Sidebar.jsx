@@ -1,140 +1,149 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Brain,
   House,
   LayoutDashboard,
   Users,
   FileImage,
-  FileText,
   HelpCircle,
   User,
   Settings,
   LogOut,
-  ChevronRight,
+  Moon,
+  Sun,
 } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { logout } from '../api';
 
-const NavItem = ({ to, icon: Icon, label, exact = false, isLogout = false, onClick }) => {
-  if (isLogout) {
-    return (
-      <button
-        onClick={onClick}
-        className="flex items-center gap-3 px-3 py-2.5 w-full text-left text-[13px] font-medium rounded-xl text-red-400/70 hover:text-red-400 hover:bg-red-500/10 transition-all duration-200"
-      >
-        <Icon className="w-[18px] h-[18px]" />
-        {label}
-      </button>
-    );
-  }
-
-  return (
-    <NavLink
-      to={to}
-      end={exact}
-      className={({ isActive }) =>
-        `group flex items-center gap-3 px-3 py-2.5 text-[13px] font-medium rounded-xl transition-all duration-200 relative ${
-          isActive
-            ? 'bg-blue-500/15 text-blue-400 shadow-inner-glow'
-            : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
-        }`
-      }
-    >
-      {({ isActive }) => (
-        <>
-          {isActive && (
-            <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-blue-400 rounded-r-full" />
-          )}
-          <Icon className="w-[18px] h-[18px] flex-shrink-0" />
-          <span className="flex-1">{label}</span>
-          {!isActive && (
-            <ChevronRight className="w-3.5 h-3.5 text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity" />
-          )}
-        </>
-      )}
-    </NavLink>
-  );
-};
-
-const NavSection = ({ title, children }) => (
-  <div className="mb-4">
-    <h3 className="px-3 mb-2 text-[9px] font-bold uppercase tracking-[0.2em] text-slate-600">
-      {title}
-    </h3>
-    <nav className="space-y-0.5 px-1">
-      {children}
-    </nav>
-  </div>
-);
+const NAV_SECTIONS = [
+  {
+    label: 'Principal',
+    items: [
+      { to: '/',          icon: House,          label: 'Accueil',        exact: true },
+      { to: '/dashboard', icon: LayoutDashboard, label: 'Tableau de bord', exact: true },
+    ],
+  },
+  {
+    label: 'Clinique',
+    items: [
+      { to: '/dashboard/patients',    icon: Users,     label: 'Mes Patients'  },
+      { to: '/dashboard/analysesMRI', icon: FileImage,  label: 'Analyses MRI'  },
+    ],
+  },
+  {
+    label: 'Aide & Support',
+    items: [
+      { to: '/dashboard/reclamations', icon: HelpCircle, label: 'Réclamations' },
+    ],
+  },
+  {
+    label: 'Compte',
+    items: [
+      { to: '/dashboard/profile',  icon: User,     label: 'Mon Profil'  },
+      { to: '/dashboard/settings', icon: Settings, label: 'Paramètres'  },
+    ],
+  },
+];
 
 export default function Sidebar() {
   const navigate = useNavigate();
+  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('theme-dark'));
+
+  const toggleTheme = () => {
+    const nowDark = document.documentElement.classList.toggle('theme-dark');
+    localStorage.setItem('theme', nowDark ? 'dark' : 'light');
+    setIsDark(nowDark);
+  };
 
   const handleLogout = async () => {
-    try {
-      await logout();
-      window.location.href = '/';
-    } catch (e) {
-      console.error(e);
-      window.location.href = '/';
-    }
+    try { await logout(); } catch (e) { console.error(e); } finally { window.location.href = '/'; }
   };
 
   return (
-    <aside className="fixed top-0 left-0 h-screen w-[260px] bg-sidebar-gradient flex flex-col z-10 border-r border-white/[0.06]">
-      {/* Ambient glow effects */}
-      <div className="pointer-events-none absolute top-0 left-0 w-full h-40 bg-gradient-to-b from-blue-500/[0.04] to-transparent" />
-      <div className="pointer-events-none absolute bottom-0 left-0 w-full h-32 bg-gradient-to-t from-blue-500/[0.03] to-transparent" />
+    <aside style={{
+      position: 'fixed', left: 0, top: 0, zIndex: 20,
+      width: 260, height: '100vh',
+      background: '#ffffff',
+      borderRight: '1px solid #f1f5f9',
+      display: 'flex', flexDirection: 'column',
+      fontFamily: "'Noto Sans', system-ui, sans-serif",
+    }}>
 
       {/* Logo */}
-      <div className="h-[72px] flex items-center px-5 relative">
-        <div
-          className="flex items-center gap-3 cursor-pointer group"
-          onClick={() => navigate('/')}
-        >
-          <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/25 group-hover:shadow-blue-500/40 transition-shadow">
-            <Brain className="w-5 h-5 text-white" />
+      <div
+        style={{ padding: '20px 20px 16px', borderBottom: '1px solid #f8fafc', cursor: 'pointer' }}
+        onClick={() => navigate('/')}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: 'linear-gradient(135deg,#2563eb,#4f46e5)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <Brain size={20} color="white" />
           </div>
           <div>
-            <span className="text-[15px] font-bold tracking-tight text-white block leading-tight">NeuroScan</span>
-            <span className="text-[9px] font-semibold text-blue-400/80 uppercase tracking-[0.15em]">Clinical Platform</span>
+            <p style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 17, fontWeight: 700, color: '#0f172a', lineHeight: 1, margin: 0 }}>BrainCore</p>
+            <p style={{ fontSize: 9, fontWeight: 600, color: '#94a3b8', letterSpacing: '0.15em', textTransform: 'uppercase', margin: '3px 0 0' }}>Clinical Platform</p>
           </div>
         </div>
       </div>
 
-      {/* Divider */}
-      <div className="mx-5 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-
-      {/* Navigation */}
-      <div className="flex-1 overflow-y-auto py-4 px-3 scrollbar-thin">
-        <NavSection title="Principal">
-          <NavItem to="/" icon={House} label="Accueil" />
-          <NavItem to="/dashboard" exact icon={LayoutDashboard} label="Tableau de bord" />
-        </NavSection>
-
-        <NavSection title="Clinique">
-          <NavItem to="/dashboard/patients" icon={Users} label="Mes Patients" />
-          <NavItem to="/dashboard/analysesMRI" icon={FileImage} label="Analyses MRI" />
-        </NavSection>
-
-        <NavSection title="Documents">
-          <NavItem to="/dashboard/reports" icon={FileText} label="Mes rapports" />
-        </NavSection>
-
-        <NavSection title="Aide & Support">
-          <NavItem to="/dashboard/reclamations" icon={HelpCircle} label="Réclamations" />
-        </NavSection>
-
-        <NavSection title="Compte">
-          <NavItem to="/dashboard/profile" icon={User} label="Mon Profil" />
-          <NavItem to="/dashboard/settings" icon={Settings} label="Paramètres" />
-        </NavSection>
+      {/* Nav */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '12px 12px' }}>
+        {NAV_SECTIONS.map((section) => (
+          <div key={section.label} style={{ marginBottom: 22 }}>
+            <p style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 9, fontWeight: 700, color: '#cbd5e1', letterSpacing: '0.2em', textTransform: 'uppercase', padding: '0 8px', marginBottom: 6 }}>
+              {section.label}
+            </p>
+            <nav style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {section.items.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.exact}
+                  style={({ isActive }) => ({
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '8px 10px', borderRadius: 9,
+                    fontSize: 13, fontWeight: isActive ? 600 : 500,
+                    color: isActive ? '#2563eb' : '#475569',
+                    background: isActive ? '#eff6ff' : 'transparent',
+                    textDecoration: 'none',
+                    transition: 'all 0.15s ease',
+                  })}
+                  onMouseEnter={e => { if (!e.currentTarget.classList.contains('active')) e.currentTarget.style.background = '#f8fafc' }}
+                  onMouseLeave={e => { if (!e.currentTarget.style.background.includes('eff6ff')) e.currentTarget.style.background = 'transparent' }}
+                >
+                  {({ isActive }) => (
+                    <>
+                      <item.icon size={15} style={{ color: isActive ? '#2563eb' : '#94a3b8', flexShrink: 0 }} />
+                      <span style={{ flex: 1 }}>{item.label}</span>
+                      {isActive && <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#2563eb', flexShrink: 0 }} />}
+                    </>
+                  )}
+                </NavLink>
+              ))}
+            </nav>
+          </div>
+        ))}
       </div>
 
-      {/* Bottom section */}
-      <div className="mx-5 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-      <div className="p-3">
-        <NavItem isLogout icon={LogOut} label="Déconnexion" onClick={handleLogout} />
+      {/* Bottom */}
+      <div style={{ borderTop: '1px solid #f1f5f9', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <button
+          onClick={toggleTheme}
+          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 9, fontSize: 13, fontWeight: 500, color: '#475569', background: 'none', border: 'none', cursor: 'pointer', width: '100%', textAlign: 'left', transition: 'all 0.15s ease' }}
+          onMouseEnter={e => e.currentTarget.style.background = '#f8fafc'}
+          onMouseLeave={e => e.currentTarget.style.background = 'none'}
+        >
+          {isDark ? <Sun size={15} style={{ color: '#94a3b8' }} /> : <Moon size={15} style={{ color: '#94a3b8' }} />}
+          {isDark ? 'Mode clair' : 'Mode sombre'}
+        </button>
+        <button
+          onClick={handleLogout}
+          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 9, fontSize: 13, fontWeight: 500, color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', width: '100%', textAlign: 'left', transition: 'all 0.15s ease' }}
+          onMouseEnter={e => e.currentTarget.style.background = '#fef2f2'}
+          onMouseLeave={e => e.currentTarget.style.background = 'none'}
+        >
+          <LogOut size={15} style={{ color: '#ef4444' }} />
+          Déconnexion
+        </button>
       </div>
     </aside>
   );

@@ -45,10 +45,10 @@ const defaultSettings = {
     sessionTimeoutMinutes: 30,
     requireTwoFactor: false,
     maskPatientNameInLists: false,
-    auditTrailEmail: 'nadine.hammami@neuroscan.tn',
+    auditTrailEmail: 'nadine.hammami@braincore.tn',
   },
   integrations: {
-    pacsAeTitle: 'NEUROSCAN_AE',
+    pacsAeTitle: 'BRAINCORE_AE',
     pacsHost: '127.0.0.1',
     pacsPort: 104,
     risEndpoint: '',

@@ -1,6 +1,6 @@
 /** Nettoyage session locale portail admin obsolète. */
 
-const STORAGE_KEY = 'neuroscan_admin_dashboard_v1';
+const STORAGE_KEY = 'braincore_admin_dashboard_v1';
 
 /** Ancienne session localStorage (sans cookie Django) — effacée au logout et à la connexion classique. */
 export function clearAdminDashboardSession() {

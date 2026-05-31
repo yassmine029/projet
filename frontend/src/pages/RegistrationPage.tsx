@@ -178,7 +178,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const [showValidationModal, setShowValidationModal] = useState(false);
   const [showExploration, setShowExploration] = useState(false);
   const [savingToPatient, setSavingToPatient] = useState(false);
-  const [saveToPatientResult, setSaveToPatientResult] = useState<{ ok: boolean; filename?: string; downloadUrl?: string; uploadedAt?: string; error?: string } | null>(null);
+  const [saveToPatientResult, setSaveToPatientResult] = useState<{ ok: boolean; filename?: string; downloadUrl?: string; fileId?: number; uploadedAt?: string; error?: string } | null>(null);
   const [autoSavedToPatient, setAutoSavedToPatient] = useState<{ ok: boolean; filename?: string } | null>(null);
   const [applyingToSeries, setApplyingToSeries] = useState(false);
   const [applyingToSeriesStatus, setApplyingToSeriesStatus] = useState<'idle'|'processing'|'success'|'error'>('idle');
@@ -1511,7 +1511,11 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     // Réinitialise la session sans changer le mode (2D/3D/advanced)
     sessionStorage.removeItem('volumeJobId');
     setUploadedFiles({});
-    setReferenceImage({ src: '', points: [] });
+    // En mode advanced, l'atlas MNI152 est la référence fixe — on ne l'efface pas,
+    // on le recharge automatiquement depuis le serveur.
+    if (registrationDimension !== 'advanced') {
+      setReferenceImage({ src: '', points: [] });
+    }
     setPatientImage({ src: '', points: [] });
     setActiveImage('reference');
     setShowResult(false);
@@ -1560,6 +1564,11 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     setSaveToPatientResult(null);
     setAutoSavedToPatient(null);
     setConfirmedPanelPatients({ reference: null, patient: null });
+    // En mode advanced : l'atlas MNI152 est toujours la référence fixe,
+    // on le recharge automatiquement sans demander à l'utilisateur.
+    if (registrationDimension === 'advanced') {
+      void switchToOfficialAtlas();
+    }
   };
 
   const startNewRegistration = () => {
@@ -1859,7 +1868,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       });
       const data = res.data;
       if (data.success) {
-        setSaveToPatientResult({ ok: true, filename: data.original_filename, downloadUrl: data.file_url, uploadedAt: data.uploaded_at });
+        setSaveToPatientResult({ ok: true, filename: data.original_filename, downloadUrl: data.file_url, fileId: data.file_id, uploadedAt: data.uploaded_at });
         if (typeof data.brodmann_analyse_id === 'number') {
           window.dispatchEvent(
             new CustomEvent('brodmann-analyse-updated', {
@@ -1907,10 +1916,12 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   };
 
   const handleDownloadVolume = async (panel: 'patient' | 'reference' | 'all') => {
-    // For patient panel: prefer the already-saved media file (no extra endpoint needed)
-    if (panel === 'patient' && saveToPatientResult?.downloadUrl) {
+    // For patient panel: use the dedicated download endpoint to avoid browser gzip
+    // decompression (Django sets Content-Encoding: gzip for .nii.gz media files which
+    // causes the browser to strip compression, producing an unreadable file).
+    if (panel === 'patient' && saveToPatientResult?.fileId) {
       const a = document.createElement('a');
-      a.href = saveToPatientResult.downloadUrl;
+      a.href = `/api/mri-files/${saveToPatientResult.fileId}/download/`;
       a.download = saveToPatientResult.filename || 'volume_recale.nii.gz';
       document.body.appendChild(a);
       a.click();
@@ -2009,7 +2020,11 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jobId, patientId: dbPatient.id }),
+          body: JSON.stringify({
+            jobId,
+            patientId: dbPatient.id,
+            mi: autoAlignMetrics?.mutual_information ?? null,
+          }),
         });
         const saveData = await saveRes.json();
         if (saveData.success) {
@@ -2127,7 +2142,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         });
         const data = res.data;
         if (data.success) {
-          setSaveToPatientResult({ ok: true, filename: data.original_filename, downloadUrl: data.file_url, uploadedAt: data.uploaded_at });
+          setSaveToPatientResult({ ok: true, filename: data.original_filename, downloadUrl: data.file_url, fileId: data.file_id, uploadedAt: data.uploaded_at });
         } else {
           setSaveToPatientResult({ ok: false, error: data.error || 'Erreur inconnue' });
         }
@@ -3214,177 +3229,205 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
 
 
   if (!registrationDimension) {
-    const FLOWS = [
-      {
-        id: '2d' as const,
-        step: '01',
-        icon: <MousePointer2 className="h-6 w-6" />,
-        title: 'Recalage 2D',
-        subtitle: 'Image par image',
-        desc: 'Importez deux images médicales (référence + patient), placez des points de repère ou lancez le recalage automatique MINE, puis exportez les résultats annotés.',
-        tags: ['Import PNG/JPEG/NIfTI', 'Recalage manuel', 'Recalage auto', 'Export résultats'],
-        accent: {
-          card: 'border-2 border-cyan-400 bg-gradient-to-br from-cyan-500 to-teal-500',
-          iconWrap: 'bg-white/20 text-white border border-white/30',
-          tag: 'bg-white/20 text-white border border-white/25',
-          step: 'text-white/20',
-          title: 'text-white',
-          subtitle: 'text-cyan-100',
-          desc: 'text-white/80',
-          footer: 'border-white/20',
-          dot: 'bg-white',
-          dotOff: 'bg-white/25',
-          badgeText: 'Débutant',
-          cta: 'text-white',
-          hover: 'hover:shadow-cyan-300/40',
-        },
-        levels: 1,
-      },
-      {
-        id: '3d' as const,
-        step: '02',
-        icon: <BrainCircuit className="h-6 w-6" />,
-        title: 'Recalage 3D',
-        subtitle: 'Standard ou basé atlas MNI152',
-        desc: 'Choisissez entre un recalage volumique standard (2 volumes NIfTI) ou un recalage basé atlas MNI152 avec identification interactive des aires de Brodmann.',
-        tags: ['Recalage standard', 'Atlas MNI152 auto', 'MINE 3D / Hybride', 'Brodmann'],
-        accent: {
-          card: 'border-2 border-blue-500 bg-gradient-to-br from-blue-600 to-indigo-600',
-          iconWrap: 'bg-white/20 text-white border border-white/30',
-          tag: 'bg-white/20 text-white border border-white/25',
-          step: 'text-white/20',
-          title: 'text-white',
-          subtitle: 'text-blue-200',
-          desc: 'text-white/80',
-          footer: 'border-white/20',
-          dot: 'bg-white',
-          dotOff: 'bg-white/25',
-          badgeText: 'Intermédiaire',
-          cta: 'text-white',
-          hover: 'hover:shadow-blue-400/40',
-        },
-        levels: 2,
-      },
-    ];
+    const userLastName  = user.last_name  || user.nom    || '';
+    const userFirstName = user.first_name || user.prenom || '';
+    const displayName   = userLastName || userFirstName || (user.full_name || user.fullName || '').split(' ').pop() || user.username || 'Docteur';
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50/30">
+      <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden', fontFamily: "'Noto Sans', system-ui, sans-serif" }}>
+        <style>{`
+          @keyframes rc-fade-up {
+            from { opacity: 0; transform: translateY(18px); }
+            to   { opacity: 1; transform: translateY(0); }
+          }
 
-        {/* ── HERO — image pleine largeur ── */}
-        <div className="relative h-[46vh] min-h-[280px] max-h-[420px] overflow-hidden rounded-b-3xl shadow-xl mx-4 mt-4">
-          <img
-            src="/assets/images/recalage.jpg"
-            alt="Médecins analysant des IRM cérébrales"
-            className="absolute inset-0 w-full h-full object-cover object-center"
-          />
-          {/* Overlay léger — pointer-events-none pour ne pas bloquer les boutons */}
-          <div className="absolute inset-0 bg-gradient-to-t from-slate-900/80 via-slate-900/30 to-slate-900/20 pointer-events-none" />
-          <div className="absolute inset-0 bg-gradient-to-r from-blue-900/40 via-transparent to-blue-900/20 pointer-events-none" />
+          .rc-badge { animation: rc-fade-up 0.45s ease 0.05s both; }
+          .rc-hello { animation: rc-fade-up 0.6s  cubic-bezier(0.22,1,0.36,1) 0.15s both; }
+          .rc-sub   { animation: rc-fade-up 0.45s ease 0.30s both; }
+          .rc-row-1 { animation: rc-fade-up 0.5s  cubic-bezier(0.22,1,0.36,1) 0.40s both; }
+          .rc-row-2 { animation: rc-fade-up 0.5s  cubic-bezier(0.22,1,0.36,1) 0.54s both; }
 
-          {/* Texte centré — pointer-events-none pour laisser passer les clics vers les boutons */}
-          <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-6 pointer-events-none">
-            <span className="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 backdrop-blur-sm px-3 py-1 text-[9px] font-black uppercase tracking-[0.2em] text-white/80 mb-4">
-              <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
-              Recalage multimodal assisté par IA
-            </span>
-            <h1 className="text-3xl sm:text-5xl font-black text-white tracking-tight leading-tight drop-shadow-lg">
-              Choisissez votre<br />
-              <span className="bg-gradient-to-r from-cyan-300 via-blue-300 to-violet-300 bg-clip-text text-transparent">
-                flux de recalage
-              </span>
-            </h1>
-            <p className="mt-3 max-w-md text-sm text-white/55 leading-relaxed">
-              Sélectionnez le mode adapté à votre objectif clinique et lancez l'analyse.
-            </p>
-          </div>
+          .rc-flow-row {
+            display: flex; align-items: center; gap: 20px;
+            padding: 18px 56px; width: 100%;
+            background: rgba(255,255,255,0.30);
+            border: none; cursor: pointer;
+            text-align: left; position: relative;
+            transition: background 0.22s ease, box-shadow 0.22s ease;
+          }
+          .rc-2d:hover { background: rgba(224,242,254,0.85); box-shadow: inset 3px 0 0 #0ea5e9; }
+          .rc-3d:hover { background: rgba(237,233,254,0.85); box-shadow: inset 3px 0 0 #7c3aed; }
 
-          {/* Boutons z-10 — au-dessus de tous les overlays */}
-          <button
-            onClick={() => onNavigate('')}
-            className="absolute top-5 left-6 z-10 flex items-center gap-1.5 rounded-full border border-white/25 bg-white/10 backdrop-blur-sm px-3 py-1.5 text-[11px] font-bold text-white/80 hover:bg-white/20 transition-all"
-          >
-            <ArrowLeft className="h-3 w-3" /> Retour
-          </button>
-          <div className="absolute top-5 right-6 z-10 flex items-center gap-2 rounded-full border border-white/20 bg-white/10 backdrop-blur-sm px-3 py-1.5">
-            <div className="h-4 w-4 rounded-md bg-blue-500 flex items-center justify-center">
-              <BrainCircuit className="h-2.5 w-2.5 text-white" />
+          .rc-flow-num {
+            font-family: 'Space Grotesk', 'Segoe UI', sans-serif;
+            font-size: 40px; font-weight: 700; line-height: 1;
+            min-width: 54px; text-align: right; flex-shrink: 0;
+            transition: color 0.22s ease;
+          }
+          .rc-2d .rc-flow-num { color: rgba(14,165,233,0.40); }
+          .rc-3d .rc-flow-num { color: rgba(124,58,237,0.40); }
+          .rc-2d:hover .rc-flow-num { color: rgba(14,165,233,0.70); }
+          .rc-3d:hover .rc-flow-num { color: rgba(124,58,237,0.70); }
+
+          .rc-flow-icon {
+            width: 42px; height: 42px; border-radius: 11px;
+            display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0; transition: all 0.22s ease;
+          }
+          .rc-2d .rc-flow-icon { background: #e0f2fe; }
+          .rc-3d .rc-flow-icon { background: #ede9fe; }
+          .rc-2d:hover .rc-flow-icon { background: #bae6fd; }
+          .rc-3d:hover .rc-flow-icon { background: #ddd6fe; }
+
+          .rc-flow-title {
+            font-family: 'Space Grotesk', 'Segoe UI', sans-serif;
+            font-size: 18px; font-weight: 700; color: #0c1a2e;
+            margin: 0 0 4px; line-height: 1.1; transition: color 0.22s ease;
+          }
+          .rc-2d:hover .rc-flow-title { color: #0284c7; }
+          .rc-3d:hover .rc-flow-title { color: #6d28d9; }
+
+          .rc-flow-desc {
+            font-family: 'Noto Sans', system-ui, sans-serif;
+            font-size: 13px; color: #1e293b; line-height: 1.6;
+            margin: 0 0 9px;
+          }
+
+          .rc-tag {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 10px; font-weight: 600; padding: 2px 9px; border-radius: 999px;
+          }
+          .rc-tag-2d { background: #bae6fd; color: #075985; }
+          .rc-tag-3d { background: #ddd6fe; color: #4c1d95; }
+
+          .rc-flow-cta {
+            display: flex; align-items: center; gap: 5px;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 12px; font-weight: 700;
+            flex-shrink: 0; margin-left: auto; padding-left: 20px;
+            transition: transform 0.22s ease, color 0.22s ease;
+          }
+          .rc-2d .rc-flow-cta { color: #38bdf8; }
+          .rc-3d .rc-flow-cta { color: #a78bfa; }
+          .rc-2d:hover .rc-flow-cta { color: #0ea5e9; transform: translateX(3px); }
+          .rc-3d:hover .rc-flow-cta { color: #7c3aed; transform: translateX(3px); }
+
+          .rc-sep { height: 1px; background: rgba(15,23,42,0.12); margin: 0 56px; }
+        `}</style>
+
+        {/* ── Background image, blurred just enough for readability ── */}
+        <div style={{
+          position: 'absolute', inset: -16,
+          backgroundImage: "url('/images/recalage.png')",
+          backgroundSize: 'cover', backgroundPosition: 'center',
+          filter: 'blur(4px)', transform: 'scale(1.04)',
+        }} />
+
+        {/* ── Light overlay — keeps image visible, ensures text contrast ── */}
+        <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.72)' }} />
+
+        {/* ── Content ── */}
+        <div style={{ position: 'relative', zIndex: 10, height: '100%', display: 'flex', flexDirection: 'column' }}>
+
+          {/* Top bar */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '22px 56px 0' }}>
+            <button
+              onClick={() => onNavigate('')}
+              style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 13, color: '#475569', background: 'rgba(255,255,255,0.80)', border: '1px solid #e2e8f0', borderRadius: 9, padding: '7px 14px', cursor: 'pointer', fontWeight: 500, backdropFilter: 'blur(8px)', fontFamily: "'Noto Sans', system-ui, sans-serif" }}
+            >
+              <ArrowLeft style={{ width: 13, height: 13 }} /> Retour
+            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 10, color: '#334155', fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', background: 'rgba(255,255,255,0.80)', border: '1px solid #e2e8f0', borderRadius: 9, padding: '7px 14px', backdropFilter: 'blur(8px)' }}>
+              <div style={{ width: 20, height: 20, borderRadius: 6, background: 'linear-gradient(135deg,#3b82f6,#6366f1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <BrainCircuit style={{ width: 11, height: 11, color: 'white' }} />
+              </div>
+              BrainCore
             </div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-white/80">VisionMed</p>
           </div>
-        </div>
 
-        {/* ── CARDS section ── */}
-        <div className="mx-auto max-w-3xl px-6 pb-12 pt-8">
-          <p className="text-center text-[10px] font-black uppercase tracking-[0.25em] text-slate-400 mb-8">
-            Sélectionnez votre flux clinique
-          </p>
+          {/* Welcome block */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '0 56px', maxWidth: 640 }}>
+            <div className="rc-badge" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: 'rgba(239,246,255,0.90)', border: '1px solid #bfdbfe', borderRadius: 999, padding: '4px 13px', marginBottom: 22, width: 'fit-content', backdropFilter: 'blur(6px)' }}>
+              <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#2563eb' }} />
+              <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 10, color: '#1d4ed8', fontWeight: 600, letterSpacing: '0.13em', textTransform: 'uppercase' }}>Axe 2 · Recalage Multimodal</span>
+            </div>
 
-          {/* Cards */}
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-            {FLOWS.map((flow) => (
-              <button
-                key={flow.id}
-                onClick={() => {
-                  if (flow.id === '3d') {
-                    setShowThreeDSubModal(true);
-                    return;
-                  }
-                  void handleChooseRegistrationDimension(flow.id);
-                }}
-                className={`group relative text-left rounded-2xl ${flow.accent.card} p-6 transition-all duration-300 hover:-translate-y-2 hover:shadow-2xl ${flow.accent.hover} shadow-lg`}
-              >
-                {/* Icon */}
-                <div className={`inline-flex rounded-xl border p-3 mb-4 ${flow.accent.iconWrap}`}>
-                  {flow.icon}
-                </div>
+            <h1 className="rc-hello" style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: 'clamp(30px, 3.2vw, 50px)', fontWeight: 800, color: '#0f172a', lineHeight: 1.18, margin: '0 0 18px' }}>
+              Bonjour,<br />Dr.&nbsp;{displayName}&nbsp;👋
+            </h1>
 
-                {/* Title */}
-                <h2 className={`text-xl font-black ${flow.accent.title} leading-tight`}>{flow.title}</h2>
-                <p className={`text-[11px] font-semibold mt-0.5 mb-3 ${flow.accent.subtitle}`}>{flow.subtitle}</p>
+            <p className="rc-sub" style={{ fontFamily: "'Noto Sans', system-ui, sans-serif", fontSize: 15.5, fontWeight: 400, color: '#1e293b', lineHeight: 1.72, margin: '0 0 8px', maxWidth: 500 }}>
+              Bienvenue dans l'axe de recalage multimodal, alignez et fusionnez vos images cérébrales IRM, TEP et NIfTI avec précision clinique.
+            </p>
 
-                {/* Description */}
-                <p className={`text-[12px] leading-relaxed mb-4 ${flow.accent.desc}`}>{flow.desc}</p>
+          </div>
 
-                {/* Tags */}
-                <div className="flex flex-wrap gap-1.5 mb-5">
-                  {flow.tags.map(tag => (
-                    <span key={tag} className={`rounded-full px-2 py-0.5 text-[9px] font-bold border ${flow.accent.tag}`}>{tag}</span>
+          {/* Flows */}
+          <div style={{ paddingBottom: 40 }}>
+            {/* Section header — centré */}
+            <div style={{ padding: '0 56px', marginBottom: 18, textAlign: 'center' }}>
+              <p style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 10, color: '#2563eb', fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', margin: '0 0 6px' }}>
+                Sélectionnez votre flux clinique
+              </p>
+              <h2 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: 'clamp(20px, 2vw, 28px)', fontWeight: 800, color: '#0f172a', margin: 0, lineHeight: 1.2 }}>
+                Choisissez votre flux de recalage
+              </h2>
+            </div>
+
+            <div className="rc-sep" />
+
+            <button className="rc-flow-row rc-2d rc-row-1" onClick={() => void handleChooseRegistrationDimension('2d')}>
+              <span className="rc-flow-num">01</span>
+              <div style={{ width: 1, height: 40, background: 'rgba(15,23,42,0.1)', flexShrink: 0 }} />
+              <div className="rc-flow-icon">
+                <MousePointer2 style={{ width: 17, height: 17, color: '#0ea5e9' }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p className="rc-flow-title">Recalage 2D</p>
+                <p className="rc-flow-desc">Importez deux images ou deux séries d'images. Si vous choisissez une série, le recalage est calculé sur deux images représentatives puis appliqué automatiquement à l'ensemble de la série.</p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                  {['PNG · JPEG · NIfTI', 'Mode manuel', 'Mode affine', 'Export annoté'].map(t => (
+                    <span key={t} className="rc-tag rc-tag-2d">{t}</span>
                   ))}
                 </div>
+              </div>
+              <span className="rc-flow-cta">Lancer <ChevronRight style={{ width: 13, height: 13 }} /></span>
+            </button>
 
-                {/* CTA */}
-                <div className={`flex items-center justify-end pt-3 border-t ${flow.accent.footer}`}>
-                  <span className={`text-[10px] font-black uppercase tracking-widest flex items-center gap-1 group-hover:gap-2 transition-all ${flow.accent.cta}`}>
-                    Lancer <ChevronRight className="h-3 w-3" />
-                  </span>
+            <div className="rc-sep" />
+
+            <button className="rc-flow-row rc-3d rc-row-2" onClick={() => setShowThreeDSubModal(true)}>
+              <span className="rc-flow-num">02</span>
+              <div style={{ width: 1, height: 40, background: 'rgba(15,23,42,0.1)', flexShrink: 0 }} />
+              <div className="rc-flow-icon">
+                <BrainCircuit style={{ width: 17, height: 17, color: '#7c3aed' }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p className="rc-flow-title">Recalage 3D</p>
+                <p className="rc-flow-desc">Recalage volumique standard (2 volumes NIfTI) ou basé atlas MNI152 avec identification interactive des 47 aires de Brodmann et coordonnées MNI.</p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                  {['NIfTI', 'Mode affine', 'Mode déformable', 'Atlas MNI152 auto'].map(t => (
+                    <span key={t} className="rc-tag rc-tag-3d">{t}</span>
+                  ))}
                 </div>
-              </button>
-            ))}
-          </div>
+              </div>
+              <span className="rc-flow-cta">Lancer <ChevronRight style={{ width: 13, height: 13 }} /></span>
+            </button>
 
-          {/* Hint */}
-          <p className="text-center text-[11px] text-slate-400 mt-8">
-            Vous pouvez changer de flux à tout moment en revenant à cette page.
-          </p>
-        </div>{/* end cards section */}
+            <div className="rc-sep" />
+          </div>
+        </div>
 
         {/* ── Modal choix sous-flux 3D ── */}
         {showThreeDSubModal && (
           <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
-            <div
-              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
-              onClick={() => setShowThreeDSubModal(false)}
-            />
-            <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 animate-[fadeInScale_0.2s_ease-out]">
-              {/* Header */}
-              <button
-                onClick={() => setShowThreeDSubModal(false)}
-                className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 transition-colors"
-              >
+            <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setShowThreeDSubModal(false)} />
+            <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6">
+              <button onClick={() => setShowThreeDSubModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 transition-colors">
                 <X className="h-4 w-4" />
               </button>
               <div className="flex items-center gap-3 mb-2">
-                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center shrink-0">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center shrink-0">
                   <BrainCircuit className="h-5 w-5 text-white" />
                 </div>
                 <div>
@@ -3393,8 +3436,6 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                 </div>
               </div>
               <div className="h-px bg-slate-100 my-4" />
-
-              {/* Option 1 — Standard */}
               <button
                 onClick={() => { setShowThreeDSubModal(false); void handleChooseRegistrationDimension('3d'); }}
                 className="w-full text-left rounded-xl border-2 border-blue-200 hover:border-blue-500 bg-blue-50/50 hover:bg-blue-50 p-4 mb-3 transition-all duration-200 group"
@@ -3404,9 +3445,9 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                     <BrainCircuit className="h-4 w-4 text-white" />
                   </div>
                   <div className="flex-1">
-                    <p className="text-sm font-black text-slate-900 group-hover:text-blue-700 transition-colors">Recalage 3D</p>
+                    <p className="text-sm font-black text-slate-900 group-hover:text-blue-700 transition-colors">Recalage 3D standard</p>
                     <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
-                      Importez deux volumes NIfTI (référence + patient) et lancez le recalage neuronal MINE 3D ou Hybride avec navigation coupes axiales/coronales/sagittales.
+                      Importez deux volumes NIfTI et lancez le recalage MINE 3D ou Hybride avec navigation axiale/coronale/sagittale.
                     </p>
                     <div className="flex flex-wrap gap-1.5 mt-2">
                       {['2 volumes NIfTI', 'MINE 3D / Hybride', 'Navigation coupes', 'Validation clinique'].map(t => (
@@ -3417,8 +3458,6 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                   <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-blue-500 mt-1 transition-colors shrink-0" />
                 </div>
               </button>
-
-              {/* Option 2 — Atlas MNI152 + Brodmann */}
               <button
                 onClick={() => { setShowThreeDSubModal(false); void handleChooseRegistrationDimension('advanced'); }}
                 className="w-full text-left rounded-xl border-2 border-violet-200 hover:border-violet-500 bg-violet-50/50 hover:bg-violet-50 p-4 transition-all duration-200 group"
@@ -3428,9 +3467,9 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                     <BrainCircuit className="h-4 w-4 text-white" />
                   </div>
                   <div className="flex-1">
-                    <p className="text-sm font-black text-slate-900 group-hover:text-violet-700 transition-colors">Recalage 3D et identification des zones de Brodmann</p>
+                    <p className="text-sm font-black text-slate-900 group-hover:text-violet-700 transition-colors">Recalage 3D + zones de Brodmann</p>
                     <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
-                      Uploadez uniquement votre volume patient — l'atlas MNI152 se télécharge automatiquement. Suivi d'une identification interactive des 47 aires de Brodmann avec coordonnées MNI.
+                      Uploadez votre volume patient — l'atlas MNI152 se télécharge automatiquement. Identification des 47 aires de Brodmann avec coordonnées MNI.
                     </p>
                     <div className="flex flex-wrap gap-1.5 mt-2">
                       {['1 volume patient', 'Atlas MNI152 auto', '47 zones Brodmann', 'Coordonnées MNI'].map(t => (
@@ -3509,7 +3548,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
               <Brain className="text-white w-4 h-4" />
             </div>
             <div className="flex-1 min-w-0">
-              <h1 className="text-base font-black tracking-tight text-slate-900">NeuroScan</h1>
+              <h1 className="text-base font-black tracking-tight text-slate-900">BrainCore</h1>
               <p className="text-[9px] font-bold text-slate-400 tracking-[0.2em] uppercase">Registration Hub</p>
             </div>
             <div className="flex items-center gap-1.5">
@@ -4556,8 +4595,8 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                         <p style={{ color: '#0f172a', fontSize: 16, fontWeight: 900, lineHeight: 1 }}>{(autoAlignMetrics.processing_time_ms / 1000).toFixed(1)} s</p>
                       </div>
                     )}
-                    {/* ── Exports NIfTI (visibles après validation 3D) ── */}
-                    {saveToPatientResult && registrationDimension !== '2d' && (
+                    {/* ── Statut sauvegarde + exports (tous modes) ── */}
+                    {saveToPatientResult && (
                       <>
                         <div className="w-px h-6 bg-gray-200 shrink-0" />
                         {/* Badge statut sauvegarde */}
@@ -4570,30 +4609,34 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                             ? <><Check className="h-3.5 w-3.5" /> Enregistré dans le dossier patient</>
                             : <><X className="h-3.5 w-3.5" /> {saveToPatientResult.error || 'Sauvegarde non effectuée'}</>}
                         </div>
-                        <div className="w-px h-6 bg-gray-200 shrink-0" />
-                        {/* Boutons export NIfTI */}
-                        <button
-                          onClick={() => handleDownloadVolume('patient')}
-                          className="flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100 transition shrink-0"
-                          title="Télécharger le volume patient recalé (.nii.gz)"
-                        >
-                          <Download className="h-3.5 w-3.5" /> Vol. recalé
-                        </button>
-                        <button
-                          onClick={() => handleDownloadVolume('reference')}
-                          className="flex items-center gap-1.5 rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-[10px] font-bold text-blue-700 hover:bg-blue-100 transition shrink-0"
-                          title="Télécharger le volume de référence / atlas (.nii.gz)"
-                        >
-                          <Download className="h-3.5 w-3.5" /> Vol. référence
-                        </button>
-                        <button
-                          onClick={() => handleDownloadVolume('all')}
-                          className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-100 px-3 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-200 transition shrink-0"
-                          title="Télécharger les deux volumes en ZIP (.zip)"
-                        >
-                          <Download className="h-3.5 w-3.5" /> Tout exporter
-                        </button>
-                        {/* Lien vers le dossier patient */}
+                        {/* Exports NIfTI uniquement pour les volumes 3D/advanced */}
+                        {registrationDimension !== '2d' && (
+                          <>
+                            <div className="w-px h-6 bg-gray-200 shrink-0" />
+                            <button
+                              onClick={() => handleDownloadVolume('patient')}
+                              className="flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100 transition shrink-0"
+                              title="Télécharger le volume patient recalé (.nii.gz)"
+                            >
+                              <Download className="h-3.5 w-3.5" /> Vol. recalé
+                            </button>
+                            <button
+                              onClick={() => handleDownloadVolume('reference')}
+                              className="flex items-center gap-1.5 rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-[10px] font-bold text-blue-700 hover:bg-blue-100 transition shrink-0"
+                              title="Télécharger le volume de référence / atlas (.nii.gz)"
+                            >
+                              <Download className="h-3.5 w-3.5" /> Vol. référence
+                            </button>
+                            <button
+                              onClick={() => handleDownloadVolume('all')}
+                              className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-100 px-3 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-200 transition shrink-0"
+                              title="Télécharger les deux volumes en ZIP (.zip)"
+                            >
+                              <Download className="h-3.5 w-3.5" /> Tout exporter
+                            </button>
+                          </>
+                        )}
+                        {/* Lien vers le dossier patient (tous modes) */}
                         {saveToPatientResult?.ok && (confirmedPanelPatients.patient || confirmedPanelPatients.reference) && (
                           <button
                             onClick={() => {
@@ -4779,8 +4822,9 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                     )}
                   </div>
                   <div className="flex items-center gap-3">
-                    {!isEmergencySession && registrationDimension === '2d' && confirmedPanelPatients.patient && !showValidationModal && (
+                    {!isEmergencySession && registrationDimension === '2d' && confirmedPanelPatients.patient && !showValidationModal && !saveToPatientResult && (
                       <>
+                        {/* Rejeter */}
                         <button
                           onClick={() => setConfirmDialog({
                             title: 'Rejeter le recalage ?',
@@ -4790,26 +4834,41 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                             danger: true,
                             onConfirm: handleRejectRegistration,
                           })}
-                          disabled={applyingToSeries || autoAlignStatus === 'processing'}
+                          disabled={applyingToSeries || savingToPatient || autoAlignStatus === 'processing'}
                           className="flex items-center gap-2 rounded-lg bg-red-600 px-5 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-white shadow-sm hover:bg-red-700 disabled:opacity-50 transition"
                         >
-                          <X className="h-3.5 w-3.5" /> Rejeter le recalage
+                          <X className="h-3.5 w-3.5" /> Rejeter
                         </button>
+                        {/* Cas 1 : Enregistrer les 2 images recalées (coupes uniquement) */}
+                        <button
+                          onClick={() => setConfirmDialog({
+                            title: 'Enregistrer les 2 images recalées ?',
+                            message: `Sauvegarder les deux coupes recalées dans le dossier de ${confirmedPanelPatients.patient!.nom} ${confirmedPanelPatients.patient!.prenom} ?`,
+                            detail: 'Les deux images (référence et patient recalé) seront enregistrées dans le dossier patient, sans appliquer la transformation à toute la série.',
+                            confirmLabel: 'Oui, enregistrer les images',
+                            onConfirm: handleSaveToPatient,
+                          })}
+                          disabled={savingToPatient || applyingToSeries || autoAlignStatus === 'processing'}
+                          className="flex items-center gap-2 rounded-lg border border-blue-400 bg-blue-50 px-5 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-blue-700 shadow-sm hover:bg-blue-100 disabled:opacity-50 transition"
+                        >
+                          {savingToPatient ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Enregistrement…</> : <><Download className="h-3.5 w-3.5" /> Enregistrer les 2 images</>}
+                        </button>
+                        {/* Cas 2 : Appliquer à toute la série (volumes) */}
                         <button
                           onClick={() => {
                             const dbPatient = confirmedPanelPatients.patient!;
                             setConfirmDialog({
-                              title: 'Valider le recalage ?',
+                              title: 'Appliquer à toute la série ?',
                               message: `Appliquer le recalage à toutes les coupes IRM de ${dbPatient.nom} ${dbPatient.prenom} ?`,
                               detail: 'La transformation calculée sera appliquée à chaque image de la série du patient.',
-                              confirmLabel: 'Oui, valider et appliquer à toute la série',
+                              confirmLabel: 'Oui, appliquer à toute la série',
                               onConfirm: handleApplyToSeries,
                             });
                           }}
-                          disabled={applyingToSeries || autoAlignStatus === 'processing'}
+                          disabled={applyingToSeries || savingToPatient || autoAlignStatus === 'processing'}
                           className="flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 transition"
                         >
-                          {applyingToSeries ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Traitement…</> : <><Check className="h-3.5 w-3.5" /> Valider et appliquer à toute la série</>}
+                          {applyingToSeries ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Traitement…</> : <><Check className="h-3.5 w-3.5" /> Appliquer à toute la série</>}
                         </button>
                       </>
                     )}
@@ -4829,6 +4888,30 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                         >
                           <X className="h-3.5 w-3.5" /> Rejeter le recalage
                         </button>
+                        {/* Exportation directe des 2 images PNG (2D sans patient sélectionné) */}
+                        {registrationDimension === '2d' && (resultImages?.ref || resultImages?.pat) && (
+                          <button
+                            onClick={() => {
+                              const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-');
+                              if (resultImages?.ref) {
+                                const a = document.createElement('a');
+                                a.href = resultImages.ref;
+                                a.download = `reference_${stamp}.png`;
+                                document.body.appendChild(a); a.click(); a.remove();
+                              }
+                              if (resultImages?.pat) {
+                                const a = document.createElement('a');
+                                a.href = resultImages.pat;
+                                a.download = `recalee_${stamp}.png`;
+                                document.body.appendChild(a); a.click(); a.remove();
+                              }
+                            }}
+                            disabled={autoAlignStatus === 'processing'}
+                            className="flex items-center gap-2 rounded-lg border border-blue-400 bg-blue-50 px-5 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-blue-700 shadow-sm hover:bg-blue-100 disabled:opacity-50 transition"
+                          >
+                            <Download className="h-3.5 w-3.5" /> Exporter les images
+                          </button>
+                        )}
                         <button
                           onClick={() => {
                             const dbPat = confirmedPanelPatients.patient ?? confirmedPanelPatients.reference;

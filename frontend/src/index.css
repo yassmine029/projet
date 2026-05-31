@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700;800&family=Noto+Sans:ital,wght@0,300;0,400;0,500;0,700;1,400&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -6,7 +6,7 @@
 
 :root {
   color-scheme: light;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Noto Sans', system-ui, sans-serif;
 
   /* Medical Design System Tokens */
   --patient-original: 217 91% 30%;   /* Deep Blue */
@@ -14,6 +14,10 @@
   --type-registration: 271 81% 56%;  /* Violet */
   --type-segmentation: 161 84% 39%;  /* Emerald Green */
   --type-reconstruction: 24 95% 53%; /* Orange */
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Figtree', system-ui, sans-serif;
 }
 
 .theme-dark {
@@ -66,9 +70,10 @@
 
 .theme-toggle-btn {
   position: fixed;
-  right: 16px;
+  left: 16px;
   bottom: 20px;
   top: auto;
+  right: auto;
   z-index: 9999;
   display: inline-flex;
   align-items: center;

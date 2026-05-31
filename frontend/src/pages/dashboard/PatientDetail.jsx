@@ -383,9 +383,130 @@ function FileActionRow({ file, sessionColor, onOpen }) {
   );
 }
 
+function ZipSeriesViewer({ fileId, onClose }) {
+  const [idx, setIdx]         = React.useState(0);
+  const [total, setTotal]     = React.useState(0);
+  const [image, setImage]     = React.useState(null);
+  const [fname, setFname]     = React.useState('');
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError]     = React.useState('');
+  const idxRef                = React.useRef(0);
+  const totalRef              = React.useRef(0);
+
+  const load = React.useCallback(async (i) => {
+    setLoading(true); setError('');
+    try {
+      const res  = await fetch(`/api/mri-files/${fileId}/zip-image/?index=${i}`, { credentials: 'include' });
+      const data = await res.json();
+      if (!data.ok) { setError(data.error || 'Erreur'); return; }
+      setImage(data.image);
+      setTotal(data.total);  totalRef.current = data.total;
+      setIdx(data.index);    idxRef.current   = data.index;
+      setFname(data.filename);
+    } catch { setError('Erreur de chargement'); }
+    finally { setLoading(false); }
+  }, [fileId]);
+
+  React.useEffect(() => { load(0); }, [load]);
+
+  React.useEffect(() => {
+    const handler = (e) => {
+      if (e.key === 'ArrowLeft'  && idxRef.current > 0)                      load(idxRef.current - 1);
+      if (e.key === 'ArrowRight' && idxRef.current < totalRef.current - 1)   load(idxRef.current + 1);
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [load, onClose]);
+
+  /* Render via Portal so it sits above AppLayout's stacking context */
+  return ReactDOM.createPortal(
+    <>
+      <style>{`@keyframes zspin{to{transform:rotate(360deg)}}`}</style>
+
+      {/* Backdrop */}
+      <div
+        onClick={onClose}
+        style={{ position:'fixed', inset:0, zIndex:9000, background:'rgba(0,0,0,0.82)', backdropFilter:'blur(3px)' }}
+      />
+
+      {/* Modal card — centré avec taille fixe */}
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          position:'fixed', zIndex:9001,
+          top:'50%', left:'50%', transform:'translate(-50%,-50%)',
+          width: Math.min(window.innerWidth * 0.88, 680),
+          maxHeight: '90vh',
+          background:'#0f172a',
+          borderRadius:18,
+          display:'flex', flexDirection:'column',
+          overflow:'hidden',
+          boxShadow:'0 32px 80px rgba(0,0,0,0.6)',
+        }}
+      >
+        {/* ── Header ── */}
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'14px 18px', borderBottom:'1px solid #1e293b', flexShrink:0 }}>
+          <div>
+            <span style={{ fontSize:11, fontWeight:800, color:'#7c3aed', letterSpacing:'0.1em', textTransform:'uppercase' }}>Série IRM recalée</span>
+            <p style={{ fontSize:11, color:'#475569', marginTop:2, maxWidth:380, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{fname}</p>
+          </div>
+          <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+            <span style={{ fontSize:13, fontWeight:600, color:'#64748b' }}>{total > 0 ? `${idx + 1} / ${total}` : '—'}</span>
+            <button onClick={onClose}
+              style={{ width:28, height:28, borderRadius:8, border:'1px solid #334155', background:'#1e293b', color:'#94a3b8', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:14, lineHeight:1 }}>
+              ✕
+            </button>
+          </div>
+        </div>
+
+        {/* ── Image area ── */}
+        <div style={{ flex:1, background:'#000', display:'flex', alignItems:'center', justifyContent:'center', minHeight:0, overflow:'hidden' }}>
+          {loading ? (
+            <div style={{ width:32, height:32, border:'3px solid #1e293b', borderTopColor:'#7c3aed', borderRadius:'50%', animation:'zspin 0.7s linear infinite' }} />
+          ) : error ? (
+            <p style={{ color:'#ef4444', fontSize:13, padding:24 }}>{error}</p>
+          ) : image ? (
+            <img src={image} alt={fname}
+              style={{ maxWidth:'100%', maxHeight:'100%', objectFit:'contain', display:'block' }} />
+          ) : null}
+        </div>
+
+        {/* ── Controls ── */}
+        <div style={{ padding:'12px 18px', borderTop:'1px solid #1e293b', flexShrink:0 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+            <button
+              onClick={() => load(idx - 1)} disabled={idx === 0 || loading}
+              style={{ padding:'6px 14px', borderRadius:8, border:'1px solid #334155', background:'#1e293b', color: idx === 0 ? '#334155' : '#e2e8f0', cursor: idx === 0 ? 'not-allowed' : 'pointer', fontSize:12, fontWeight:600, flexShrink:0 }}>
+              ← Préc.
+            </button>
+
+            <input
+              type="range" min={0} max={Math.max(0, total - 1)} value={idx}
+              onChange={e => { const v = Number(e.target.value); setIdx(v); idxRef.current = v; }}
+              onMouseUp={e  => load(Number(e.currentTarget.value))}
+              onTouchEnd={e => load(Number(e.currentTarget.value))}
+              style={{ flex:1, accentColor:'#7c3aed', cursor:'pointer' }}
+            />
+
+            <button
+              onClick={() => load(idx + 1)} disabled={idx >= total - 1 || loading}
+              style={{ padding:'6px 14px', borderRadius:8, border:'1px solid #334155', background:'#1e293b', color: idx >= total - 1 ? '#334155' : '#e2e8f0', cursor: idx >= total - 1 ? 'not-allowed' : 'pointer', fontSize:12, fontWeight:600, flexShrink:0 }}>
+              Suiv. →
+            </button>
+          </div>
+          <p style={{ textAlign:'center', fontSize:10, color:'#334155', marginTop:6 }}>Touches ← → · Échap pour fermer</p>
+        </div>
+      </div>
+    </>,
+    document.body
+  );
+}
+
 function ResultsSection({ sessions, analysisFiles, resolveFileUrl, formatDate, formatSize }) {
   const [filter, setFilter] = React.useState('all');
   const [niftiViewer, setNiftiViewer] = React.useState(null);
+  const [zipViewer, setZipViewer]     = React.useState(null);
 
   const serieFiles = analysisFiles.filter(f =>
     /^reg_serie_/i.test(String(f.original_filename || '')) && String(f.original_filename || '').endsWith('.zip')
@@ -550,6 +671,8 @@ function ResultsSection({ sessions, analysisFiles, resolveFileUrl, formatDate, f
               ))}
 
               {/* Recalage : séries ZIP */}
+              {zipViewer && <ZipSeriesViewer fileId={zipViewer.fileId} onClose={() => setZipViewer(null)} />}
+
               {showRec && serieFiles.map(file => {
                 const fileUrl = resolveFileUrl(file.file_url || file.file);
                 return (
@@ -568,10 +691,18 @@ function ResultsSection({ sessions, analysisFiles, resolveFileUrl, formatDate, f
                         <span className="font-mono font-semibold">{formatSize(file.file_size)} · ZIP</span>
                       </div>
                     </div>
-                    <a href={fileUrl} download
-                      className="opacity-0 group-hover:opacity-100 flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-600 text-white text-[11px] font-bold hover:bg-violet-700 transition-all shadow-sm shrink-0">
-                      <Download className="w-3.5 h-3.5" /> Télécharger
-                    </a>
+                    <div className="opacity-0 group-hover:opacity-100 flex items-center gap-2 transition-opacity shrink-0">
+                      <button
+                        onClick={() => setZipViewer({ fileId: file.id })}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-50 border border-violet-200 text-violet-700 text-[11px] font-bold hover:bg-violet-100 transition-all"
+                      >
+                        <Eye className="w-3.5 h-3.5" /> Voir
+                      </button>
+                      <a href={fileUrl} download
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-600 text-white text-[11px] font-bold hover:bg-violet-700 transition-all shadow-sm">
+                        <Download className="w-3.5 h-3.5" /> Télécharger
+                      </a>
+                    </div>
                   </div>
                 );
               })}
@@ -612,7 +743,11 @@ function ResultsSection({ sessions, analysisFiles, resolveFileUrl, formatDate, f
                           <Eye className="w-3.5 h-3.5" /> Voir
                         </button>
                       )}
-                      <a href={fileUrl} download className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-[11px] font-bold hover:bg-violet-600 hover:text-white transition-all">
+                      <a
+                        href={isNifti ? niftiDownloadUrl(file.id) : fileUrl}
+                        download={file.original_filename || undefined}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-[11px] font-bold hover:bg-violet-600 hover:text-white transition-all"
+                      >
                         <Download className="w-3.5 h-3.5" /> Télécharger
                       </a>
                     </div>
@@ -841,6 +976,17 @@ const resolveFileUrl = (rawUrl) => {
     return rawUrl;
   }
 };
+
+// Returns true for NIfTI files (.nii / .nii.gz).
+// These must be downloaded via the /api/mri-files/{id}/download/ endpoint to avoid the
+// browser silently decompressing the gzip content (Django sets Content-Encoding: gzip
+// when mimetypes detects the .gz encoding, which corrupts the downloaded file).
+const isNiftiFilename = (name) => {
+  const n = (name || '').toLowerCase();
+  return n.endsWith('.nii.gz') || n.endsWith('.nii');
+};
+
+const niftiDownloadUrl = (fileId) => `/api/mri-files/${fileId}/download/`;
 
 const formatDateTime = (dateValue) => {
   if (!dateValue) return '-';
@@ -1082,11 +1228,23 @@ export default function PatientDetail() {
           </div>
           <div className="px-2 pb-2">
             {folder.files.map((file) => {
-              const fileUrl = resolveFileUrl(file.file_url || file.file);
+              const fname = file.original_filename || file.treeLabel || '';
+              const isNifti = isNiftiFilename(fname);
+              const fileUrl = isNifti ? niftiDownloadUrl(file.id) : resolveFileUrl(file.file_url || file.file);
               return (
                 <div key={file.id} className="mx-2 mb-2 rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-700 flex items-center justify-between gap-3">
                   <span className="truncate">{file.treeLabel}</span>
-                  {fileUrl && <a href={fileUrl} target="_blank" rel="noreferrer" className="text-blue-600 font-semibold hover:underline shrink-0">Ouvrir</a>}
+                  {fileUrl && (
+                    <a
+                      href={fileUrl}
+                      download={isNifti ? fname : undefined}
+                      target={isNifti ? undefined : '_blank'}
+                      rel={isNifti ? undefined : 'noreferrer'}
+                      className="text-blue-600 font-semibold hover:underline shrink-0"
+                    >
+                      {isNifti ? 'Télécharger' : 'Ouvrir'}
+                    </a>
+                  )}
                 </div>
               );
             })}
@@ -1095,11 +1253,23 @@ export default function PatientDetail() {
         </div>
       ))}
       {(node?.files || []).map((file) => {
-        const fileUrl = resolveFileUrl(file.file_url || file.file);
+        const fname = file.original_filename || file.treeLabel || '';
+        const isNifti = isNiftiFilename(fname);
+        const fileUrl = isNifti ? niftiDownloadUrl(file.id) : resolveFileUrl(file.file_url || file.file);
         return (
           <div key={file.id} className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-700 flex items-center justify-between gap-3">
             <span className="truncate">{file.treeLabel}</span>
-            {fileUrl && <a href={fileUrl} target="_blank" rel="noreferrer" className="text-blue-600 font-semibold hover:underline shrink-0">Ouvrir</a>}
+            {fileUrl && (
+              <a
+                href={fileUrl}
+                download={isNifti ? fname : undefined}
+                target={isNifti ? undefined : '_blank'}
+                rel={isNifti ? undefined : 'noreferrer'}
+                className="text-blue-600 font-semibold hover:underline shrink-0"
+              >
+                {isNifti ? 'Télécharger' : 'Ouvrir'}
+              </a>
+            )}
           </div>
         );
       })}
@@ -1380,8 +1550,14 @@ export default function PatientDetail() {
                                             <div className="text-[10px] text-blue-600/60 font-bold uppercase mt-1 tracking-widest">{file.relative_path?.split('.').pop() || 'File'} • {formatSize(file.file_size)}</div>
                                         </div>
                                         <div className="absolute right-4 opacity-0 group-hover:opacity-100 flex items-center gap-1 transition-opacity">
-                                            <a href={resolveFileUrl(file.file_url || file.file)} target="_blank" rel="noreferrer" title="Ouvrir" className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-600 hover:text-white transition-all"><Eye className="w-3.5 h-3.5" /></a>
-                                            <button title="Télécharger" className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-600 hover:text-white transition-all"><Download className="w-3.5 h-3.5" /></button>
+                                            {isNiftiFilename(file.original_filename) ? (
+                                              <a href={niftiDownloadUrl(file.id)} download={file.original_filename || 'volume.nii.gz'} title="Télécharger (NIfTI)" className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-600 hover:text-white transition-all"><Download className="w-3.5 h-3.5" /></a>
+                                            ) : (
+                                              <>
+                                                <a href={resolveFileUrl(file.file_url || file.file)} target="_blank" rel="noreferrer" title="Ouvrir" className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-600 hover:text-white transition-all"><Eye className="w-3.5 h-3.5" /></a>
+                                                <a href={resolveFileUrl(file.file_url || file.file)} download={file.original_filename || undefined} title="Télécharger" className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-600 hover:text-white transition-all"><Download className="w-3.5 h-3.5" /></a>
+                                              </>
+                                            )}
                                         </div>
                                     </div>
                                 ))}

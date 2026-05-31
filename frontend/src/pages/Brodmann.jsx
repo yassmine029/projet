@@ -219,7 +219,7 @@ export default function BrodmannPage() {
         <div className="flex items-center justify-between px-5 py-2.5 border-b border-white/[0.04]">
           <div className="flex items-center gap-3">
             <div>
-              <p className="text-[9px] font-black uppercase tracking-[0.25em] text-emerald-400/80">NeuroScan</p>
+              <p className="text-[9px] font-black uppercase tracking-[0.25em] text-emerald-400/80">BrainCore</p>
               <h1 className="text-sm font-bold text-white leading-tight">Recalage Atlas · Identification Brodmann</h1>
             </div>
           </div>

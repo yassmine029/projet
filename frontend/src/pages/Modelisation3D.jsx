@@ -766,7 +766,7 @@ function ReportPreviewModal({
           )}
 
           <div className="mt-4 pt-4 border-t border-slate-200/60 flex items-center justify-between text-[10px] text-slate-400 font-medium">
-            <span>NeuroScan — Plateforme de neuro-imagerie clinique</span>
+            <span>BrainCore — Plateforme de neuro-imagerie clinique</span>
             <span>Rapport généré le {examDate}</span>
           </div>
           </div>{/* fin px-8 py-6 space-y-6 */}
@@ -1067,7 +1067,7 @@ export default function Modelisation3D({ user = null }) {
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(20);
     pdf.setTextColor(255, 255, 255);
-    pdf.text('NeuroScan', m, 15);
+    pdf.text('BrainCore', m, 15);
     pdf.setFont('helvetica', 'normal');
     pdf.setFontSize(8);
     pdf.setTextColor(147, 197, 253);
@@ -1211,7 +1211,7 @@ export default function Modelisation3D({ user = null }) {
       pdf.setFillColor(248, 250, 252);
       pdf.rect(0, H - 10, W, 10, 'F');
       pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7); pdf.setTextColor(148, 163, 184);
-      pdf.text('NeuroScan - Plateforme de neuro-imagerie clinique', m, H - 4);
+      pdf.text('BrainCore - Plateforme de neuro-imagerie clinique', m, H - 4);
       pdf.text('Page ' + p + ' / ' + totalPages + '  |  ' + today, W - m, H - 4, { align: 'right' });
     }
 
@@ -1552,31 +1552,30 @@ export default function Modelisation3D({ user = null }) {
         {modelingResult ? (
                 <div className="space-y-4">
                   <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-card">
-                    {/* Header gradient de la card viewer */}
-                    <div className="relative overflow-hidden bg-gradient-to-r from-[#0f1f4b] via-[#0e2d82] to-[#1a3a8f] px-5 py-4">
-                      <span className="absolute -right-8 -top-8 h-28 w-28 rounded-full bg-white/5 pointer-events-none" />
-                      <div className="relative flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/15 shadow-inner">
-                            <Box className="h-5 w-5 text-white" />
-                          </div>
-                          <div>
-                            <p className="text-[10px] font-bold uppercase tracking-widest text-blue-200">Reconstruction volumétrique</p>
-                            <p className="text-sm font-black text-white">Modèle 3D — Hippocampe</p>
-                          </div>
-                          <span className="rounded-full border border-white/20 bg-white/10 px-2.5 py-0.5 text-[10px] font-bold text-white/70">
-                            Run #{runInfo?.id}
-                          </span>
+                    {/* Header épuré */}
+                    <div className="flex items-center justify-between gap-4 border-b border-slate-100 px-5 py-3.5">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-50 border border-blue-100">
+                          <Box className="h-4 w-4 text-blue-600" />
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => setStandardConfigOpen(true)}
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/20"
-                        >
-                          <Box className="h-3.5 w-3.5" />
-                          Reconfigurer
-                        </button>
+                        <div>
+                          <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Reconstruction volumétrique</p>
+                          <p className="text-sm font-bold text-slate-800 leading-tight">Modèle 3D — Hippocampe</p>
+                        </div>
+                        {runInfo?.id && (
+                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[10px] font-semibold text-slate-500">
+                            Run #{runInfo.id}
+                          </span>
+                        )}
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => setStandardConfigOpen(true)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 hover:border-slate-300"
+                      >
+                        <Box className="h-3.5 w-3.5" />
+                        Reconfigurer
+                      </button>
                     </div>
                     <div className="p-4 md:p-5">
                     <div className="flex flex-col gap-5 xl:flex-row xl:items-start">

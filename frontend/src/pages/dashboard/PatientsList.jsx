@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Plus, Search, X } from 'lucide-react';
+import { Plus, Search, X, Users, ChevronRight, Pencil, Trash2, Eye } from 'lucide-react';
 import api from '../../api';
 import PatientModal from '../../components/dashboard/PatientModal';
 import PageHeader from '../../components/ui/PageHeader';
@@ -195,140 +195,187 @@ export default function PatientsList() {
     }
   };
 
+  const initials = (nom, prenom) => {
+    const a = (nom || '').charAt(0).toUpperCase();
+    const b = (prenom || '').charAt(0).toUpperCase();
+    return (a + b) || '?';
+  };
+
+  const avatarColor = (id) => {
+    const colors = ['#2563eb','#7c3aed','#059669','#dc2626','#d97706','#0891b2'];
+    return colors[(id || 0) % colors.length];
+  };
+
+  const formatDate = (d) => {
+    if (!d) return '—';
+    try { return new Date(d).toLocaleDateString('fr-FR', { day:'2-digit', month:'short', year:'numeric' }); }
+    catch { return d; }
+  };
+
   return (
-    <div className="max-w-[1200px] space-y-6 bg-[#f5f7ff]">
-      {location.state?.createdPatientId ? (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
-          Patient créé avec succès. ID patient généré : PID-{location.state.createdPatientId}
+    <div style={{ maxWidth: 1100, fontFamily: "'Noto Sans', system-ui, sans-serif" }}>
+      {location.state?.createdPatientId && (
+        <div style={{ marginBottom: 16, borderRadius: 10, border: '1px solid #bbf7d0', background: '#f0fdf4', padding: '10px 16px', fontSize: 13, fontWeight: 600, color: '#16a34a' }}>
+          Patient créé avec succès — ID : PID-{location.state.createdPatientId}
         </div>
-      ) : null}
+      )}
 
-      <PageHeader
-        title="Mes Patients"
-        subtitle={`${patients.length} patients enregistres`}
-        actions={
-          <Button variant="primary" onClick={() => navigate('/new-patient')} className="flex items-center gap-2 shadow-card">
-            <Plus className="w-5 h-5" />
-            Nouveau Patient
-          </Button>
-        }
-      />
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: '#0f172a', margin: 0 }}>Mes Patients</h1>
+          <p style={{ fontSize: 13, color: '#94a3b8', marginTop: 3 }}>
+            {loading ? 'Chargement...' : `${patients.length} patient${patients.length > 1 ? 's' : ''} enregistré${patients.length > 1 ? 's' : ''}`}
+          </p>
+        </div>
+        <button
+          onClick={() => navigate('/new-patient')}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '10px 18px', borderRadius: 10, border: 'none', cursor: 'pointer', background: 'linear-gradient(135deg,#2563eb,#1d4ed8)', color: '#fff', fontSize: 13, fontWeight: 700, boxShadow: '0 4px 14px rgba(37,99,235,0.25)' }}
+        >
+          <Plus size={15} /> Nouveau Patient
+        </button>
+      </div>
 
-      <Card padding="md" className="rounded-[14px]">
-        <form onSubmit={handleSearch} className="grid grid-cols-1 gap-4 items-end md:grid-cols-5">
-          <Input
-            label="Rechercher"
-            name="id"
-            value={filters.id}
-            onChange={handleFilterChange}
-            placeholder="Nom, ID patient..."
-            icon={<Search className="w-4 h-4" />}
-          />
-          <Input
-            label="N° Dossier"
-            name="num_dossier"
-            value={filters.num_dossier}
-            onChange={handleFilterChange}
-            placeholder="DOS-XXXX..."
-          />
-          <div>
-            <label className="text-sm font-medium text-primary mb-1.5 block">Sexe</label>
-            <select
-              name="sexe"
-              value={filters.sexe}
-              onChange={handleFilterChange}
-              className="w-full border border-surface-border rounded-md px-4 py-2.5 text-sm text-primary bg-white focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
-            >
+      {/* Filtres */}
+      <div style={{ background: '#fff', border: '1px solid #f1f5f9', borderRadius: 14, padding: '16px 20px', marginBottom: 16 }}>
+        <form onSubmit={handleSearch} style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div style={{ flex: '1 1 180px' }}>
+            <label style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8', letterSpacing: '0.05em', textTransform: 'uppercase', display: 'block', marginBottom: 5 }}>Rechercher</label>
+            <div style={{ position: 'relative' }}>
+              <Search size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+              <input name="id" value={filters.id} onChange={handleFilterChange} placeholder="Nom, prénom…"
+                style={{ width: '100%', paddingLeft: 30, paddingRight: 10, paddingTop: 8, paddingBottom: 8, border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 13, color: '#0f172a', background: '#f8fafc', outline: 'none', boxSizing: 'border-box' }} />
+            </div>
+          </div>
+          <div style={{ flex: '1 1 150px' }}>
+            <label style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8', letterSpacing: '0.05em', textTransform: 'uppercase', display: 'block', marginBottom: 5 }}>N° Dossier</label>
+            <input name="num_dossier" value={filters.num_dossier} onChange={handleFilterChange} placeholder="DOS-XXXX…"
+              style={{ width: '100%', padding: '8px 10px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 13, color: '#0f172a', background: '#f8fafc', outline: 'none', boxSizing: 'border-box' }} />
+          </div>
+          <div style={{ flex: '0 0 130px' }}>
+            <label style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8', letterSpacing: '0.05em', textTransform: 'uppercase', display: 'block', marginBottom: 5 }}>Sexe</label>
+            <select name="sexe" value={filters.sexe} onChange={handleFilterChange}
+              style={{ width: '100%', padding: '8px 10px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 13, color: '#0f172a', background: '#f8fafc', outline: 'none' }}>
               <option value="">Tous</option>
               <option value="M">Masculin</option>
-              <option value="F">Feminin</option>
+              <option value="F">Féminin</option>
             </select>
           </div>
-          <Input
-            label="Diagnostic"
-            name="autres_maladies"
-            value={filters.autres_maladies}
-            onChange={handleFilterChange}
-            placeholder="Mots cles..."
-          />
-          <Button type="submit" variant="outline" className="h-[42px] flex items-center justify-center gap-2">
-            <Search className="w-4 h-4" />
-            Filtrer
-          </Button>
+          <div style={{ flex: '1 1 160px' }}>
+            <label style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8', letterSpacing: '0.05em', textTransform: 'uppercase', display: 'block', marginBottom: 5 }}>Diagnostic</label>
+            <input name="autres_maladies" value={filters.autres_maladies} onChange={handleFilterChange} placeholder="Mots-clés…"
+              style={{ width: '100%', padding: '8px 10px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 13, color: '#0f172a', background: '#f8fafc', outline: 'none', boxSizing: 'border-box' }} />
+          </div>
+          <button type="submit"
+            style={{ padding: '8px 18px', borderRadius: 8, border: '1.5px solid #e2e8f0', background: '#fff', fontSize: 13, fontWeight: 600, color: '#475569', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            <Search size={13} /> Filtrer
+          </button>
         </form>
-      </Card>
+      </div>
 
-      <Card padding="sm" className="rounded-[14px] overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-[#f5f7ff] border-b border-surface-border">
-                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">N° Dossier</th>
-                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Nom</th>
-                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Prenom</th>
-                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Date Naissance</th>
-                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Sexe</th>
-                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Coupes MRI</th>
-                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">Diagnostics</th>
-                <th className="p-4 text-xs font-semibold text-gray-400 uppercase tracking-wide text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-surface-border">
-              {loading ? (
-                <tr>
-                  <td colSpan="8" className="p-8 text-center text-gray-600">Chargement des patients...</td>
-                </tr>
-              ) : patients.length === 0 ? (
-                <tr>
-                  <td colSpan="8" className="p-8 text-center text-gray-600">Aucun patient trouve.</td>
-                </tr>
-              ) : (
-                patients.map(patient => (
-<tr 
-  key={patient.id} 
-  onClick={() => navigate(`/dashboard/patients/${patient.id}`)}
-  className="hover:bg-blue-50/50 transition-colors cursor-pointer group"
->
-  <td className="p-4 text-sm font-semibold text-primary">{patient.num_dossier}</td>
-  <td className="p-4 text-sm font-medium text-primary">{patient.nom}</td>
-  <td className="p-4 text-sm text-gray-600">{patient.prenom}</td>
-  <td className="p-4 text-sm text-gray-600">{patient.date_naissance}</td>
-  <td className="p-4">
-    <Badge variant="info">{patient.sexe === 'M' ? 'Homme' : 'Femme'}</Badge>
-  </td>
-  <td className="p-4 text-sm text-gray-600">{getSlicesCount(patient) ?? '—'}</td>
-  <td className="p-4 text-sm text-gray-600 truncate max-w-[200px]">
-    {patient.autres_maladies || '—'}
-  </td>
-  <td className="p-4 text-right">
-    <div className="inline-flex items-center gap-1.5">
-      <button 
-        onClick={(e) => { e.stopPropagation(); navigate(`/dashboard/patients/${patient.id}`); }}
-        className="px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
-      >
-        Voir
-      </button>
-      <button 
-        onClick={(e) => { e.stopPropagation(); openEditModal(patient); }}
-        className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-      >
-        Modifier
-      </button>
-      <button 
-        onClick={(e) => { e.stopPropagation(); handleDeletePatient(patient); }}
-        className="px-3 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
-      >
-        Supprimer
-      </button>
-    </div>
-  </td>
-</tr>
-                ))
-              )}
-            </tbody>
-          </table>
+      {/* Liste */}
+      <div style={{ background: '#fff', border: '1px solid #f1f5f9', borderRadius: 14, overflow: 'hidden' }}>
+        {/* En-tête table */}
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1.2fr 1fr 0.8fr 1.5fr auto', gap: 0, padding: '10px 20px', borderBottom: '1px solid #f8fafc', background: '#fafbfc' }}>
+          {['Patient', 'N° Dossier', 'Naissance', 'Sexe', 'MRI', 'Diagnostic', ''].map((h, i) => (
+            <span key={i} style={{ fontSize: 10, fontWeight: 700, color: '#b0bec5', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{h}</span>
+          ))}
         </div>
-      </Card>
+
+        {loading ? (
+          <div style={{ padding: '40px 0', textAlign: 'center' }}>
+            <div style={{ width: 28, height: 28, border: '2.5px solid #e2e8f0', borderTopColor: '#2563eb', borderRadius: '50%', animation: 'spin 0.7s linear infinite', margin: '0 auto 10px' }} />
+            <p style={{ fontSize: 13, color: '#94a3b8' }}>Chargement…</p>
+          </div>
+        ) : patients.length === 0 ? (
+          <div style={{ padding: '50px 0', textAlign: 'center' }}>
+            <div style={{ width: 52, height: 52, borderRadius: 14, background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>
+              <Users size={24} style={{ color: '#cbd5e1' }} />
+            </div>
+            <p style={{ fontSize: 14, fontWeight: 600, color: '#64748b', marginBottom: 6 }}>Aucun patient trouvé</p>
+            <p style={{ fontSize: 12, color: '#94a3b8' }}>Créez votre premier patient pour commencer.</p>
+          </div>
+        ) : (
+          patients.map((patient, idx) => (
+            <div
+              key={patient.id}
+              onClick={() => navigate(`/dashboard/patients/${patient.id}`)}
+              style={{
+                display: 'grid', gridTemplateColumns: '2fr 2fr 1.2fr 1fr 0.8fr 1.5fr auto',
+                gap: 0, padding: '13px 20px', cursor: 'pointer',
+                borderBottom: idx < patients.length - 1 ? '1px solid #f8fafc' : 'none',
+                transition: 'background 0.12s',
+                alignItems: 'center',
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = '#f8fbff'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+            >
+              {/* Patient — avatar + nom */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 34, height: 34, borderRadius: 10, background: avatarColor(patient.id), display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
+                  {initials(patient.nom, patient.prenom)}
+                </div>
+                <div>
+                  <p style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', margin: 0, lineHeight: 1.2 }}>{patient.nom} {patient.prenom}</p>
+                  <p style={{ fontSize: 11, color: '#94a3b8', margin: 0 }}>ID {patient.id}</p>
+                </div>
+              </div>
+
+              {/* Dossier */}
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#2563eb' }}>{patient.num_dossier || '—'}</span>
+
+              {/* Naissance */}
+              <span style={{ fontSize: 12, color: '#64748b' }}>{formatDate(patient.date_naissance)}</span>
+
+              {/* Sexe */}
+              <span style={{
+                display: 'inline-block', fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20,
+                background: patient.sexe === 'M' ? '#eff6ff' : '#fdf2f8',
+                color: patient.sexe === 'M' ? '#2563eb' : '#9333ea',
+                border: patient.sexe === 'M' ? '1px solid #bfdbfe' : '1px solid #e9d5ff',
+              }}>
+                {patient.sexe === 'M' ? 'Homme' : 'Femme'}
+              </span>
+
+              {/* MRI */}
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>{getSlicesCount(patient) ?? '—'}</span>
+
+              {/* Diagnostic */}
+              <span style={{ fontSize: 12, color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {patient.autres_maladies || '—'}
+              </span>
+
+              {/* Actions */}
+              <div style={{ display: 'flex', gap: 5 }} onClick={e => e.stopPropagation()}>
+                <button onClick={() => navigate(`/dashboard/patients/${patient.id}`)}
+                  title="Voir"
+                  style={{ width: 30, height: 30, borderRadius: 7, border: '1px solid #e2e8f0', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#2563eb', transition: 'all 0.12s' }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#eff6ff'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = '#fff'; }}
+                >
+                  <Eye size={13} />
+                </button>
+                <button onClick={() => openEditModal(patient)}
+                  title="Modifier"
+                  style={{ width: 30, height: 30, borderRadius: 7, border: '1px solid #e2e8f0', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', transition: 'all 0.12s' }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#f8fafc'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = '#fff'; }}
+                >
+                  <Pencil size={13} />
+                </button>
+                <button onClick={() => handleDeletePatient(patient)}
+                  title="Supprimer"
+                  style={{ width: 30, height: 30, borderRadius: 7, border: '1px solid #fee2e2', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ef4444', transition: 'all 0.12s' }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#fef2f2'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = '#fff'; }}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
 
       {/* Create Patient Modal (disabled for reset) */}
       {/*

@@ -1,7 +1,70 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Mail, ArrowLeft, ShieldAlert, CheckCircle2, AlertTriangle, Brain, Zap, ArrowRight, Briefcase } from 'lucide-react'
+import { Mail, ArrowLeft, AlertTriangle, Brain, Zap, Briefcase, CheckCircle2 } from 'lucide-react'
 import { emergencyLogin, checkSession, checkEmergencyLimit } from '../api'
+
+const CSS = `
+  @keyframes imgZoom { from{transform:scale(1);} to{transform:scale(1.04);} }
+  @keyframes spin     { to{transform:rotate(360deg);} }
+  @keyframes pulse    { 0%,100%{opacity:1;} 50%{opacity:0.4;} }
+`
+
+const fld = (err = false, extra = {}) => ({
+  width: '100%', padding: '11px 14px', boxSizing: 'border-box',
+  border: `1.5px solid ${err ? '#fca5a5' : '#e2e8f0'}`,
+  borderRadius: 10, fontSize: 13.5, color: '#0f172a',
+  background: err ? '#fff7f7' : '#f8fafc',
+  outline: 'none', transition: 'border-color 0.18s, box-shadow 0.18s',
+  ...extra,
+})
+
+function RightPanel() {
+  return (
+    <div style={{ width:'100%', height:'100%', position:'relative', overflow:'hidden', display:'flex', flexDirection:'column', justifyContent:'flex-end' }}>
+      <img
+        src="/images/urgence2.png"
+        alt=""
+        style={{
+          position:'absolute', inset:0,
+          width:'100%', height:'100%',
+          objectFit:'cover', objectPosition:'center 80%',
+          filter:'blur(2px)', transform:'scale(1.08)',
+          animation:'imgZoom 12s ease-in-out infinite alternate',
+        }}
+      />
+      <div style={{
+        position:'absolute', inset:0,
+        background:'linear-gradient(to bottom, rgba(10,5,15,0.15) 0%, rgba(10,5,15,0.45) 40%, rgba(10,5,15,0.88) 70%, rgba(10,5,15,0.98) 100%)',
+      }}/>
+      <div style={{ position:'relative', zIndex:2, padding:'40px 48px' }}>
+        <div style={{ display:'inline-flex', alignItems:'center', gap:8, background:'rgba(239,68,68,0.15)', border:'1px solid rgba(239,68,68,0.4)', borderRadius:999, padding:'5px 14px', marginBottom:18 }}>
+          <div style={{ width:6, height:6, borderRadius:'50%', background:'#ef4444', boxShadow:'0 0 8px rgba(239,68,68,0.8)', animation:'pulse 1.5s ease infinite' }}/>
+          <span style={{ fontSize:10, fontWeight:800, color:'#fca5a5', letterSpacing:'0.12em', textTransform:'uppercase' }}>Mode démo avancé activé</span>
+        </div>
+        <h3 style={{ fontSize:22, fontWeight:800, color:'#fff', lineHeight:1.25, marginBottom:10, letterSpacing:'-0.01em' }}>
+          Découvrez BrainCore<br/>
+          <span style={{ color:'#fb923c' }}>avant activation.</span>
+        </h3>
+        <p style={{ fontSize:13, color:'rgba(203,213,225,0.80)', lineHeight:1.65, marginBottom:22, maxWidth:300 }}>
+          Explorez la segmentation et le recalage multimodal. Accès complet disponible sous 24h.
+        </p>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+          {[
+            { label:'Sessions', val:'2 disponibles' },
+            { label:'Durée',    val:'Illimitée'      },
+            { label:'Données',  val:'Démonstration'  },
+            { label:'Accès',    val:'Sécurisé'       },
+          ].map((s, i) => (
+            <div key={i} style={{ background:'rgba(255,255,255,0.07)', border:'1px solid rgba(255,255,255,0.10)', borderRadius:10, padding:'10px 13px', backdropFilter:'blur(10px)' }}>
+              <div style={{ fontSize:9, fontWeight:800, color:'#f87171', letterSpacing:'0.1em', textTransform:'uppercase', marginBottom:4 }}>{s.label}</div>
+              <div style={{ fontSize:13, fontWeight:700, color:'#fff' }}>{s.val}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export default function EmergencyLoginPage({ onBack, onLogin }) {
   const navigate = useNavigate()
@@ -11,292 +74,192 @@ export default function EmergencyLoginPage({ onBack, onLogin }) {
   const [sent, setSent] = useState(false)
   const [emailError, setEmailError] = useState('')
   const [orderError, setOrderError] = useState('')
-  const [successMessage, setSuccessMessage] = useState('')
-  const [remainingAttempts, setRemainingAttempts] = useState(null)
+  const [remainingAttempts, setRemainingAttempts] = useState(2)
 
   const refreshAttempts = async () => {
     if (!email || !orderNumber) return
     try {
       const res = await checkEmergencyLimit(email, orderNumber)
       if (res.data?.ok) setRemainingAttempts(res.data.remaining ?? null)
-    } catch {
-      /* silencieux */
-    }
+    } catch { /* silencieux */ }
   }
-
-  useEffect(() => {
-    setRemainingAttempts(2)
-  }, [])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!email || !orderNumber) {
-      if (!email) setEmailError('Email professionnel requis')
-      if (!orderNumber) setOrderError("Numéro d'ordre requis")
-      return
-    }
-    setIsLoading(true)
-    setEmailError('')
-    setOrderError('')
-    
+    if (!email) { setEmailError('Email professionnel requis') }
+    if (!orderNumber) { setOrderError("Numéro d'ordre requis") }
+    if (!email || !orderNumber) return
+    setIsLoading(true); setEmailError(''); setOrderError('')
     try {
       const response = await emergencyLogin(email, orderNumber)
-      if (response.data && response.data.ok) {
+      if (response.data?.ok) {
         if (response.data.remaining !== undefined) setRemainingAttempts(response.data.remaining)
-        // La session Django est déjà créée par emergency_login (Set-Cookie).
-        // checkSession peut parfois ne pas voir le cookie tout de suite (timing / onglet) :
-        // on enrichit via l’API si possible, sinon on dérive l’utilisateur depuis la réponse.
         let merged = null
         try {
           const sess = await checkSession()
           if (sess.data?.logged_in) {
             const raw = sess.data.user
-            const u =
-              raw && typeof raw === 'object'
-                ? raw
-                : { username: raw, fullName: raw, is_staff: sess.data.is_staff }
-            merged = {
-              ...u,
-              is_emergency_session: Boolean(sess.data.is_emergency_session),
-            }
+            const u = raw && typeof raw === 'object' ? raw : { username: raw, fullName: raw, is_staff: sess.data.is_staff }
+            merged = { ...u, is_emergency_session: Boolean(sess.data.is_emergency_session) }
           }
-        } catch (sessErr) {
-          console.error(sessErr)
-        }
-
+        } catch (sessErr) { console.error(sessErr) }
         if (!merged) {
           const uname = (response.data.user || email || '').trim()
-          merged = {
-            username: uname,
-            fullName: uname.includes('@') ? uname.split('@')[0].replace(/[._]/g, ' ') : uname,
-            is_emergency_session: true,
-          }
+          merged = { username: uname, fullName: uname.includes('@') ? uname.split('@')[0].replace(/[._]/g, ' ') : uname, is_emergency_session: true }
         }
-
         localStorage.setItem('user', JSON.stringify(merged))
-        // Stocker les infos de session pour l'affichage dans EmergencyDashboard
-        const countUsed = (response.data.count ?? 0);
-        sessionStorage.setItem('emergency_count', String(countUsed));
-        sessionStorage.setItem('emergency_max', '10');
+        const countUsed = (response.data.count ?? 0)
+        sessionStorage.setItem('emergency_count', String(countUsed))
+        sessionStorage.setItem('emergency_max', '10')
         onLogin?.(merged)
         navigate('/urgence', { replace: true })
-        return
       } else {
         setEmailError(response.data?.error || 'Validation d\'urgence échouée.')
         await refreshAttempts()
       }
     } catch (err) {
-      console.error(err)
       const serverError = err?.response?.data?.error
-      if (serverError && serverError.toLowerCase().includes('numéro')) {
-        setOrderError(serverError)
-      } else {
-        setEmailError(serverError || 'Erreur de communication avec le serveur HDS.')
-      }
-    } finally {
-      setIsLoading(false)
-    }
+      if (serverError?.toLowerCase().includes('numéro')) setOrderError(serverError)
+      else setEmailError(serverError || 'Erreur de communication avec le serveur.')
+    } finally { setIsLoading(false) }
   }
 
   return (
-    <div className="min-h-screen flex bg-white font-sans selection:bg-red-100 selection:text-red-900 overflow-hidden">
-      {/* Structural integrity bar */}
-      <div className="fixed top-0 left-0 w-full h-1 bg-gradient-to-r from-red-500 via-red-600 to-orange-600 z-50"></div>
+    <div style={{ display:'flex', minHeight:'100vh', fontFamily:"system-ui, -apple-system, sans-serif", background:'#f8fafc' }}>
+      <style>{CSS}</style>
 
-      <div className="flex-1 flex flex-col justify-center px-8 sm:px-16 lg:px-24 xl:px-32 relative py-12">
-        <div className="absolute top-0 left-0 w-full h-full bg-red-50/10 -z-10"></div>
-        
-        <div className="max-w-md w-full mx-auto space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-700">
-          
-          <div className="space-y-6">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-red-600 rounded-xl flex items-center justify-center shadow-lg shadow-red-600/30">
-                <Brain className="w-6 h-6 text-white" />
-              </div>
-              <span className="text-xl font-extrabold text-slate-900 tracking-tight">NeuroScan</span>
-            </div>
-            
-            <button 
-              onClick={onBack}
-              className="flex items-center gap-2 text-sm font-bold text-slate-400 hover:text-red-600 transition-colors group"
-            >
-              <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
-              Retour à la connexion standard
-            </button>
+      {/* Top urgence bar */}
+      <div style={{ position:'fixed', top:0, left:0, width:'100%', height:3, background:'linear-gradient(to right,#dc2626,#b91c1c,#ef4444)', zIndex:50 }}/>
+
+      {/* Left panel */}
+      <div style={{ flex:'1', display:'flex', flexDirection:'column', justifyContent:'center', padding:'48px 64px', maxWidth:560, margin:'0 auto' }}>
+
+        {/* Logo */}
+        <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:32 }}>
+          <div style={{ width:40, height:40, borderRadius:12, background:'linear-gradient(135deg,#dc2626,#b91c1c)', display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 4px 14px rgba(220,38,38,0.3)' }}>
+            <Brain size={20} color="#fff"/>
           </div>
-
-          <div className="space-y-8">
-            <div className="space-y-3">
-              <div className="inline-flex items-center gap-2 px-3 py-1 bg-red-50 text-red-600 rounded-full border border-red-100">
-                <Zap className="w-3 h-3 fill-red-600 animate-pulse" />
-                <span className="text-[10px] font-black uppercase tracking-widest">Protocole d'Urgence</span>
-              </div>
-              <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight leading-tight uppercase">
-                Accédez à la plateforme <span className="text-red-600">sans attendre </span>
-              </h2>
-              <p className="text-slate-500 font-medium leading-relaxed text-sm">
-                Testez NeuroScan immédiatement avec votre adresse professionnelle.
-                Votre accès complet sera activé après validation par l'administrateur.
-              </p>
-            </div>
-
-            {!sent ? (
-              <form onSubmit={handleSubmit} className="space-y-6">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Email Professionnel</label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                      <Mail className={`h-4 w-4 ${emailError ? 'text-red-400' : 'text-slate-400'}`} />
-                    </div>
-                    <input 
-                      type="email" 
-                      value={email}
-                      onChange={e => { setEmail(e.target.value); setEmailError('') }}
-                      className={`block w-full pl-10 pr-4 py-3.5 border ${emailError ? 'border-red-300' : 'border-slate-100'} rounded-2xl bg-slate-50/50 focus:bg-white transition-all duration-300 placeholder-slate-300 focus:outline-none focus:ring-4 focus:ring-red-600/5 sm:text-sm text-slate-900 font-medium`}
-                      placeholder="nom@neuroscan.med" 
-                      autoFocus
-                    />
-                  </div>
-                  {emailError && (
-                    <p className="text-xs text-red-600 font-black pl-1 flex items-center gap-1.5 mt-2">
-                      <AlertTriangle className="w-3.5 h-3.5" />
-                      {emailError}
-                    </p>
-                  )}
-                  {remainingAttempts !== null && !emailError && (
-                    <div className="flex items-center gap-2 pl-1 mt-3">
-                       <div className="flex gap-1">
-                          {[1,2].map(i => (
-                            <div key={i} className={`w-3 h-1 rounded-full transition-colors duration-500 ${i <= remainingAttempts ? 'bg-red-400' : 'bg-slate-100'}`}></div>
-                          ))}
-                       </div>
-                       <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                          {remainingAttempts} tentatives restantes
-                       </p>
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Numéro d'ordre tunisien</label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                      <Briefcase className={`h-4 w-4 ${orderError ? 'text-red-400' : 'text-slate-400'}`} />
-                    </div>
-                    <input
-                      type="text"
-                      value={orderNumber}
-                      onChange={e => { setOrderNumber(e.target.value.toUpperCase()); setOrderError('') }}
-                      className={`block w-full pl-10 pr-4 py-3.5 border ${orderError ? 'border-red-300' : 'border-slate-100'} rounded-2xl bg-slate-50/50 focus:bg-white transition-all duration-300 placeholder-slate-300 focus:outline-none focus:ring-4 focus:ring-red-600/5 sm:text-sm text-slate-900 font-medium`}
-                      placeholder="12345 ou T-12345"
-                    />
-                  </div>
-                  {orderError && (
-                    <p className="text-xs text-red-600 font-black pl-1 flex items-center gap-1.5 mt-2">
-                      <AlertTriangle className="w-3.5 h-3.5" />
-                      {orderError}
-                    </p>
-                  )}
-                </div>
-
-                <button 
-                  type="submit" 
-                  disabled={isLoading || !email || !orderNumber}
-                  className="w-full h-14 flex justify-center items-center gap-3 py-4 bg-gradient-to-r from-red-600 to-red-800 text-white font-bold rounded-2xl hover:shadow-xl hover:shadow-red-600/20 active:scale-[0.98] transition-all duration-300 group disabled:opacity-50"
-                >
-                  {isLoading ? (
-                    <span className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-                  ) : (
-                    <>
-                      <Zap className="w-3 h-3 fill-white" />
-                      <span className="text-sm font-bold uppercase tracking-widest">Accéder à la plateforme</span>
-                    </>
-                  )}
-                </button>
-              </form>
-            ) : (
-              <div className="space-y-8 animate-in fade-in zoom-in duration-500">
-                <div className="space-y-4 text-center">
-                  <div className="w-20 h-20 bg-emerald-50 rounded-3xl flex items-center justify-center mx-auto mb-6 ring-1 ring-emerald-100">
-                    <CheckCircle2 className="w-10 h-10 text-emerald-600" />
-                  </div>
-                  <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight uppercase">Accès Accordé</h2>
-                  <p className="text-slate-500 font-medium text-sm">Session d'urgence active pour <span className="text-red-600 font-bold">{email}</span></p>
-                </div>
-                
-                <div className="bg-slate-50 rounded-3xl p-6 space-y-4 border border-slate-100">
-                   <div className="flex items-center justify-between text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                      <span>Statut HDS</span>
-                      <span className="text-emerald-600">Connecté</span>
-                   </div>
-                   <div className="flex items-center gap-4">
-                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></div>
-                      <p className="text-sm text-slate-600 font-bold">Redirection prioritaire...</p>
-                   </div>
-                </div>
-              </div>
-            )}
-          </div>
-          
-          <p className="text-center text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] pt-8 border-t border-slate-50">
-            © 2026 NeuroScan · HDS Certified System
-          </p>
+          <span style={{ fontSize:18, fontWeight:800, color:'#0f172a', letterSpacing:'-0.02em' }}>BrainCore</span>
         </div>
+
+        {/* Back */}
+        <button onClick={onBack} style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize:13, fontWeight:600, color:'#94a3b8', background:'none', border:'none', cursor:'pointer', padding:0, marginBottom:32, transition:'color 0.15s' }}
+          onMouseEnter={e=>e.currentTarget.style.color='#dc2626'} onMouseLeave={e=>e.currentTarget.style.color='#94a3b8'}>
+          <ArrowLeft size={14}/> Retour à la connexion standard
+        </button>
+
+        {!sent ? (
+          <>
+            {/* Badge */}
+            <div style={{ display:'inline-flex', alignItems:'center', gap:7, background:'#fef2f2', border:'1px solid #fecaca', borderRadius:999, padding:'5px 12px', marginBottom:18, width:'fit-content' }}>
+              <Zap size={11} style={{ fill:'#dc2626', color:'#dc2626' }}/>
+              <span style={{ fontSize:10, fontWeight:800, color:'#dc2626', letterSpacing:'0.12em', textTransform:'uppercase' }}>Protocole d'Urgence</span>
+            </div>
+
+            <h2 style={{ fontSize:28, fontWeight:800, color:'#0f172a', letterSpacing:'-0.03em', lineHeight:1.15, marginBottom:10 }}>
+              Accès immédiat,<br/>
+              <span style={{ color:'#dc2626' }}>Docteur.</span>
+            </h2>
+            <p style={{ fontSize:13.5, color:'#64748b', lineHeight:1.65, marginBottom:28 }}>
+              Accédez à BrainCore immédiatement avec votre email professionnel et votre numéro d'ordre.
+              Votre accès complet sera activé après validation par l'administrateur.
+            </p>
+
+            <form onSubmit={handleSubmit} style={{ display:'flex', flexDirection:'column', gap:18 }}>
+
+              {/* Email */}
+              <div>
+                <label style={{ display:'block', fontSize:11.5, fontWeight:700, color:'#475569', marginBottom:6, letterSpacing:'0.04em' }}>
+                  Email professionnel <span style={{ color:'#ef4444' }}>*</span>
+                </label>
+                <div style={{ position:'relative' }}>
+                  <div style={{ position:'absolute', left:12, top:0, bottom:0, display:'flex', alignItems:'center', pointerEvents:'none', color: emailError ? '#f87171' : '#94a3b8' }}><Mail size={14}/></div>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={e => { setEmail(e.target.value); setEmailError('') }}
+                    style={fld(!!emailError, { paddingLeft:38 })}
+                    placeholder="votre.email@hopital.com"
+                    autoFocus
+                  />
+                </div>
+                {emailError && (
+                  <p style={{ marginTop:5, fontSize:11, color:'#ef4444', fontWeight:600, display:'flex', alignItems:'center', gap:4 }}>
+                    <AlertTriangle size={11}/> {emailError}
+                  </p>
+                )}
+                {remainingAttempts !== null && !emailError && (
+                  <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:6 }}>
+                    <div style={{ display:'flex', gap:4 }}>
+                      {[1,2].map(i => (
+                        <div key={i} style={{ width:12, height:3, borderRadius:2, background: i <= remainingAttempts ? '#f87171' : '#e2e8f0', transition:'background 0.3s' }}/>
+                      ))}
+                    </div>
+                    <span style={{ fontSize:10, fontWeight:700, color:'#94a3b8', letterSpacing:'0.08em', textTransform:'uppercase' }}>
+                      {remainingAttempts} tentative{remainingAttempts > 1 ? 's' : ''} restante{remainingAttempts > 1 ? 's' : ''}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Order number */}
+              <div>
+                <label style={{ display:'block', fontSize:11.5, fontWeight:700, color:'#475569', marginBottom:6, letterSpacing:'0.04em' }}>
+                  Numéro d'ordre tunisien <span style={{ color:'#ef4444' }}>*</span>
+                </label>
+                <div style={{ position:'relative' }}>
+                  <div style={{ position:'absolute', left:12, top:0, bottom:0, display:'flex', alignItems:'center', pointerEvents:'none', color: orderError ? '#f87171' : '#94a3b8' }}><Briefcase size={14}/></div>
+                  <input
+                    type="text"
+                    value={orderNumber}
+                    onChange={e => { setOrderNumber(e.target.value.toUpperCase()); setOrderError('') }}
+                    style={fld(!!orderError, { paddingLeft:38 })}
+                    placeholder="12345 ou T-12345"
+                  />
+                </div>
+                {orderError && (
+                  <p style={{ marginTop:5, fontSize:11, color:'#ef4444', fontWeight:600, display:'flex', alignItems:'center', gap:4 }}>
+                    <AlertTriangle size={11}/> {orderError}
+                  </p>
+                )}
+              </div>
+
+              {/* Submit */}
+              <button type="submit" disabled={isLoading || !email || !orderNumber} style={{
+                width:'100%', height:48, borderRadius:12, border:'none',
+                cursor: (isLoading || !email || !orderNumber) ? 'not-allowed' : 'pointer',
+                background: (isLoading || !email || !orderNumber) ? '#94a3b8' : 'linear-gradient(135deg,#dc2626,#b91c1c)',
+                color:'#fff', fontSize:14, fontWeight:700,
+                display:'flex', alignItems:'center', justifyContent:'center', gap:8,
+                boxShadow: (isLoading || !email || !orderNumber) ? 'none' : '0 4px 20px rgba(220,38,38,0.32)',
+                opacity: (isLoading || !email || !orderNumber) ? 0.65 : 1,
+                transition:'all 0.22s ease',
+              }}>
+                {isLoading
+                  ? <div style={{ width:18, height:18, border:'2.5px solid rgba(255,255,255,0.3)', borderTopColor:'#fff', borderRadius:'50%', animation:'spin 0.7s linear infinite' }}/>
+                  : <><Zap size={14} style={{ fill:'#fff' }}/><span>Accéder à la plateforme</span></>
+                }
+              </button>
+            </form>
+          </>
+        ) : (
+          <div style={{ textAlign:'center' }}>
+            <div style={{ width:72, height:72, borderRadius:20, background:'#f0fdf4', border:'1px solid #bbf7d0', display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 24px' }}>
+              <CheckCircle2 size={36} color="#16a34a"/>
+            </div>
+            <h2 style={{ fontSize:24, fontWeight:800, color:'#0f172a', marginBottom:10 }}>Accès accordé</h2>
+            <p style={{ fontSize:14, color:'#64748b', marginBottom:8 }}>
+              Session d'urgence active pour<br/>
+              <span style={{ color:'#dc2626', fontWeight:700 }}>{email}</span>
+            </p>
+            <p style={{ fontSize:12, color:'#94a3b8' }}>Redirection en cours...</p>
+          </div>
+        )}
       </div>
 
-      {/* Right Column - Visual */}
-      <div className="hidden lg:flex w-[450px] xl:w-[550px] relative overflow-hidden bg-[#0d0d1a] flex-col justify-between p-16">
-        <div className="absolute inset-0 bg-gradient-to-br from-slate-950 via-red-950/20 to-slate-950"></div>
-        <div className="absolute top-0 right-0 w-full h-full bg-[radial-gradient(circle_at_50%_0%,_rgba(239,68,68,0.1),transparent_50%)]"></div>
-        
-        <div className="absolute bottom-1/4 -right-20 w-80 h-80 bg-red-600/5 rounded-full blur-[100px] animate-pulse"></div>
-        <div className="absolute top-1/4 -left-20 w-80 h-80 bg-blue-600/5 rounded-full blur-[100px] animate-pulse" style={{ animationDelay: '3s' }}></div>
-
-        <div className="relative z-10">
-          <div className="inline-flex items-center gap-2 bg-red-600/10 border border-red-500/20 backdrop-blur-md rounded-full px-4 py-1.5">
-            <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></div>
-            <span className="text-[8px] font-black text-red-100 uppercase tracking-widest">Emergency Override Active</span>
-          </div>
-        </div>
-
-        <div className="relative z-10 space-y-10">
-          <div className="w-14 h-14 bg-gradient-to-br from-red-600 to-orange-600 rounded-2xl p-0.5 shadow-2xl rotate-3">
-             <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center">
-                <ShieldAlert className="w-6 h-6 text-red-500" />
-             </div>
-          </div>
-
-          <div className="space-y-6">
-            <h2 className="text-3xl font-extrabold text-white leading-tight tracking-tight uppercase">
-              Découvrez NeuroScan <br/>
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-red-400 to-orange-400">
-                avant votre activation.
-              </span>
-            </h2>
-            <p className="text-base text-slate-400 font-light leading-relaxed max-w-sm">
-              Explorez les fonctionnalités
-             de segmentation et de recalage
-             dès maintenant — votre compte
-             sera activé sous 24h.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4 pt-4">
-             {[
-               { label: 'SESSIONS', val: '2 disponibles' },
-               { label: 'DURÉE', val: 'illimitée' },
-               { label: 'DONNÉES ', val: 'Démo uniquement' },
-               { label: 'ACCÈS', val: 'sécurisé' },
-             ].map((stat, i) => (
-               <div key={i} className="p-4 bg-white/5 border border-white/5 rounded-2xl backdrop-blur-sm group hover:bg-white/10 transition-colors">
-                  <p className="text-red-400 font-extrabold text-[10px] uppercase tracking-widest mb-1">{stat.label}</p>
-                  <p className="text-white font-bold text-base tracking-tight">{stat.val}</p>
-               </div>
-             ))}
-          </div>
-        </div>
-
-        
+      {/* Right panel */}
+      <div style={{ width:480, position:'relative', overflow:'hidden', flexShrink:0 }}>
+        <RightPanel/>
       </div>
     </div>
   )

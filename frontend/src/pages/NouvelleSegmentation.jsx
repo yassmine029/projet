@@ -1256,6 +1256,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
   const [searchParams] = useSearchParams();
   const launchTriggeredRef = useRef(false);
 
+  const [showIntro, setShowIntro] = useState(true);
   const [step, setStep] = useState(1);
   const [patients, setPatients] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2260,7 +2261,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
     setNpErrors((e) => ({ ...e, [key]: '' }));
   };
 
-  const ACCEPTED_EXTS = ['.nii', '.nii.gz', '.dcm', '.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp'];
+  const ACCEPTED_EXTS = ['.nii', '.nii.gz', '.jpg', '.jpeg', '.png', '.tif', '.tiff'];
   const npHandleFileDrop = useCallback((e) => {
     e.preventDefault();
     setNpDragging(false);
@@ -2322,7 +2323,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
   const acceptedFile = (name) => {
     const lower = name.toLowerCase();
     if (lower.endsWith('.nii.gz')) return true;
-    const exts = new Set(['.nii', '.gz', '.dcm', '.dicom', '.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp']);
+    const exts = new Set(['.nii', '.gz', '.jpg', '.jpeg', '.png', '.tif', '.tiff']);
     const dot = lower.lastIndexOf('.');
     return dot !== -1 && exts.has(lower.slice(dot));
   };
@@ -2426,92 +2427,200 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
     setEmergencyFiles([]);
   };
 
-  return (
-    <div className="h-screen w-screen overflow-hidden bg-slate-50 flex flex-col font-sans">
-      <div className="bg-slate-900 px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              if (step > 1) {
-                setStep(step - 1);
-              } else {
-                navigate(isEmergencySession ? '/urgence' : '/dashboard');
-              }
-            }}
-            className="flex items-center gap-1.5 rounded-full border border-white/25 bg-white/10 backdrop-blur-sm px-3 py-1.5 text-[11px] font-bold text-white/80 hover:bg-white/20 transition-all"
-            aria-label="Retour"
-          >
-            <ChevronLeft className="h-3 w-3" /> Retour
-          </button>
-          <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white">
-            <UserRound className="h-4 w-4" />
-          </span>
-          <div>
-            <p className="text-white text-[14px] font-medium">Nouvelle segmentation hippocampique</p>
-            <p className="text-blue-300 text-[11px]">Analyses MRI · Dr. {doctorName}</p>
+  /* ── Page d'introduction segmentation ── */
+  if (showIntro) {
+    const userLastName  = userProp?.last_name  || userProp?.nom    || '';
+    const userFirstName = userProp?.first_name || userProp?.prenom || '';
+    const displayName   = userLastName || userFirstName
+      || (userProp?.full_name || userProp?.fullName || '').split(' ').pop()
+      || userProp?.username || 'Docteur';
+
+    const STEPS_INFO = [
+      { n: '01', icon: <UserRound size={18} color="#2563eb" />, bg: '#dbeafe', label: 'Sélection du patient', desc: 'Choisissez un patient existant ou créez-en un nouveau.' },
+      { n: '02', icon: <Layers size={18} color="#7c3aed" />,   bg: '#ede9fe', label: 'Coupes IRM',           desc: 'Sélectionnez les coupes à analyser parmi la série chargée.' },
+      { n: '03', icon: <Zap size={18} color="#0891b2" />,      bg: '#cffafe', label: 'Segmentation',         desc: 'Le modèle Deep Learning détecte et segmente l\'hippocampe.' },
+    ];
+
+    return (
+      <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden', fontFamily: "'Noto Sans', system-ui, sans-serif" }}>
+        <style>{`
+          @keyframes sg-fade-up {
+            from { opacity: 0; transform: translateY(18px); }
+            to   { opacity: 1; transform: translateY(0); }
+          }
+          .sg-badge  { animation: sg-fade-up 0.45s ease 0.05s both; }
+          .sg-hello  { animation: sg-fade-up 0.6s  cubic-bezier(0.22,1,0.36,1) 0.15s both; }
+          .sg-sub    { animation: sg-fade-up 0.45s ease 0.30s both; }
+          .sg-step-1 { animation: sg-fade-up 0.5s  cubic-bezier(0.22,1,0.36,1) 0.38s both; }
+          .sg-step-2 { animation: sg-fade-up 0.5s  cubic-bezier(0.22,1,0.36,1) 0.50s both; }
+          .sg-step-3 { animation: sg-fade-up 0.5s  cubic-bezier(0.22,1,0.36,1) 0.62s both; }
+          .sg-cta    { animation: sg-fade-up 0.5s  ease                        0.72s both; }
+
+          .sg-step-row {
+            display: flex; align-items: flex-start; gap: 16px;
+            padding: 16px 0; border: none; background: transparent;
+            width: 100%; text-align: left;
+          }
+          .sg-sep { height: 1px; background: rgba(15,23,42,0.10); }
+
+          .sg-btn {
+            display: inline-flex; align-items: center; gap: 10px;
+            font-family: 'Space Grotesk', 'Segoe UI', sans-serif;
+            font-size: 15px; font-weight: 700;
+            padding: 14px 36px; border-radius: 12px;
+            background: #1d4ed8; color: white; border: none;
+            cursor: pointer; letter-spacing: 0.01em;
+            transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+            box-shadow: 0 4px 20px rgba(29,78,216,0.35);
+          }
+          .sg-btn:hover { background: #1e40af; transform: translateY(-2px); box-shadow: 0 8px 28px rgba(29,78,216,0.40); }
+        `}</style>
+
+        {/* Background */}
+        <div style={{ position: 'absolute', inset: -16, backgroundImage: "url('/images/segmentation.png')", backgroundSize: 'cover', backgroundPosition: 'center', filter: 'blur(4px)', transform: 'scale(1.04)' }} />
+        <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.74)' }} />
+
+        {/* Content */}
+        <div style={{ position: 'relative', zIndex: 10, height: '100%', display: 'flex', flexDirection: 'column' }}>
+
+          {/* Top bar */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '22px 56px 0' }}>
+            <button
+              onClick={() => navigate('/')}
+              style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 13, color: '#475569', background: 'rgba(255,255,255,0.80)', border: '1px solid #e2e8f0', borderRadius: 9, padding: '7px 14px', cursor: 'pointer', fontWeight: 500, backdropFilter: 'blur(8px)' }}
+            >
+              <ChevronLeft size={14} /> Retour
+            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 10, color: '#334155', fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', background: 'rgba(255,255,255,0.80)', border: '1px solid #e2e8f0', borderRadius: 9, padding: '7px 14px', backdropFilter: 'blur(8px)' }}>
+              <div style={{ width: 20, height: 20, borderRadius: 6, background: 'linear-gradient(135deg,#2563eb,#7c3aed)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Brain size={11} color="white" />
+              </div>
+              BrainCore
+            </div>
+          </div>
+
+          {/* Main body — two columns */}
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', padding: '0 56px', gap: 64, minHeight: 0 }}>
+
+            {/* Left — greeting */}
+            <div className="sg-hello" style={{ flex: '0 0 42%', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+              <div className="sg-badge" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: 'rgba(219,234,254,0.90)', border: '1px solid #bfdbfe', borderRadius: 999, padding: '4px 13px', marginBottom: 20, width: 'fit-content', backdropFilter: 'blur(6px)' }}>
+                <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#2563eb' }} />
+                <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 10, color: '#1d4ed8', fontWeight: 600, letterSpacing: '0.13em', textTransform: 'uppercase' }}>Axe 1 · Segmentation Hippocampique</span>
+              </div>
+
+              <h1 style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: 'clamp(26px, 2.8vw, 44px)', fontWeight: 800, color: '#0f172a', lineHeight: 1.18, margin: '0 0 16px' }}>
+                Bonjour,<br />Dr.&nbsp;{displayName}&nbsp;👋
+              </h1>
+
+              <p className="sg-sub" style={{ fontSize: 15, fontWeight: 400, color: '#1e293b', lineHeight: 1.72, margin: 0, maxWidth: 420 }}>
+                Bienvenue dans le module de segmentation, détectez et délimitez automatiquement l'hippocampe sur vos coupes IRM grâce au Deep Learning.
+              </p>
+            </div>
+
+            {/* Right — steps + CTA */}
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+              <p style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 10, color: '#2563eb', fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', margin: '0 0 4px' }}>
+                Déroulement de la session
+              </p>
+              <h2 className="sg-sub" style={{ fontFamily: "'Playfair Display', Georgia, serif", fontSize: 'clamp(17px, 1.6vw, 22px)', fontWeight: 800, color: '#0f172a', margin: '0 0 14px', lineHeight: 1.2 }}>
+                3 étapes simples pour segmenter vos IRM
+              </h2>
+
+              <div className="sg-sep" />
+
+              {STEPS_INFO.map((s, i) => (
+                <div key={i}>
+                  <div className={`sg-step-row sg-step-${i + 1}`} style={{ padding: '14px 0' }}>
+                    <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 32, fontWeight: 700, lineHeight: 1, minWidth: 48, textAlign: 'right', flexShrink: 0, color: i === 0 ? 'rgba(37,99,235,0.35)' : i === 1 ? 'rgba(124,58,237,0.35)' : 'rgba(8,145,178,0.35)' }}>{s.n}</span>
+                    <div style={{ width: 1, height: 32, background: 'rgba(15,23,42,0.10)', flexShrink: 0, marginTop: 2 }} />
+                    <div style={{ width: 36, height: 36, borderRadius: 10, background: s.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{s.icon}</div>
+                    <div style={{ flex: 1 }}>
+                      <p style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 15, fontWeight: 700, color: '#0f172a', margin: '0 0 2px' }}>{s.label}</p>
+                      <p style={{ fontSize: 12.5, color: '#334155', lineHeight: 1.55, margin: 0 }}>{s.desc}</p>
+                    </div>
+                  </div>
+                  {i < 2 && <div className="sg-sep" />}
+                </div>
+              ))}
+
+              <div className="sg-sep" style={{ marginBottom: 24 }} />
+
+              <div className="sg-cta">
+                <button className="sg-btn" onClick={() => setShowIntro(false)}>
+                  Commencer l'analyse <ChevronRight size={17} />
+                </button>
+              </div>
+            </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => navigate('/dashboard')}
-            className="inline-flex items-center rounded-md border border-white/30 px-3 py-1.5 text-sm font-medium text-white hover:bg-white/10"
-          >
-            Acceder au dashboard
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate('/')}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/20 text-white hover:bg-white/10"
-            aria-label="Retour"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
       </div>
+    );
+  }
 
-      <div className="bg-white border-b border-surface-border flex items-center px-6 overflow-x-auto">
-        {flowSteps.map((item, index) => {
-          const isCompleted = step > item.id;
-          const isActive = step === item.id;
-          const canClick =
-            item.id === 1
-              ? true
-              : item.id === 2
-                ? Boolean(selectedPatient?.id)
-                : step === 3 || (Boolean(selectedPatient?.id) && selectedSlices.length > 0);
-          return (
-            <React.Fragment key={item.id}>
-              <button
-                type="button"
-                disabled={!canClick}
-                onClick={() => goToFlowStep(item.id)}
-                className={`flex items-center gap-2 py-3 border-b-2 text-left transition-opacity ${
-                  isActive
-                    ? 'text-primary font-medium border-primary'
-                    : isCompleted
-                      ? 'text-primary font-medium border-transparent'
-                      : 'text-gray-400 border-transparent'
-                } ${canClick ? 'cursor-pointer hover:opacity-90' : 'cursor-not-allowed opacity-60'}`}
-              >
-                <span
-                  className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] ${
-                    isActive
-                      ? 'bg-primary text-white rounded-full'
-                      : isCompleted
-                        ? 'bg-green-500 text-white rounded-full'
-                        : 'border-2 border-surface-border text-gray-400 rounded-full'
-                  }`}
+  return (
+    <div className="h-screen w-screen overflow-hidden bg-slate-50 flex flex-col font-sans">
+      {/* ── Top bar — light, professional ── */}
+      <div style={{ background: '#ffffff', borderBottom: '1px solid #f1f5f9', padding: '0 32px', display: 'flex', alignItems: 'center', height: 60, gap: 24, flexShrink: 0 }}>
+
+        {/* Back */}
+        <button
+          type="button"
+          onClick={() => { if (step > 1) setStep(step - 1); else navigate(isEmergencySession ? '/urgence' : '/'); }}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#64748b', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '6px 14px', cursor: 'pointer', fontWeight: 500, whiteSpace: 'nowrap', flexShrink: 0 }}
+        >
+          <ChevronLeft className="h-3.5 w-3.5" /> Retour
+        </button>
+
+        {/* Stepper — center */}
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0 }}>
+          {flowSteps.map((item, index) => {
+            const isCompleted = step > item.id;
+            const isActive    = step === item.id;
+            const canClick    = item.id === 1 ? true : item.id === 2 ? Boolean(selectedPatient?.id) : step === 3 || (Boolean(selectedPatient?.id) && selectedSlices.length > 0);
+            return (
+              <React.Fragment key={item.id}>
+                <button
+                  type="button"
+                  disabled={!canClick}
+                  onClick={() => goToFlowStep(item.id)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: canClick ? 'pointer' : 'default', padding: '0 4px', opacity: !canClick && !isActive ? 0.45 : 1 }}
                 >
-                  {isCompleted ? '✓' : item.id}
-                </span>
-                <span className="text-sm whitespace-nowrap">{item.id}. {item.label}</span>
-              </button>
-              {index < flowSteps.length - 1 && <span className="px-3 text-gray-300 select-none">›</span>}
-            </React.Fragment>
-          );
-        })}
+                  {/* Circle */}
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    width: 26, height: 26, borderRadius: '50%', fontSize: 11, fontWeight: 700, flexShrink: 0,
+                    background: isCompleted ? '#22c55e' : isActive ? '#2563eb' : '#f1f5f9',
+                    color: isCompleted || isActive ? '#fff' : '#94a3b8',
+                    border: isActive ? '2px solid #2563eb' : isCompleted ? '2px solid #22c55e' : '2px solid #e2e8f0',
+                    transition: 'all 0.2s ease',
+                  }}>
+                    {isCompleted ? <Check className="h-3 w-3" /> : item.id}
+                  </span>
+                  {/* Label */}
+                  <span style={{
+                    fontSize: 12.5, fontWeight: isActive ? 600 : 400,
+                    color: isActive ? '#1e40af' : isCompleted ? '#15803d' : '#94a3b8',
+                    whiteSpace: 'nowrap', letterSpacing: '-0.01em',
+                  }}>{item.label}</span>
+                </button>
+                {/* Connector line */}
+                {index < flowSteps.length - 1 && (
+                  <div style={{ width: 48, height: 2, background: step > item.id ? '#22c55e' : '#e2e8f0', margin: '0 8px', borderRadius: 2, transition: 'background 0.3s ease', flexShrink: 0 }} />
+                )}
+              </React.Fragment>
+            );
+          })}
+        </div>
+
+        {/* Right action */}
+        <button
+          type="button"
+          onClick={() => navigate('/dashboard')}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#475569', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '6px 14px', cursor: 'pointer', fontWeight: 500, whiteSpace: 'nowrap', flexShrink: 0 }}
+        >
+          Dashboard
+        </button>
       </div>
 
       {workflowSliceCounter && (
@@ -2603,7 +2712,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                               </button>
                             </div>
                             <div className="flex flex-wrap justify-center gap-2">
-                              {['.dcm', '.nii', '.nii.gz', '.jpg', '.png'].map(ext => (
+                              {['.nii', '.nii.gz', '.jpg', '.png'].map(ext => (
                                 <span key={ext} className="px-2.5 py-1 bg-white border border-slate-200 rounded-full text-[10px] font-bold text-slate-500 shadow-sm">
                                   {ext}
                                 </span>
@@ -2651,10 +2760,10 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
 
                     {/* Inputs cachés */}
                     <input ref={emergencyMultiInputRef} type="file" multiple className="hidden"
-                      accept=".nii,.nii.gz,.dcm,.dicom,.jpg,.jpeg,.png,.tif,.tiff,.bmp"
+                      accept=".nii,.nii.gz,.jpg,.jpeg,.png,.tif,.tiff"
                       onChange={(e) => { pickEmergencyFiles(e.target.files); e.target.value = ''; }} />
                     <input ref={emergencyFolderInputRef} type="file" multiple className="hidden"
-                      accept=".nii,.nii.gz,.dcm,.dicom,.jpg,.jpeg,.png,.tif,.tiff,.bmp"
+                      accept=".nii,.nii.gz,.jpg,.jpeg,.png,.tif,.tiff"
                       {...{ webkitdirectory: '', directory: '' }}
                       onChange={(e) => { pickEmergencyFiles(e.target.files); e.target.value = ''; }} />
 
@@ -3028,10 +3137,10 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                           npFiles.length > 0 ? 'border-emerald-400 bg-emerald-50' :
                           'border-slate-200 bg-slate-50'}`}>
                         <input ref={npFileRef} type="file" multiple
-                          accept=".nii,.nii.gz,.dcm,.jpg,.jpeg,.png,.tif,.tiff,.bmp"
+                          accept=".nii,.nii.gz,.jpg,.jpeg,.png,.tif,.tiff"
                           className="hidden" onChange={npHandleFileDrop} />
                         <input ref={npFolderRef} type="file"
-                          accept=".nii,.nii.gz,.dcm,.jpg,.jpeg,.png,.tif,.tiff,.bmp"
+                          accept=".nii,.nii.gz,.jpg,.jpeg,.png,.tif,.tiff"
                           className="hidden" onChange={npHandleFileDrop}
                           {...{ webkitdirectory: '', directory: '' }} />
 
@@ -3066,7 +3175,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                             </div>
                             <div>
                               <p className="text-sm font-semibold text-slate-700">Sélectionnez vos fichiers ou un dossier complet</p>
-                              <p className="mt-0.5 text-xs text-slate-400">Formats supportés : NIfTI, DICOM, JPEG, PNG, TIFF, BMP</p>
+                              <p className="mt-0.5 text-xs text-slate-400">Formats supportés : NIfTI, JPEG, PNG, TIFF</p>
                             </div>
                             <div className="flex gap-2">
                               <button type="button"
@@ -3083,7 +3192,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                               </button>
                             </div>
                             <div className="flex flex-wrap justify-center gap-1.5">
-                              {['.nii', '.nii.gz', '.dcm', '.jpg', '.png', '.tif', '.bmp'].map((ext) => (
+                              {['.nii', '.nii.gz', '.jpg', '.png', '.tif'].map((ext) => (
                                 <span key={ext} className="rounded-full border border-slate-200 bg-white px-2.5 py-0.5 font-mono text-[11px] text-slate-500">{ext}</span>
                               ))}
                             </div>
@@ -3138,10 +3247,10 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                             onClick={() => newIrmFileRef.current?.click()}
                           >
                             <input ref={newIrmFileRef} type="file" multiple
-                              accept=".nii,.nii.gz,.dcm,.jpg,.jpeg,.png,.tif,.tiff,.bmp"
+                              accept=".nii,.nii.gz,.jpg,.jpeg,.png,.tif,.tiff"
                               className="hidden" onChange={handleNewIrmDrop} />
                             <input ref={newIrmFolderRef} type="file"
-                              accept=".nii,.nii.gz,.dcm,.jpg,.jpeg,.png,.tif,.tiff,.bmp"
+                              accept=".nii,.nii.gz,.jpg,.jpeg,.png,.tif,.tiff"
                               className="hidden" onChange={handleNewIrmDrop}
                               {...{ webkitdirectory: '', directory: '' }} />
 
@@ -3160,7 +3269,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                                 </div>
                                 <div>
                                   <p className="text-sm font-semibold text-slate-700">Glissez vos fichiers IRM ici</p>
-                                  <p className="mt-0.5 text-xs text-slate-400">NIfTI, DICOM, JPEG, PNG, TIFF — ou cliquez pour parcourir</p>
+                                  <p className="mt-0.5 text-xs text-slate-400">NIfTI, JPEG, PNG, TIFF — ou cliquez pour parcourir</p>
                                 </div>
                                 <div className="flex gap-2" onClick={e => e.stopPropagation()}>
                                   <button type="button"
@@ -4555,174 +4664,173 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
 
                 {!showResults && (
                   <>
-                  {/* ── En-tête gradient ── */}
-                  <div className="overflow-hidden rounded-2xl border border-slate-200 shadow-sm">
-                    <div className="relative bg-gradient-to-r from-[#0f1f4b] via-[#0e2d82] to-[#1a3a8f] px-6 py-5">
-                      <span className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/5 pointer-events-none" />
-                      <span className="absolute right-20 -bottom-4 h-20 w-20 rounded-full bg-white/5 pointer-events-none" />
-                      <div className="relative flex flex-wrap items-center justify-between gap-4">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/15 shadow-inner">
-                            {(launchResult || progress >= 100) && !launchError
-                              ? <CheckCircle2 className="h-6 w-6 text-emerald-300" />
-                              : <Brain className="h-6 w-6 text-white" />
-                            }
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-[10px] font-bold uppercase tracking-widest text-blue-200">Étape 3 / 3</p>
-                            <p className="mt-0.5 text-base font-black text-white">
-                              {(launchResult || progress >= 100) && !launchError ? 'Segmentation terminée' : 'Segmentation IA en cours…'}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-3 flex-wrap">
-                          <div className="rounded-xl bg-white/10 px-4 py-2 text-center">
-                            <p className="text-lg font-black text-white">{selectedSlices.length}</p>
-                            <p className="text-[10px] font-bold uppercase tracking-wide text-blue-200">coupes</p>
-                          </div>
-                          <div className="rounded-xl bg-white/10 px-4 py-2 text-center">
-                            <p className="text-sm font-black text-white">{modelKeyToDisplayName(selectedModel)}</p>
-                            <p className="text-[10px] font-bold uppercase tracking-wide text-blue-200">modèle</p>
-                          </div>
-                        </div>
+                  {/* ── En-tête compact ── */}
+                  <div className={`rounded-2xl border px-5 py-4 flex items-center justify-between gap-4 ${
+                    (launchResult || progress >= 100) && !launchError
+                      ? 'bg-emerald-50 border-emerald-200'
+                      : launchError
+                        ? 'bg-red-50 border-red-200'
+                        : 'bg-blue-50 border-blue-200'
+                  }`}>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
+                        (launchResult || progress >= 100) && !launchError ? 'bg-emerald-100' : launchError ? 'bg-red-100' : 'bg-blue-100'
+                      }`}>
+                        {(launchResult || progress >= 100) && !launchError
+                          ? <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                          : launchError
+                            ? <AlertTriangle className="h-5 w-5 text-red-500" />
+                            : <Loader2 className="h-5 w-5 text-blue-600 animate-spin" />
+                        }
+                      </div>
+                      <div>
+                        <p className={`text-[10px] font-semibold uppercase tracking-widest ${
+                          (launchResult || progress >= 100) && !launchError ? 'text-emerald-500' : launchError ? 'text-red-400' : 'text-blue-400'
+                        }`}>Étape 3 / 3</p>
+                        <p className={`text-sm font-bold ${
+                          (launchResult || progress >= 100) && !launchError ? 'text-emerald-800' : launchError ? 'text-red-700' : 'text-blue-800'
+                        }`}>
+                          {(launchResult || progress >= 100) && !launchError ? 'Analyse terminée' : launchError ? 'Erreur lors de l\'analyse' : 'Analyse en cours…'}
+                        </p>
                       </div>
                     </div>
+                    <div className="flex items-center gap-4 flex-shrink-0">
+                      <div className="text-right">
+                        <p className="text-lg font-black text-slate-800 tabular-nums leading-none">{selectedSlices.length}</p>
+                        <p className="text-[10px] text-slate-400 uppercase tracking-wide">coupes</p>
+                      </div>
+                      <div className="w-px h-8 bg-slate-200" />
+                      <div className="text-right">
+                        <p className="text-sm font-bold text-slate-700 leading-none">{modelKeyToDisplayName(selectedModel)}</p>
+                        <p className="text-[10px] text-slate-400 uppercase tracking-wide">modèle</p>
+                      </div>
+                    </div>
+                  </div>
 
-                    {/* ── Barre de progression ── */}
-                    {!launchError && (
-                      <div className="border-t border-slate-100 bg-white px-6 py-4">
-                        <div className="mb-2 flex items-center justify-between text-sm">
-                          <span className="font-bold text-slate-700">Progression</span>
-                          <div className="flex items-center gap-3">
-                            {progress < 100 && isLaunching && (
-                              <span className="text-xs font-medium text-slate-400">
-                                ~{Math.max(1, Math.ceil((90 - progress) / 2 * Math.max(100, Math.round(selectedSlices.length * 500 / 45)) / 1000))}s restantes
-                              </span>
-                            )}
-                            <span className={`text-base font-black tabular-nums ${progress >= 100 ? 'text-emerald-600' : 'text-blue-600'}`}>
-                              {progress}%
+                  {/* ── Barre de progression ── */}
+                  {!launchError && (
+                    <div className="rounded-2xl border border-slate-100 bg-white px-5 py-4">
+                      <div className="mb-3 flex items-center justify-between">
+                        <span className="text-xs font-semibold uppercase tracking-widest text-slate-400">Progression</span>
+                        <div className="flex items-center gap-2">
+                          {progress < 100 && isLaunching && (
+                            <span className="text-xs text-slate-400">
+                              ~{Math.max(1, Math.ceil((100 - progress) / 100 * Math.max(5, Math.round(selectedSlices.length * 500 / 45)) / 1000))}s
                             </span>
-                          </div>
-                        </div>
-                        <div className="h-4 w-full overflow-hidden rounded-full bg-slate-100 shadow-inner">
-                          <div
-                            className={`h-full rounded-full transition-all duration-500 ease-out ${
-                              progress >= 100
-                                ? 'bg-gradient-to-r from-emerald-400 to-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.5)]'
-                                : 'bg-gradient-to-r from-blue-500 via-blue-600 to-indigo-600 shadow-[0_0_10px_rgba(37,99,235,0.45)]'
-                            }`}
-                            style={{ width: `${progress}%` }}
-                          />
+                          )}
+                          <span className={`text-sm font-black tabular-nums ${progress >= 100 ? 'text-emerald-600' : 'text-blue-600'}`}>
+                            {progress}%
+                          </span>
                         </div>
                       </div>
-                    )}
-                  </div>
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ease-out ${
+                            progress >= 100 ? 'bg-emerald-500' : 'bg-blue-500'
+                          }`}
+                          style={{ width: `${progress}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
 
                   {/* ── Erreur ── */}
                   {launchError && (
-                    <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4">
-                      <svg className="mt-0.5 h-5 w-5 shrink-0 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-                      </svg>
-                      <div className="flex-1">
-                        <p className="text-sm font-bold text-red-700">Erreur lors du lancement</p>
-                        <p className="mt-0.5 text-sm text-red-600">{launchError}</p>
-                        <div className="mt-3 flex items-center gap-2">
-                          <button type="button" onClick={launchSegmentation}
-                            className="inline-flex items-center gap-1.5 rounded-xl border border-red-300 bg-white px-3.5 py-1.5 text-sm font-semibold text-red-700 transition hover:bg-red-50">
-                            <RotateCcw className="h-3.5 w-3.5" /> Réessayer
-                          </button>
-                          <button type="button" onClick={() => setStep(2)}
-                            className="rounded-xl border border-slate-200 px-3.5 py-1.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
-                            Retour aux coupes
-                          </button>
-                        </div>
+                    <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4">
+                      <p className="text-sm font-semibold text-red-700">{launchError}</p>
+                      <div className="mt-3 flex items-center gap-2">
+                        <button type="button" onClick={launchSegmentation}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 transition">
+                          <RotateCcw className="h-3 w-3" /> Réessayer
+                        </button>
+                        <button type="button" onClick={() => setStep(2)}
+                          className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition">
+                          Retour aux coupes
+                        </button>
                       </div>
                     </div>
                   )}
 
-                  {/* ── Checklist des étapes ── */}
+                  {/* ── Timeline des étapes ── */}
                   {!launchError && (
-                    <div className="space-y-2">
-                      {CHECKLIST_STEPS.map((item, index) => {
-                        const done    = index < completedSteps;
-                        const active  = index === completedSteps && progress < 100;
-                        return (
-                          <div key={item}
-                            className={`flex items-center gap-3 rounded-xl border px-4 py-3 transition-all duration-300 ${
-                              done   ? 'border-emerald-200 bg-emerald-50'
-                              : active ? 'border-blue-200 bg-blue-50 shadow-sm'
-                              : 'border-slate-100 bg-slate-50'
-                            }`}
-                          >
-                            <span className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-black transition-all ${
-                              done   ? 'bg-emerald-500 text-white'
-                              : active ? 'bg-blue-600 text-white'
-                              : 'bg-slate-200 text-slate-400'
-                            }`}>
-                              {done ? '✓' : index + 1}
-                            </span>
-                            <span className={`flex-1 text-sm font-semibold ${
-                              done ? 'text-emerald-800' : active ? 'text-blue-800' : 'text-slate-400'
-                            }`}>
-                              {item}
-                            </span>
-                            {done && <span className="text-[11px] font-bold text-emerald-600">Terminé</span>}
-                            {active && (
-                              <span className="flex items-center gap-1.5 text-[11px] font-bold text-blue-600">
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                En cours…
-                              </span>
-                            )}
-                            {!done && !active && <span className="text-[11px] text-slate-400">En attente</span>}
-                          </div>
-                        );
-                      })}
+                    <div className="rounded-2xl border border-slate-100 bg-white px-5 py-4">
+                      <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-4">Étapes du traitement</p>
+                      <div className="flex flex-col gap-0">
+                        {CHECKLIST_STEPS.map((item, index) => {
+                          const done   = index < completedSteps;
+                          const active = index === completedSteps && progress < 100;
+                          const last   = index === CHECKLIST_STEPS.length - 1;
+                          return (
+                            <div key={item} className="flex items-stretch gap-4">
+                              {/* Dot + line */}
+                              <div className="flex flex-col items-center" style={{ width: 20 }}>
+                                <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-all duration-300 ${
+                                  done   ? 'border-emerald-500 bg-emerald-500'
+                                  : active ? 'border-blue-500 bg-blue-500'
+                                  : 'border-slate-200 bg-white'
+                                }`}>
+                                  {done
+                                    ? <Check className="h-2.5 w-2.5 text-white" />
+                                    : active
+                                      ? <Loader2 className="h-2.5 w-2.5 text-white animate-spin" />
+                                      : <span className="h-1.5 w-1.5 rounded-full bg-slate-300" />
+                                  }
+                                </div>
+                                {!last && <div className={`w-px flex-1 my-1 ${done ? 'bg-emerald-300' : 'bg-slate-100'}`} />}
+                              </div>
+                              {/* Label */}
+                              <div className={`flex-1 flex items-center justify-between pb-${last ? '0' : '4'}`} style={{ paddingBottom: last ? 0 : 14 }}>
+                                <span className={`text-sm font-medium transition-colors ${
+                                  done ? 'text-slate-700' : active ? 'text-blue-700 font-semibold' : 'text-slate-300'
+                                }`}>{item}</span>
+                                {done && <span className="text-[11px] font-semibold text-emerald-500">✓ Terminé</span>}
+                                {active && <span className="text-[11px] font-semibold text-blue-500">En cours…</span>}
+                                {!done && !active && <span className="text-[11px] text-slate-300">En attente</span>}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
 
-                  {/* ── Carte de succès ── */}
+                  {/* ── Succès ── */}
                   {(launchResult || progress >= 100) && !launchError && (
-                    <div className="overflow-hidden rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-teal-50 shadow-sm">
-                      <div className="px-6 py-5">
-                        <div className="flex items-start gap-4">
-                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-100">
-                            <CheckCircle2 className="h-6 w-6 text-emerald-600" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <h3 className="text-lg font-black text-emerald-900">Segmentation terminée avec succès</h3>
-                            <p className="mt-0.5 text-sm text-emerald-700">L'analyse IA a été effectuée. Les masques de segmentation sont prêts à être examinés.</p>
-                          </div>
+                    <div className="rounded-2xl border border-emerald-200 bg-white px-5 py-5">
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className="h-9 w-9 rounded-xl bg-emerald-100 flex items-center justify-center shrink-0">
+                          <CheckCircle2 className="h-5 w-5 text-emerald-600" />
                         </div>
-
-                        {/* Stats rapides */}
-                        <div className="mt-4 grid grid-cols-3 gap-3">
-                          <div className="rounded-xl border border-emerald-200 bg-white/70 px-3 py-2.5 text-center">
-                            <p className="text-xl font-black text-emerald-700">{launchResult?.count ?? selectedSlices.length}</p>
-                            <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-500">coupes traitées</p>
-                          </div>
-                          <div className="rounded-xl border border-emerald-200 bg-white/70 px-3 py-2.5 text-center">
-                            <p className="text-sm font-black text-emerald-700">{modelKeyToDisplayName(selectedModel)}</p>
-                            <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-500">modèle utilisé</p>
-                          </div>
-                          <div className="rounded-xl border border-emerald-200 bg-white/70 px-3 py-2.5 text-center">
-                            <p className="text-sm font-black text-emerald-700">{DEFAULT_SEGMENTATION_THRESHOLD}</p>
-                            <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-500">seuil confiance</p>
-                          </div>
+                        <div>
+                          <p className="text-sm font-bold text-slate-800">Segmentation terminée avec succès</p>
+                          <p className="text-xs text-slate-500">Les masques de segmentation sont prêts à être examinés.</p>
                         </div>
-
-                        <div className="mt-4 flex flex-wrap items-center gap-2">
-                          <button type="button" onClick={openSegmentationResults}
-                            className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm shadow-emerald-200 transition hover:bg-emerald-700">
-                            <CheckCircle2 className="h-4 w-4" />
-                            Voir les résultats
-                          </button>
-                          <button type="button" onClick={() => setStep(2)}
-                            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
-                            <ChevronLeft className="h-4 w-4" />
-                            Modifier les coupes
-                          </button>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 mb-4">
+                        <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2.5 text-center">
+                          <p className="text-lg font-black text-slate-800">{launchResult?.count ?? selectedSlices.length}</p>
+                          <p className="text-[10px] text-slate-400 uppercase tracking-wide">coupes</p>
                         </div>
+                        <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2.5 text-center">
+                          <p className="text-sm font-bold text-slate-700">{modelKeyToDisplayName(selectedModel)}</p>
+                          <p className="text-[10px] text-slate-400 uppercase tracking-wide">modèle</p>
+                        </div>
+                        <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2.5 text-center">
+                          <p className="text-sm font-bold text-slate-700">{DEFAULT_SEGMENTATION_THRESHOLD}</p>
+                          <p className="text-[10px] text-slate-400 uppercase tracking-wide">seuil</p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" onClick={openSegmentationResults}
+                          className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700">
+                          <CheckCircle2 className="h-4 w-4" />
+                          Voir les résultats
+                        </button>
+                        <button type="button" onClick={() => setStep(2)}
+                          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-500 transition hover:bg-slate-50">
+                          <ChevronLeft className="h-4 w-4" />
+                          Modifier les coupes
+                        </button>
                       </div>
                     </div>
                   )}

@@ -113,7 +113,7 @@ ORDER_NUMBER_PATTERN = re.compile(r'^(?:\d{4,6}|T-\d{4,6})$')
 PHONE_NUMBER_PATTERN = re.compile(r'^[24579]\d{7}$')
 
 # Compte technique Django pour la session du dashboard admin SPA (voir admin_portal_login).
-PORTAL_ADMIN_USERNAME = '__neuroscan_portal_admin__'
+PORTAL_ADMIN_USERNAME = '__braincore_portal_admin__'
 
 
 def _emit_registration_progress(job_id: str, progress: int, stage: str, message: str, status: str = 'processing'):
@@ -174,7 +174,7 @@ def send_pending_registration_email(email, nom, prenom):
         if not display_name:
                 display_name = email
 
-        subject = "Demande d'inscription reçue — NeuroScan"
+        subject = "Demande d'inscription reçue — BrainCore"
         plain_message = f"""
 Bonjour Dr. {display_name},
 
@@ -185,16 +185,16 @@ Bonjour Dr. {display_name},
 
     Vous serez notifié par email dès qu'une décision est prise sur votre dossier.
 
-Des questions ? support@neuroscan.com
+Des questions ? support@braincore.com
 
-    L'équipe NeuroScan
+    L'équipe BrainCore
 """.strip()
 
         safe_display_name = escape(display_name)
         html_message = f"""
         <html><body style=\"font-family: Arial, sans-serif; color: #0f172a;\">
             <div style=\"max-width: 680px; margin: 0 auto; padding: 20px;\">
-                <h2 style=\"margin: 0 0 16px; color: #1d4ed8;\">NeuroScan</h2>
+                <h2 style=\"margin: 0 0 16px; color: #1d4ed8;\">BrainCore</h2>
                 <p>Bonjour Dr. <strong>{safe_display_name}</strong>,</p>
                 <p>Votre demande d'inscription est bien reçue et en cours d'examen. Vous recevrez une réponse sous <strong>24 à 48 heures</strong>.</p>
 
@@ -202,8 +202,8 @@ Des questions ? support@neuroscan.com
                 <p>En attendant, vous pouvez accéder au Mode Urgence via votre email professionnel + numéro d'ordre CNOM. Vous disposez de <strong>2 utilisations</strong> pendant cette période.</p>
 
                 <p>Vous serez notifié par email dès qu'une décision est prise sur votre dossier.</p>
-                <p>Des questions ? <a href=\"mailto:support@neuroscan.com\">support@neuroscan.com</a></p>
-                <p>L'équipe NeuroScan</p>
+                <p>Des questions ? <a href=\"mailto:support@braincore.com\">support@braincore.com</a></p>
+                <p>L'équipe BrainCore</p>
             </div>
         </body></html>
         """
@@ -224,33 +224,33 @@ def send_account_approved_email(email, nom, prenom):
         display_name = email
 
     login_url = f"{get_frontend_origin()}/login"
-    subject = "Compte activé — NeuroScan"
+    subject = "Compte activé — BrainCore"
     plain_message = f"""
 Bonjour Dr. {display_name},
 
-Votre compte NeuroScan est activé. Vous pouvez dès maintenant accéder à toutes les fonctionnalités de la plateforme.
+Votre compte BrainCore est activé. Vous pouvez dès maintenant accéder à toutes les fonctionnalités de la plateforme.
 
-👉 Se connecter à NeuroScan: {login_url}
+👉 Se connecter à BrainCore: {login_url}
 
-Des questions ? support@neuroscan.com
+Des questions ? support@braincore.com
 
-L'équipe NeuroScan
+L'équipe BrainCore
 """.strip()
 
     safe_display_name = escape(display_name)
     html_message = f"""
     <html><body style=\"font-family: Arial, sans-serif; color: #0f172a;\">
         <div style=\"max-width: 680px; margin: 0 auto; padding: 20px;\">
-            <h2 style=\"margin: 0 0 16px; color: #1d4ed8;\">NeuroScan</h2>
+            <h2 style=\"margin: 0 0 16px; color: #1d4ed8;\">BrainCore</h2>
             <p>Bonjour Dr. <strong>{safe_display_name}</strong>,</p>
-            <p>Votre compte NeuroScan est activé. Vous pouvez dès maintenant accéder à toutes les fonctionnalités de la plateforme.</p>
+            <p>Votre compte BrainCore est activé. Vous pouvez dès maintenant accéder à toutes les fonctionnalités de la plateforme.</p>
 
             <p style=\"margin: 26px 0;\">
-                <a href=\"{login_url}\" style=\"display: inline-block; background: #1d4ed8; color: #ffffff; text-decoration: none; padding: 10px 16px; border-radius: 8px; font-weight: 600;\">Se connecter à NeuroScan</a>
+                <a href=\"{login_url}\" style=\"display: inline-block; background: #1d4ed8; color: #ffffff; text-decoration: none; padding: 10px 16px; border-radius: 8px; font-weight: 600;\">Se connecter à BrainCore</a>
             </p>
 
-            <p>Des questions ? <a href=\"mailto:support@neuroscan.com\">support@neuroscan.com</a></p>
-            <p>L'équipe NeuroScan</p>
+            <p>Des questions ? <a href=\"mailto:support@braincore.com\">support@braincore.com</a></p>
+            <p>L'équipe BrainCore</p>
         </div>
     </body></html>
     """
@@ -272,7 +272,7 @@ def send_account_rejected_email(email, nom, prenom, reason):
 
     safe_reason = (reason or '').strip()
     signup_url = f"{get_frontend_origin()}/login?mode=signup"
-    subject = "Demande d'inscription — NeuroScan"
+    subject = "Demande d'inscription — BrainCore"
     plain_message = f"""
 Bonjour Dr. {display_name},
 
@@ -280,33 +280,33 @@ Nous avons examiné votre dossier et nous ne sommes pas en mesure d'activer votr
 
 {safe_reason}
 
-Vous pouvez corriger cette situation et soumettre une nouvelle demande directement via NeuroScan.
+Vous pouvez corriger cette situation et soumettre une nouvelle demande directement via BrainCore.
 
 👉 Créer un nouveau compte: {signup_url}
 
-Des questions ? support@neuroscan.com
+Des questions ? support@braincore.com
 
-L'équipe NeuroScan
+L'équipe BrainCore
 """.strip()
 
     html_message = f"""
     <html><body style=\"font-family: Arial, sans-serif; color: #0f172a;\">
         <div style=\"max-width: 680px; margin: 0 auto; padding: 20px;\">
-            <h2 style=\"margin: 0 0 16px; color: #1d4ed8;\">NeuroScan</h2>
+            <h2 style=\"margin: 0 0 16px; color: #1d4ed8;\">BrainCore</h2>
             <p>Bonjour Dr. <strong>{escape(display_name)}</strong>,</p>
 
             <p>Nous avons examiné votre dossier et nous ne sommes pas en mesure d'activer votre compte pour la raison suivante :</p>
 
             <blockquote style=\"margin: 16px 0; padding: 12px 14px; border-left: 4px solid #1d4ed8; background: #f8fafc; color: #1e293b;\">{escape(safe_reason)}</blockquote>
 
-            <p>Vous pouvez corriger cette situation et soumettre une nouvelle demande directement via NeuroScan.</p>
+            <p>Vous pouvez corriger cette situation et soumettre une nouvelle demande directement via BrainCore.</p>
 
             <p style=\"margin: 26px 0;\">
                 <a href=\"{signup_url}\" style=\"display: inline-block; background: #1d4ed8; color: #ffffff; text-decoration: none; padding: 10px 16px; border-radius: 8px; font-weight: 600;\">Créer un nouveau compte</a>
             </p>
 
-            <p>Des questions ? <a href=\"mailto:support@neuroscan.com\">support@neuroscan.com</a></p>
-            <p>L'équipe NeuroScan</p>
+            <p>Des questions ? <a href=\"mailto:support@braincore.com\">support@braincore.com</a></p>
+            <p>L'équipe BrainCore</p>
         </div>
     </body></html>
     """
@@ -327,11 +327,11 @@ def send_account_activation_email(email, nom, prenom, activation_token):
         display_name = email
 
     activation_url = f"{get_frontend_origin()}/activate-account?token={activation_token.token}"
-    subject = "Activation de votre compte — NeuroScan"
+    subject = "Activation de votre compte — BrainCore"
     plain_message = f"""
 Bonjour Dr. {display_name},
 
-Votre compte NeuroScan a été créé par un administrateur.
+Votre compte BrainCore a été créé par un administrateur.
 
 Pour activer votre compte, veuillez choisir votre mot de passe via le lien sécurisé ci-dessous :
 
@@ -339,17 +339,17 @@ Pour activer votre compte, veuillez choisir votre mot de passe via le lien sécu
 
 Ce lien est valable jusqu'au {activation_token.expires_at.strftime('%d/%m/%Y %H:%M')}.
 
-Des questions ? support@neuroscan.com
+Des questions ? support@braincore.com
 
-L'équipe NeuroScan
+L'équipe BrainCore
 """.strip()
 
     html_message = f"""
     <html><body style=\"font-family: Arial, sans-serif; color: #0f172a;\">
         <div style=\"max-width: 680px; margin: 0 auto; padding: 20px;\">
-            <h2 style=\"margin: 0 0 16px; color: #1d4ed8;\">NeuroScan</h2>
+            <h2 style=\"margin: 0 0 16px; color: #1d4ed8;\">BrainCore</h2>
             <p>Bonjour Dr. <strong>{escape(display_name)}</strong>,</p>
-            <p>Votre compte NeuroScan a été créé par un administrateur.</p>
+            <p>Votre compte BrainCore a été créé par un administrateur.</p>
             <p>Pour activer votre compte, veuillez choisir votre mot de passe via le lien sécurisé ci-dessous :</p>
 
             <p style=\"margin: 26px 0;\">
@@ -357,8 +357,8 @@ L'équipe NeuroScan
             </p>
 
             <p style=\"color: #475569;\">Ce lien est valable jusqu'au <strong>{activation_token.expires_at.strftime('%d/%m/%Y %H:%M')}</strong>.</p>
-            <p>Des questions ? <a href=\"mailto:support@neuroscan.com\">support@neuroscan.com</a></p>
-            <p>L'équipe NeuroScan</p>
+            <p>Des questions ? <a href=\"mailto:support@braincore.com\">support@braincore.com</a></p>
+            <p>L'équipe BrainCore</p>
         </div>
     </body></html>
     """
@@ -1056,7 +1056,8 @@ def login_view(request):
             return JsonResponse({'ok': False, 'error': 'email et mot de passe requis'}, status=400)
 
         # Accept either username or account email as login identifier.
-        account = User.objects.filter(Q(username=username) | Q(email__iexact=username)).first()
+        # Exclude the portal admin technical account — it authenticates only via admin_portal_login.
+        account = User.objects.filter(Q(username=username) | Q(email__iexact=username)).exclude(username=PORTAL_ADMIN_USERNAME).first()
         if account is None:
             # Message générique pour éviter l'énumération d'utilisateurs.
             return JsonResponse({'ok': False, 'error': 'Identifiants invalides', 'error_type': 'user_not_found'}, status=401)
@@ -1125,7 +1126,7 @@ def login_view(request):
                 'last_name': (user.last_name or '').strip(),
                 'specialty': (profile.specialty if profile else ''),
                 'is_staff': user.is_staff,
-                'is_admin_dashboard': user.is_staff,
+                'is_admin_dashboard': False,
             }
         })
     except Exception as e:
@@ -1240,7 +1241,7 @@ def check_session(request):
             username_prefix = (request.user.username or '').split('@')[0].replace('.', ' ').replace('_', ' ').strip()
             full_name = username_prefix.title() if username_prefix else 'Medecin'
 
-        is_admin = request.user.is_staff
+        is_admin = request.user.username == PORTAL_ADMIN_USERNAME
         em = is_emergency_session(request)
         return JsonResponse({
             'logged_in': True,
@@ -4566,7 +4567,7 @@ def _build_report_pdf(run, modelisation):
     story.append(ct)
     story.append(Spacer(1, 0.6 * cm))
     story.append(Paragraph(
-        f'NeuroScan — document généré automatiquement le {exam_date} — à conserver avec le dossier patient.',
+        f'BrainCore — document généré automatiquement le {exam_date} — à conserver avec le dossier patient.',
         footer,
     ))
 
@@ -4785,6 +4786,135 @@ def patient_segmentation_history(request, patient_id):
 @api_view(['GET'])
 @authentication_classes([CsrfExemptSessionAuthentication])
 @permission_classes([IsAuthenticated])
+def zip_series_image(request, file_id):
+    """Serve one image from a registered-series ZIP file.
+    Query params:
+        index : int  (default 0)
+    Response JSON:
+        { total, index, image: 'data:image/jpeg;base64,...', filename }
+    """
+    import zipfile as _zipfile
+    import base64 as _b64
+
+    mri_file = get_object_or_404(MRIFile, id=file_id, patient__doctor=request.user)
+
+    # Resolve absolute path robustly
+    stored_name = getattr(mri_file.file, 'name', '') or ''
+    abs_path = None
+    if stored_name:
+        candidate = os.path.join(settings.MEDIA_ROOT, stored_name.replace('/', os.sep))
+        if os.path.isfile(candidate):
+            abs_path = candidate
+    if abs_path is None:
+        try:
+            abs_path = mri_file.file.path
+        except Exception:
+            pass
+    if not abs_path or not os.path.isfile(abs_path):
+        return JsonResponse({'error': 'Fichier ZIP introuvable'}, status=404)
+
+    fname_lower = (mri_file.original_filename or '').lower()
+    if not fname_lower.endswith('.zip'):
+        return JsonResponse({'error': 'Ce fichier n\'est pas un ZIP de série'}, status=415)
+
+    try:
+        with _zipfile.ZipFile(abs_path, 'r') as zf:
+            # Keep only image files, sorted by name
+            IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff')
+            names = sorted(
+                n for n in zf.namelist()
+                if not n.endswith('/') and os.path.splitext(n.lower())[1] in IMAGE_EXTS
+            )
+            total = len(names)
+            if total == 0:
+                return JsonResponse({'error': 'Aucune image trouvée dans le ZIP'}, status=404)
+
+            idx = max(0, min(int(request.GET.get('index', 0)), total - 1))
+            with zf.open(names[idx]) as img_file:
+                img_bytes = img_file.read()
+
+            ext = os.path.splitext(names[idx])[1].lower()
+            mime = 'image/jpeg' if ext in ('.jpg', '.jpeg') else 'image/png'
+            b64 = _b64.b64encode(img_bytes).decode('utf-8')
+            return JsonResponse({
+                'ok': True,
+                'total': total,
+                'index': idx,
+                'filename': os.path.basename(names[idx]),
+                'image': f'data:{mime};base64,{b64}',
+            })
+    except Exception as e:
+        return JsonResponse({'error': f'Erreur lecture ZIP: {str(e)}'}, status=500)
+
+
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
+def download_mri_file(request, file_id):
+    """Serve a patient MRI file as raw binary (Content-Type: application/octet-stream).
+
+    Bypasses Django's default media serving which adds Content-Encoding: gzip for .gz
+    files (detected via mimetypes), causing the browser to transparently decompress the
+    response and produce a corrupt .nii.gz file that NIfTI viewers cannot open.
+    """
+    mri_file = get_object_or_404(MRIFile, id=file_id, patient__doctor=request.user)
+
+    stored_name = getattr(mri_file.file, 'name', '') or ''
+    filename = mri_file.original_filename or (os.path.basename(stored_name) if stored_name else 'download.bin')
+
+    data = None
+    errors = []
+
+    # Strategy 1: Use Django FileField's own open() — most reliable across storage backends
+    try:
+        mri_file.file.open('rb')
+        data = mri_file.file.read()
+        mri_file.file.close()
+    except Exception as exc:
+        errors.append(f'FileField.open: {exc}')
+
+    # Strategy 2: Join stored_name (forward-slash relative) with MEDIA_ROOT
+    if data is None and stored_name:
+        candidate = os.path.join(settings.MEDIA_ROOT, stored_name.replace('/', os.sep))
+        try:
+            with open(candidate, 'rb') as fh:
+                data = fh.read()
+        except Exception as exc:
+            errors.append(f'MEDIA_ROOT+name ({candidate!r}): {exc}')
+
+    # Strategy 3: stored_name is already an absolute path
+    if data is None and stored_name and os.path.isabs(stored_name):
+        try:
+            with open(stored_name, 'rb') as fh:
+                data = fh.read()
+        except Exception as exc:
+            errors.append(f'abs stored_name: {exc}')
+
+    if data is None:
+        print(
+            f'[download_mri_file] FAILED id={file_id} stored={stored_name!r} '
+            f'media_root={settings.MEDIA_ROOT!r} errors={errors}'
+        )
+        return JsonResponse({
+            'error': 'Fichier introuvable sur le serveur',
+            'stored_name': stored_name,
+            'media_root': settings.MEDIA_ROOT,
+            'errors': errors,
+        }, status=404)
+
+    print(f'[download_mri_file] OK id={file_id} size={len(data)} filename={filename!r}')
+    response = HttpResponse(data, content_type='application/octet-stream')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    response['Content-Length'] = str(len(data))
+    # Explicitly remove Content-Encoding to prevent browser gzip decompression
+    if 'Content-Encoding' in response:
+        del response['Content-Encoding']
+    return response
+
+
+@api_view(['GET'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+@permission_classes([IsAuthenticated])
 def patient_files_download_zip(request, patient_id):
     patient = get_object_or_404(Patient, id=patient_id, doctor=request.user)
     mri_files = MRIFile.objects.filter(patient=patient).order_by('uploaded_at')
@@ -4954,7 +5084,9 @@ def apply_to_patient_series(request):
 
     try:
         warp_fn = _get_warp_from_tform(tform, UPLOAD_DIR)
-    except ValueError as e:
+    except Exception as e:
+        import traceback
+        print(f'apply_to_patient_series — _get_warp_from_tform failed: {traceback.format_exc()}')
         return JsonResponse({'error': f'Transformation invalide: {str(e)}'}, status=400)
 
     t0 = _time.time()
@@ -5003,14 +5135,23 @@ def apply_to_patient_series(request):
 
     # Run patient slices in parallel, preserve order
     patient_results = [None] * len(mri_files)
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        futures = {ex.submit(_process_patient_slice, mri): i for i, mri in enumerate(mri_files)}
-        for fut in as_completed(futures):
-            idx = futures[fut]
-            patient_results[idx] = fut.result()
+    try:
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+            futures = {ex.submit(_process_patient_slice, mri): i for i, mri in enumerate(mri_files)}
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                try:
+                    patient_results[idx] = fut.result()
+                except Exception as fut_e:
+                    print(f'apply_to_patient_series — future error idx={idx}: {fut_e}')
+                    patient_results[idx] = None
+    except Exception as pool_e:
+        import traceback
+        print(f'apply_to_patient_series — thread pool error: {traceback.format_exc()}')
+        return JsonResponse({'error': f'Erreur traitement parallèle: {str(pool_e)}'}, status=500)
 
-    patient_slice_paths = [r[0] for r in patient_results if r]
-    patient_thumbs_b64  = [r[1] if r else None for r in patient_results]
+    patient_slice_paths = [r[0] for r in patient_results if r and isinstance(r, tuple)]
+    patient_thumbs_b64  = [r[1] if (r and isinstance(r, tuple)) else None for r in patient_results]
 
     # Reference slices (optional) — also parallel
     ref_slice_paths = []
@@ -5100,6 +5241,7 @@ def save_registered_series_to_patient(request):
 
     job_id     = data.get('jobId', '')
     patient_id = data.get('patientId')
+    mi_val     = data.get('mi')   # optional — mutual information score
 
     if not job_id:
         return JsonResponse({'error': 'jobId manquant'}, status=400)
@@ -5131,7 +5273,8 @@ def save_registered_series_to_patient(request):
     zip_bytes = buf.read()
 
     now_str  = datetime.now().strftime('%Y%m%d_%H%M%S')
-    filename = f'reg_serie_{patient.dossier_number}_{now_str}.zip'
+    mi_str   = f'_MI{float(mi_val):.3f}' if mi_val is not None else ''
+    filename = f'reg_serie_{patient.dossier_number}_{now_str}{mi_str}.zip'
 
     mri_file = MRIFile(
         patient=patient,
@@ -5627,13 +5770,13 @@ def forgot_password(request):
 
         reset_link = f"{get_frontend_origin()}/reset-password?token={reset_token.token}"
 
-        subject = "NeuroScan - Lien de réinitialisation de mot de passe"
+        subject = "BrainCore - Lien de réinitialisation de mot de passe"
         html_message = f"""
         <html><body style="font-family: Arial, sans-serif;">
             <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                <h1 style="color: #4f46e5;">NeuroScan</h1>
+                <h1 style="color: #4f46e5;">BrainCore</h1>
                 <h2>Réinitialisation de votre mot de passe</h2>
-                <p>Vous avez demandé la réinitialisation de votre mot de passe NeuroScan.</p>
+                <p>Vous avez demandé la réinitialisation de votre mot de passe BrainCore.</p>
                 <p style="margin: 30px 0;">
                     <a href="{reset_link}" style="padding: 12px 30px; background-color: #4f46e5; color: white; text-decoration: none; border-radius: 6px;">
                         Réinitialiser mon mot de passe
@@ -5643,7 +5786,7 @@ def forgot_password(request):
             </div>
         </body></html>
         """
-        plain_message = f"Réinitialisez votre mot de passe NeuroScan:\n\n{reset_link}\n\nCe lien est valide 15 minutes."
+        plain_message = f"Réinitialisez votre mot de passe BrainCore:\n\n{reset_link}\n\nCe lien est valide 15 minutes."
 
         using_smtp = settings.EMAIL_BACKEND == 'django.core.mail.backends.smtp.EmailBackend'
         sender_email = settings.EMAIL_HOST_USER or settings.DEFAULT_FROM_EMAIL

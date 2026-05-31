@@ -9,117 +9,121 @@ import {
   User,
   MessageSquareWarning,
   Quote,
+  ChevronRight,
 } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { logout } from '../api';
 
-const NavItem = ({ to, icon: Icon, label, exact = false, isLogout = false, onClick }) => {
-  if (isLogout) {
-    return (
-      <button
-        onClick={onClick}
-        className="group flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-[13px] font-medium text-blue-100/70 transition-all hover:bg-white/10 hover:text-white"
-      >
-        <Icon className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" />
-        {label}
-      </button>
-    );
-  }
-
-  return (
-    <NavLink
-      to={to}
-      end={exact}
-      className={({ isActive }) =>
-        `group relative flex items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-medium transition-all ${
-          isActive
-            ? 'bg-blue-500 text-white shadow-[0_8px_20px_rgba(59,130,246,0.3)]'
-            : 'text-blue-100/70 hover:bg-white/10 hover:text-white'
-        }`
-      }
-    >
-      <Icon className="h-4 w-4" />
-      {label}
-    </NavLink>
-  );
-};
+const NAV_SECTIONS = [
+  {
+    label: 'Navigation',
+    items: [
+      { to: '/admin', icon: LayoutDashboard, label: 'Tableau de bord', exact: true },
+      { to: '/admin/comptes', icon: Users, label: 'Comptes' },
+      { to: '/admin/temoignages', icon: Quote, label: 'Témoignages' },
+      { to: '/admin/reclamations', icon: MessageSquareWarning, label: 'Réclamations' },
+      { to: '/admin/historique', icon: History, label: 'Historique' },
+    ],
+  },
+  {
+    label: 'Système',
+    items: [
+      { to: '/admin/parametres', icon: Settings, label: 'Paramètres' },
+    ],
+  },
+];
 
 export default function AdminSidebar({ user, onLogout }) {
   const handleLogout = async () => {
     if (onLogout) {
       await onLogout();
     } else {
-      try {
-        await logout();
-      } catch (e) {
-        console.error(e);
-      } finally {
-        window.location.href = '/';
-      }
+      try { await logout(); } catch (e) { console.error(e); } finally { window.location.href = '/'; }
     }
   };
 
   return (
-    <aside className="fixed left-0 top-0 z-20 hidden h-screen w-64 flex-col border-r border-blue-200/20 bg-[#1e40af] xl:flex">
-      <div className="px-4 py-6">
-        <div className="flex items-center gap-3 px-2">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-blue-600 shadow-lg">
-            <Brain className="h-6 w-6" />
+    <aside style={{
+      position: 'fixed', left: 0, top: 0, zIndex: 20,
+      width: 240, height: '100vh',
+      background: '#ffffff',
+      borderRight: '1px solid #f1f5f9',
+      display: 'flex', flexDirection: 'column',
+      fontFamily: "'Noto Sans', system-ui, sans-serif",
+    }} className="hidden xl:flex">
+
+      {/* Logo */}
+      <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid #f8fafc' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: 'linear-gradient(135deg,#2563eb,#4f46e5)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <Brain size={20} color="white" />
           </div>
           <div>
-            <p className="text-[22px] font-bold tracking-tight text-white leading-none">NeuroScan</p>
-            <p className="mt-1 text-[10px] font-medium text-blue-200/80 uppercase tracking-wider">Admin Portal</p>
+            <p style={{ fontFamily: "'Space Grotesk', 'Segoe UI', sans-serif", fontSize: 17, fontWeight: 700, color: '#0f172a', lineHeight: 1, margin: 0 }}>BrainCore</p>
+            <p style={{ fontSize: 9, fontWeight: 600, color: '#94a3b8', letterSpacing: '0.15em', textTransform: 'uppercase', margin: '3px 0 0' }}>Admin Portal</p>
           </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 py-2">
-        <div className="mb-3 px-3 text-[11px] font-bold uppercase tracking-[0.2em] text-blue-200/50">
-          Navigation
-        </div>
-        <nav className="space-y-1">
-          <NavItem to="/admin" exact icon={LayoutDashboard} label="Tableau de bord" />
-          <NavItem to="/admin/comptes" icon={Users} label="Comptes" />
-          <NavItem to="/admin/temoignages" icon={Quote} label="Témoignages" />
-          <NavItem to="/admin/reclamations" icon={MessageSquareWarning} label="Réclamations" />
-          <NavItem to="/admin/historique" icon={History} label="Historique" />
-        </nav>
-
-        <div className="mb-3 mt-8 px-3 text-[11px] font-bold uppercase tracking-[0.2em] text-blue-200/50">
-          Système
-        </div>
-        <nav className="space-y-1">
-          <NavItem to="/admin/parametres" icon={Settings} label="Paramètres" />
-        </nav>
+      {/* Nav */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '12px 12px' }}>
+        {NAV_SECTIONS.map((section) => (
+          <div key={section.label} style={{ marginBottom: 24 }}>
+            <p style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 9, fontWeight: 700, color: '#cbd5e1', letterSpacing: '0.2em', textTransform: 'uppercase', padding: '0 8px', marginBottom: 6 }}>
+              {section.label}
+            </p>
+            <nav style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {section.items.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.exact}
+                  style={({ isActive }) => ({
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '8px 10px', borderRadius: 9,
+                    fontSize: 13, fontWeight: isActive ? 600 : 500,
+                    color: isActive ? '#2563eb' : '#475569',
+                    background: isActive ? '#eff6ff' : 'transparent',
+                    textDecoration: 'none',
+                    transition: 'all 0.15s ease',
+                  })}
+                >
+                  {({ isActive }) => (
+                    <>
+                      <item.icon size={15} style={{ color: isActive ? '#2563eb' : '#94a3b8', flexShrink: 0 }} />
+                      <span style={{ flex: 1 }}>{item.label}</span>
+                      {isActive && <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#2563eb', flexShrink: 0 }} />}
+                    </>
+                  )}
+                </NavLink>
+              ))}
+            </nav>
+          </div>
+        ))}
       </div>
 
-      <div className="p-4">
-        <div className="mb-4 rounded-2xl bg-white/10 p-4 backdrop-blur-md">
-          <div className="flex items-center gap-3">
-            <div className="relative h-9 w-9 overflow-hidden rounded-full bg-blue-400/30 ring-2 ring-white/25">
-              <div className="absolute inset-0 flex items-center justify-center text-white">
-                <User size={16} />
-              </div>
-              <img
-                src="/assets/images/admin.jpg"
-                alt="Profil administrateur"
-                className="relative z-10 h-full w-full object-cover"
-                onError={(e) => {
-                  e.currentTarget.style.display = 'none';
-                }}
-              />
-            </div>
-            <div>
-              <p className="text-[13px] font-bold text-white leading-none">
-                {user?.fullName || user?.full_name || 'Administrateur'}
-              </p>
-              <p className="mt-1 text-[11px] font-medium text-blue-100/60 truncate max-w-[140px]">
-                Super Admin
-              </p>
-            </div>
+      {/* User */}
+      <div style={{ padding: '12px 12px', borderTop: '1px solid #f1f5f9' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 10px', borderRadius: 10, background: '#f8fafc', marginBottom: 4 }}>
+          <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#e0e7ff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
+            <User size={15} color="#4f46e5" />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 12, fontWeight: 700, color: '#0f172a', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {user?.fullName || user?.full_name || 'Administrateur'}
+            </p>
+            <p style={{ fontSize: 10, color: '#94a3b8', margin: '1px 0 0' }}>Super Admin</p>
           </div>
         </div>
-        <NavItem isLogout icon={LogOut} label="Déconnexion" onClick={handleLogout} />
+        <button
+          onClick={handleLogout}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px', borderRadius: 9, fontSize: 13, fontWeight: 500, color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', transition: 'all 0.15s ease' }}
+          onMouseEnter={e => { e.currentTarget.style.background = '#fef2f2'; e.currentTarget.style.color = '#dc2626'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = '#64748b'; }}
+        >
+          <LogOut size={14} />
+          Déconnexion
+        </button>
       </div>
     </aside>
   );

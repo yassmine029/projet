@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, Info, Lock, CheckCircle, FileImage, UserPlus, ArrowLeft, RefreshCw, AlertTriangle, Layers, LayoutTemplate } from 'lucide-react';
+import { Upload, Info, CheckCircle, FileImage, UserPlus, ArrowLeft, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { createPatient } from '../api';
 import PageHeader from '../components/ui/PageHeader';
@@ -282,39 +282,6 @@ export default function NewPatient() {
             <h2 className="text-base font-bold text-slate-900">Upload du dossier IRM</h2>
           </div>
 
-          {/* Contrainte technique segmentation */}
-          <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3.5">
-            <div className="flex items-start gap-3">
-              <div className="shrink-0 w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center mt-0.5">
-                <AlertTriangle className="w-4 h-4 text-amber-600" />
-              </div>
-              <div className="flex-1">
-                <p className="text-xs font-black text-amber-800 uppercase tracking-wide mb-1.5">
-                  Contrainte technique — Segmentation
-                </p>
-                <p className="text-[11px] text-amber-700 leading-relaxed mb-2.5">
-                  Si ce patient est destiné à une <span className="font-bold">segmentation cérébrale</span>, les images importées doivent obligatoirement respecter les deux conditions suivantes :
-                </p>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <div className="flex items-center gap-2 rounded-lg bg-amber-100 border border-amber-200 px-3 py-2 flex-1">
-                    <Layers className="w-4 h-4 text-amber-700 shrink-0" />
-                    <div>
-                      <p className="text-[10px] font-black text-amber-800 uppercase tracking-wide">Type d'image</p>
-                      <p className="text-[11px] text-amber-700 font-semibold">Images 2D uniquement</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 rounded-lg bg-amber-100 border border-amber-200 px-3 py-2 flex-1">
-                    <LayoutTemplate className="w-4 h-4 text-amber-700 shrink-0" />
-                    <div>
-                      <p className="text-[10px] font-black text-amber-800 uppercase tracking-wide">Plan d'acquisition</p>
-                      <p className="text-[11px] text-amber-700 font-semibold">Plan coronal obligatoire</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
           <div className={`flex flex-col items-center justify-center border-2 border-dashed rounded-2xl p-8 transition-colors ${
             uploadError ? 'border-red-300 bg-red-50/50' : 'border-blue-300 bg-blue-50/30'
           }`}>
@@ -322,7 +289,7 @@ export default function NewPatient() {
               <Upload className="w-7 h-7 text-blue-600" />
             </div>
             <p className="font-semibold text-slate-900 text-sm mb-1 text-center">Selectionnez vos fichiers ou un dossier complet</p>
-            <p className="text-xs text-slate-500 mb-4 text-center">Formats supportes : NIfTI, DICOM, JPEG, PNG, TIFF, BMP</p>
+            <p className="text-xs text-slate-500 mb-4 text-center">Formats supportes : NIfTI, JPEG, PNG, TIFF</p>
             
             <input type="file" multiple webkitdirectory="" directory="" onChange={handleFileChange} className="hidden" id="folder-upload" />
             <input type="file" multiple onChange={handleFileChange} className="hidden" id="file-upload" />
@@ -338,7 +305,7 @@ export default function NewPatient() {
               </label>
             </div>
             <div className="flex gap-1.5 mt-4 flex-wrap justify-center">
-              {['.nii', '.nii.gz', '.dcm', '.jpg', '.png', '.tif', '.bmp'].map(ext => (
+              {['.nii', '.nii.gz', '.jpg', '.png', '.tif'].map(ext => (
                 <span key={ext} className="px-2 py-0.5 rounded-md bg-blue-100 text-blue-700 text-[10px] font-bold">{ext}</span>
               ))}
             </div>
@@ -357,11 +324,6 @@ export default function NewPatient() {
             )}
           </div>
 
-          <div className="flex items-center gap-2 mt-4 rounded-xl bg-emerald-50 border border-emerald-200/60 px-4 py-2.5">
-            <Lock className="w-4 h-4 text-emerald-600" />
-            <span className="text-xs font-semibold text-emerald-700">Anonymisation DICOM obligatoire</span>
-            <span className="text-[10px] text-emerald-600/70 ml-1">Protection des donnees patient imposee.</span>
-          </div>
         </Card>
 
         {/* Submit */}

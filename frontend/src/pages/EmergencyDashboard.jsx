@@ -75,7 +75,7 @@ export default function EmergencyDashboard({ user, onLogout }) {
           <div className="w-8 h-8 bg-red-600 rounded-lg flex items-center justify-center shadow-md shadow-red-600/30">
             <Brain className="w-[17px] h-[17px] text-white" />
           </div>
-          <span className="text-[16px] font-extrabold text-slate-900 tracking-tight">NeuroScan</span>
+          <span className="text-[16px] font-extrabold text-slate-900 tracking-tight">BrainCore</span>
           <span className="w-px h-4 bg-slate-200" />
           <span className="text-[13px] font-semibold text-slate-400">Console Urgence</span>
           <div className="ml-1 flex items-center gap-1.5 px-3 py-1 bg-red-50 border border-red-200 rounded-full">
@@ -177,7 +177,7 @@ export default function EmergencyDashboard({ user, onLogout }) {
               <span className="text-red-600">Dr. {doctorName}.</span>
             </h1>
             <p className="text-[15px] text-slate-500 max-w-2xl leading-relaxed">
-              Explorez les deux axes cliniques de NeuroScan en avant-première. Ces outils fonctionnent en
+              Explorez les deux axes cliniques de BrainCore en avant-première. Ces outils fonctionnent en
               mode démo complet — vos résultats sont temporaires jusqu'à l'activation de votre compte.
             </p>
           </div>

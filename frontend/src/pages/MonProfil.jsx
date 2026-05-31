@@ -1046,7 +1046,7 @@ function MonProfil() {
                         { key: "reportReady", label: "Rapport PDF pret au telechargement" },
                         { key: "complaintUpdated", label: "Reclamation mise a jour" },
                         { key: "securityAlerts", label: "Alertes de securite (compte)" },
-                        { key: "newsletter", label: "Newsletter et mises a jour NeuroScan" },
+                        { key: "newsletter", label: "Newsletter et mises a jour BrainCore" },
                       ].map((item) => (
                         <div
                           key={item.key}

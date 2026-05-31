@@ -115,8 +115,12 @@ export default function AppLayout({ children }) {
         </header>
 
         {/* Content */}
-        <div className="flex-1 p-8 animate-fade-in relative z-0">
-          {children}
+        <div
+          className="flex-1 p-8 animate-fade-in relative z-0"
+        >
+          <div style={{ position:'relative', zIndex:1 }}>
+            {children}
+          </div>
         </div>
       </main>
     </div>

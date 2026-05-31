@@ -1,9 +1,64 @@
 import React, { useState, useEffect } from 'react'
-import { Mail, ArrowLeft, Shield, Clock, Brain, CheckCircle2, ArrowRight } from 'lucide-react'
+import { Mail, ArrowLeft, Shield, Clock, Brain, CheckCircle2, ArrowRight, Lock } from 'lucide-react'
 import { forgotPassword } from '../api'
 
+const CSS = `
+  @keyframes imgZoom { from{transform:scale(1);} to{transform:scale(1.04);} }
+  @keyframes shimmer { from{left:-100%;} to{left:220%;} }
+  @keyframes spin     { to{transform:rotate(360deg);} }
+`
+
+const fld = (err = false, extra = {}) => ({
+  width: '100%', padding: '11px 14px', boxSizing: 'border-box',
+  border: `1.5px solid ${err ? '#fca5a5' : '#e2e8f0'}`,
+  borderRadius: 10, fontSize: 13.5, color: '#0f172a',
+  background: err ? '#fff7f7' : '#f8fafc',
+  outline: 'none', transition: 'border-color 0.18s, box-shadow 0.18s',
+  ...extra,
+})
+
+function RightPanel() {
+  return (
+    <div style={{ width:'100%', height:'100%', position:'relative', overflow:'hidden', display:'flex', flexDirection:'column', justifyContent:'flex-end' }}>
+      <img
+        src="/images/connexion.jpeg"
+        alt=""
+        style={{
+          position:'absolute', inset:0,
+          width:'100%', height:'100%',
+          objectFit:'cover', objectPosition:'center center',
+          animation:'imgZoom 12s ease-in-out infinite alternate',
+        }}
+      />
+      <div style={{
+        position:'absolute', inset:0,
+        background:'linear-gradient(to bottom, rgba(6,13,31,0.10) 0%, rgba(6,13,31,0.30) 35%, rgba(6,13,31,0.72) 62%, rgba(6,13,31,0.97) 100%)',
+      }}/>
+      <div style={{ position:'relative', zIndex:2, padding:'40px 48px' }}>
+        <div style={{ display:'flex', flexDirection:'column', gap:20 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+            <div style={{ width:40, height:40, borderRadius:12, background:'linear-gradient(135deg,#2563eb,#1d4ed8)', display:'flex', alignItems:'center', justifyContent:'center' }}>
+              <Brain size={22} color="#fff"/>
+            </div>
+            <span style={{ fontSize:22, fontWeight:800, color:'#fff', letterSpacing:'-0.02em' }}>BrainCore</span>
+          </div>
+          <div>
+            <p style={{ fontSize:26, fontWeight:800, color:'#fff', lineHeight:1.25, marginBottom:10 }}>
+              Accès sécurisé<br/>
+              <span style={{ color:'#93c5fd' }}>à votre espace clinique.</span>
+            </p>
+            <p style={{ fontSize:13, color:'rgba(255,255,255,0.55)', lineHeight:1.65, maxWidth:320 }}>
+              Réinitialisez votre mot de passe en toute sécurité. Un lien unique vous sera envoyé par email.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function ForgotPasswordPage({ onNavigate }) {
-  const [step, setStep] = useState('email') // email, sent, blocked
+  const [step, setStep] = useState('email')
   const [resetEmail, setResetEmail] = useState('')
   const [attempts, setAttempts] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
@@ -16,15 +71,8 @@ export default function ForgotPasswordPage({ onNavigate }) {
     if (blockedUntil) {
       const now = Date.now()
       const timeLeft = Math.ceil((parseInt(blockedUntil) - now) / 1000)
-      if (timeLeft > 0) {
-        setStep('blocked')
-        setBlockTimeRemaining(timeLeft)
-        setAttempts(6)
-      } else {
-        localStorage.removeItem('forgot_password_blocked_until')
-        localStorage.removeItem('forgot_password_attempts')
-        setAttempts(0)
-      }
+      if (timeLeft > 0) { setStep('blocked'); setBlockTimeRemaining(timeLeft); setAttempts(6) }
+      else { localStorage.removeItem('forgot_password_blocked_until'); localStorage.removeItem('forgot_password_attempts'); setAttempts(0) }
     } else if (storedAttempts) {
       setAttempts(parseInt(storedAttempts))
     }
@@ -40,12 +88,8 @@ export default function ForgotPasswordPage({ onNavigate }) {
       if (timeRemaining <= 0) {
         localStorage.removeItem('forgot_password_blocked_until')
         localStorage.removeItem('forgot_password_attempts')
-        setAttempts(0)
-        setStep('email')
-        setBlockTimeRemaining(0)
-      } else {
-        setBlockTimeRemaining(timeRemaining)
-      }
+        setAttempts(0); setStep('email'); setBlockTimeRemaining(0)
+      } else { setBlockTimeRemaining(timeRemaining) }
     }
     updateTimer()
     const interval = setInterval(updateTimer, 1000)
@@ -55,327 +99,213 @@ export default function ForgotPasswordPage({ onNavigate }) {
   const handleSendResetLink = async (e) => {
     if (e) e.preventDefault()
     if (attempts > 5) { setStep('blocked'); return }
-    
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
     if (!emailRegex.test(resetEmail)) { setEmailError('Email invalide'); return }
-
-    setIsLoading(true)
-    setEmailError('')
-
+    setIsLoading(true); setEmailError('')
     try {
       const response = await forgotPassword(resetEmail.toLowerCase())
-      if (response.data && response.data.ok) {
-        setStep('sent')
-      } else {
-        const errMsg = response.data?.error || 'Erreur lors de l\'envoi du lien sécurisé.'
-        setEmailError(errMsg)
-        handleFailure()
-      }
+      if (response.data?.ok) { setStep('sent') }
+      else { setEmailError(response.data?.error || 'Erreur lors de l\'envoi.'); handleFailure() }
     } catch (error) {
-      console.error(error)
-      const srvMsg = error.response?.data?.error || 'Erreur lors de la demande. Veuillez réessayer.'
-      setEmailError(srvMsg)
+      setEmailError(error.response?.data?.error || 'Erreur. Veuillez réessayer.')
       handleFailure()
-    } finally {
-      setIsLoading(false)
-    }
+    } finally { setIsLoading(false) }
   }
 
   const handleFailure = () => {
-    const newAttempts = attempts + 1
-    setAttempts(newAttempts)
-    localStorage.setItem('forgot_password_attempts', newAttempts.toString())
-    if (newAttempts > 5) {
-      const blockedUntil = Date.now() + (5 * 60 * 1000)
-      localStorage.setItem('forgot_password_blocked_until', blockedUntil.toString())
-      setBlockTimeRemaining(5 * 60)
-      setStep('blocked')
+    const n = attempts + 1; setAttempts(n)
+    localStorage.setItem('forgot_password_attempts', n.toString())
+    if (n > 5) {
+      const bu = Date.now() + 5 * 60 * 1000
+      localStorage.setItem('forgot_password_blocked_until', bu.toString())
+      setBlockTimeRemaining(5 * 60); setStep('blocked')
     }
   }
 
-  const isStepCompleted = (stepName) => {
-    const stepsLookup = { 'email': 1, 'sent': 2, 'blocked': 3 }
-    return stepsLookup[stepName] < stepsLookup[step]
-  }
-  const formatTime = (secs) => `${Math.floor(secs / 60)}:${(secs % 60).toString().padStart(2, '0')}`
+  const formatTime = (s) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
 
-  // Full-page blocked state
+  const wrapperStyle = {
+    display:'flex', minHeight:'100vh', fontFamily:"system-ui, -apple-system, sans-serif",
+    background:'#f8fafc',
+  }
+
+  const leftStyle = {
+    flex:'1', display:'flex', flexDirection:'column', justifyContent:'center',
+    padding:'48px 64px', maxWidth:560, margin:'0 auto',
+  }
+
+  // ── BLOCKED ──
   if (step === 'blocked') {
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 relative overflow-hidden font-sans">
-        {/* Background Gradients */}
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-red-100/40 rounded-full blur-[120px] -z-10 translate-x-1/2 -translate-y-1/2"></div>
-        <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-blue-100/40 rounded-full blur-[120px] -z-10 -translate-x-1/2 translate-y-1/2"></div>
-
-        <div className="absolute top-8 left-8 flex items-center gap-3">
-          <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-600/20">
-            <Brain className="w-6 h-6 text-white" />
+      <div style={wrapperStyle}>
+        <style>{CSS}</style>
+        <div style={leftStyle}>
+          <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:48 }}>
+            <div style={{ width:40, height:40, borderRadius:12, background:'linear-gradient(135deg,#2563eb,#1d4ed8)', display:'flex', alignItems:'center', justifyContent:'center' }}>
+              <Brain size={20} color="#fff"/>
+            </div>
+            <span style={{ fontSize:18, fontWeight:800, color:'#0f172a', letterSpacing:'-0.02em' }}>BrainCore</span>
           </div>
-          <span className="text-xl font-bold text-slate-900 tracking-tight">NeuroScan</span>
-        </div>
-
-        <div className="max-w-md w-full text-center space-y-8 relative z-10">
-          <div className="w-20 h-20 bg-white border border-slate-200 rounded-3xl shadow-xl flex items-center justify-center mx-auto">
-            <Clock className="w-10 h-10 text-slate-400 animate-pulse" strokeWidth={1.5} />
-          </div>
-          
-          <div className="space-y-4">
-            <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight leading-tight">
-              Accès temporairement restreint
-            </h1>
-            <p className="text-slate-500 leading-relaxed font-medium">
-              Par mesure de sécurité suite à trop de tentatives, votre accès est suspendu pour quelques minutes.
+          <div style={{ textAlign:'center' }}>
+            <div style={{ width:72, height:72, borderRadius:20, background:'#fef2f2', border:'1px solid #fecaca', display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 24px' }}>
+              <Clock size={36} color="#dc2626"/>
+            </div>
+            <h2 style={{ fontSize:24, fontWeight:800, color:'#0f172a', marginBottom:12 }}>Accès temporairement restreint</h2>
+            <p style={{ fontSize:14, color:'#64748b', lineHeight:1.65, marginBottom:28 }}>
+              Trop de tentatives. Réessayez dans{' '}
+              <span style={{ color:'#2563eb', fontWeight:700 }}>{blockTimeRemaining ? formatTime(blockTimeRemaining) : '00:00'}</span>.
             </p>
-          </div>
-
-          <div className="inline-flex items-center gap-3 bg-white border border-slate-200 rounded-2xl px-6 py-4 shadow-sm group hover:border-blue-200 transition-all">
-            <Clock className="w-5 h-5 text-blue-600 group-hover:scale-110 transition-transform" />
-            <span className="text-slate-600 font-bold">
-              Réessayez dans{' '}
-              <span className="text-blue-600">
-                {blockTimeRemaining ? formatTime(blockTimeRemaining) : '00:00'}
-              </span>
-            </span>
-          </div>
-
-          <div>
-            <button 
-              onClick={() => onNavigate('login')}
-              className="px-8 py-3.5 bg-white border border-slate-200 text-slate-600 font-bold rounded-2xl hover:bg-slate-50 hover:border-blue-300 transition-all shadow-sm active:scale-95 flex items-center gap-2 mx-auto"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Retour à la connexion
+            <button onClick={() => onNavigate('login')} style={{ display:'inline-flex', alignItems:'center', gap:8, padding:'12px 24px', borderRadius:12, border:'1.5px solid #e2e8f0', background:'#fff', color:'#475569', fontSize:14, fontWeight:700, cursor:'pointer' }}>
+              <ArrowLeft size={16}/> Retour à la connexion
             </button>
           </div>
-
-          <p className="text-xs text-slate-400 pt-8 uppercase tracking-widest font-bold">
-            Besoin d'aide ? <a href="mailto:admin@neuroscan.med" className="text-blue-600 hover:underline">Support Technique</a>
-          </p>
         </div>
-
-        <div className="absolute bottom-8 flex gap-8 text-[10px] font-black text-slate-300 uppercase tracking-widest">
-          <span>HIPAA Compliant</span>
-          <span>ISO 27001</span>
-          <span>CE Class IIb</span>
+        <div style={{ width:480, position:'relative', overflow:'hidden', flexShrink:0 }}>
+          <RightPanel/>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen flex bg-[#e9eef8] font-sans selection:bg-blue-100 selection:text-blue-900">
-      <div className="fixed top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-400 via-blue-600 to-blue-800 z-50"></div>
+    <div style={wrapperStyle}>
+      <style>{CSS}</style>
+      <div style={leftStyle}>
 
-      <div className="flex-1 flex flex-col justify-center px-8 sm:px-16 lg:px-24 xl:px-32 relative">
-        <div className="absolute top-0 left-0 w-full h-full bg-[#e9eef8] -z-10"></div>
-        
-        <div className="max-w-md w-full mx-auto space-y-10 py-12 animate-in fade-in slide-in-from-bottom-4 duration-700">
-          
-          <div className="space-y-6">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-600/30">
-                <Brain className="w-7 h-7 text-white" />
-              </div>
-              <span className="text-2xl font-extrabold text-slate-900 tracking-tight">NeuroScan</span>
+        {/* Logo */}
+        <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:32 }}>
+          <div style={{ width:40, height:40, borderRadius:12, background:'linear-gradient(135deg,#2563eb,#1d4ed8)', display:'flex', alignItems:'center', justifyContent:'center' }}>
+            <Brain size={20} color="#fff"/>
+          </div>
+          <span style={{ fontSize:18, fontWeight:800, color:'#0f172a', letterSpacing:'-0.02em' }}>BrainCore</span>
+        </div>
+
+        {/* Back */}
+        <button onClick={() => onNavigate('login')} style={{ display:'inline-flex', alignItems:'center', gap:6, fontSize:13, fontWeight:600, color:'#94a3b8', background:'none', border:'none', cursor:'pointer', padding:0, marginBottom:32, transition:'color 0.15s' }}
+          onMouseEnter={e=>e.currentTarget.style.color='#2563eb'} onMouseLeave={e=>e.currentTarget.style.color='#94a3b8'}>
+          <ArrowLeft size={14}/> Retour à la connexion
+        </button>
+
+        {/* Steps */}
+        <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:32 }}>
+          {[1,2].map((num) => {
+            const isDone = (num === 1 && step === 'sent')
+            const isActive = (num === 1 && step === 'email') || (num === 2 && step === 'sent')
+            return (
+              <React.Fragment key={num}>
+                <div style={{
+                  width:36, height:36, borderRadius:10, display:'flex', alignItems:'center', justifyContent:'center',
+                  fontWeight:700, fontSize:13, transition:'all 0.3s',
+                  background: isDone ? '#10b981' : isActive ? '#2563eb' : '#f1f5f9',
+                  color: (isDone || isActive) ? '#fff' : '#94a3b8',
+                  transform: isActive ? 'scale(1.1)' : 'scale(1)',
+                  boxShadow: isActive ? '0 4px 14px rgba(37,99,235,0.3)' : 'none',
+                }}>
+                  {isDone ? <CheckCircle2 size={16}/> : num}
+                </div>
+                {num < 2 && <div style={{ flex:1, height:3, borderRadius:4, background: isDone ? '#10b981' : '#f1f5f9' }}/>}
+              </React.Fragment>
+            )
+          })}
+        </div>
+
+        {step === 'email' && (
+          <div>
+            <h2 style={{ fontSize:28, fontWeight:800, color:'#0f172a', letterSpacing:'-0.03em', lineHeight:1.15, marginBottom:10 }}>
+              Mot de passe oublié,<br/>
+              <span style={{ color:'#2563eb' }}>Docteur.</span>
+            </h2>
+            <p style={{ fontSize:13.5, color:'#64748b', lineHeight:1.65, marginBottom:28 }}>
+              Entrez votre email professionnel pour recevoir un lien de réinitialisation unique.
+            </p>
+
+            {/* Security notice */}
+            <div style={{ display:'flex', alignItems:'center', gap:12, background:'#f0f9ff', border:'1px solid #bae6fd', borderRadius:12, padding:'12px 16px', marginBottom:28 }}>
+              <Shield size={16} color="#0284c7" style={{ flexShrink:0 }}/>
+              <span style={{ fontSize:12, color:'#0369a1', fontWeight:600 }}>
+                Le lien expire après <strong>15 minutes</strong> — usage unique.
+              </span>
             </div>
-            
-            <button 
-              onClick={() => onNavigate('login')}
-              className="flex items-center gap-2 text-sm font-bold text-slate-400 hover:text-blue-600 transition-colors group"
-            >
-              <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
+
+            <form onSubmit={handleSendResetLink} style={{ display:'flex', flexDirection:'column', gap:20 }}>
+              <div>
+                <label style={{ display:'block', fontSize:11.5, fontWeight:700, color:'#475569', marginBottom:6, letterSpacing:'0.04em' }}>
+                  Email professionnel <span style={{ color:'#ef4444' }}>*</span>
+                </label>
+                <div style={{ position:'relative' }}>
+                  <div style={{ position:'absolute', left:12, top:0, bottom:0, display:'flex', alignItems:'center', pointerEvents:'none', color:'#94a3b8' }}>
+                    <Mail size={14}/>
+                  </div>
+                  <input
+                    type="email"
+                    value={resetEmail}
+                    onChange={e => { setResetEmail(e.target.value); setEmailError('') }}
+                    style={fld(!!emailError, { paddingLeft:38 })}
+                    placeholder="votre.email@hopital.com"
+                    autoComplete="email"
+                  />
+                </div>
+                {emailError && <p style={{ marginTop:5, fontSize:11, color:'#ef4444', fontWeight:600 }}>{emailError}</p>}
+              </div>
+
+              <button type="submit" disabled={isLoading} style={{
+                position:'relative', overflow:'hidden', width:'100%', height:48,
+                borderRadius:12, border:'none', cursor: isLoading ? 'not-allowed' : 'pointer',
+                background: isLoading ? '#94a3b8' : 'linear-gradient(135deg,#2563eb,#1d4ed8)',
+                color:'#fff', fontSize:14, fontWeight:700,
+                display:'flex', alignItems:'center', justifyContent:'center', gap:8,
+                boxShadow: isLoading ? 'none' : '0 4px 20px rgba(37,99,235,0.32)',
+                transition:'all 0.22s ease', opacity: isLoading ? 0.65 : 1,
+              }}>
+                {isLoading
+                  ? <div style={{ width:18, height:18, border:'2.5px solid rgba(255,255,255,0.3)', borderTopColor:'#fff', borderRadius:'50%', animation:'spin 0.7s linear infinite' }}/>
+                  : <><span>Envoyer le lien</span><ArrowRight size={16}/></>
+                }
+              </button>
+            </form>
+          </div>
+        )}
+
+        {step === 'sent' && (
+          <div style={{ textAlign:'center' }}>
+            <div style={{ width:72, height:72, borderRadius:20, background:'#f0fdf4', border:'1px solid #bbf7d0', display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 24px' }}>
+              <CheckCircle2 size={36} color="#16a34a"/>
+            </div>
+            <h2 style={{ fontSize:26, fontWeight:800, color:'#0f172a', marginBottom:10 }}>Email envoyé !</h2>
+            <p style={{ fontSize:14, color:'#64748b', lineHeight:1.65, marginBottom:28 }}>
+              Un lien sécurisé a été envoyé à<br/>
+              <span style={{ color:'#2563eb', fontWeight:700 }}>{resetEmail}</span>
+            </p>
+            <div style={{ background:'#f8fafc', border:'1px solid #e2e8f0', borderRadius:14, padding:20, marginBottom:28, display:'flex', flexDirection:'column', gap:14, textAlign:'left' }}>
+              {[
+                { icon: Clock, title:'Validité 15 minutes', desc:'Le lien expire pour votre sécurité.' },
+                { icon: Shield, title:'Usage unique', desc:'Non réutilisable après validation.' },
+                { icon: Mail, title:'Dossier spam', desc:'Vérifiez vos courriers indésirables.' },
+              ].map((item, i) => (
+                <div key={i} style={{ display:'flex', gap:12, alignItems:'flex-start' }}>
+                  <div style={{ width:32, height:32, borderRadius:8, background:'#fff', border:'1px solid #e2e8f0', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+                    <item.icon size={14} color="#2563eb"/>
+                  </div>
+                  <div>
+                    <p style={{ fontSize:13, fontWeight:700, color:'#0f172a', marginBottom:2 }}>{item.title}</p>
+                    <p style={{ fontSize:12, color:'#94a3b8' }}>{item.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => onNavigate('login')} style={{ width:'100%', height:48, borderRadius:12, border:'none', cursor:'pointer', background:'linear-gradient(135deg,#2563eb,#1d4ed8)', color:'#fff', fontSize:14, fontWeight:700, marginBottom:12 }}>
               Retour à la connexion
             </button>
+            <button onClick={() => setStep('email')} style={{ width:'100%', padding:'10px 0', background:'none', border:'none', cursor:'pointer', fontSize:12, color:'#94a3b8', fontWeight:600 }}>
+              Renvoyer l'email
+            </button>
           </div>
-
-          <div className="flex items-center gap-4 py-2">
-            {[1, 2, 3].map((num) => {
-              const currentStepName = num === 1 ? 'email' : num === 2 ? 'sent' : 'blocked'
-              const isDone = isStepCompleted(currentStepName)
-              const isActive = step === currentStepName
-              
-              return (
-                <React.Fragment key={num}>
-                  <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-bold text-sm transition-all duration-500 shadow-sm
-                    ${isDone ? 'bg-emerald-500 text-white' : isActive ? 'bg-blue-600 text-white scale-110 shadow-blue-200 shadow-lg' : 'bg-slate-100 text-slate-400'}`}>
-                    {isDone ? <CheckCircle2 className="w-5 h-5" /> : num}
-                  </div>
-                  {num < 3 && (
-                    <div className={`flex-1 h-1 rounded-full transition-all duration-500 ${isDone ? 'bg-emerald-200' : 'bg-slate-100'}`}></div>
-                  )}
-                </React.Fragment>
-              )
-            })}
-          </div>
-
-          {step === 'email' ? (
-            <div className="space-y-8">
-              <div className="space-y-3">
-                <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight leading-tight uppercase">
-                  Réinitialisation <br/><span className="text-blue-600">sécurisée</span>
-                </h2>
-                <p className="text-slate-500 font-medium leading-relaxed">
-                  Entrez votre adresse email professionnelle pour recevoir un lien de réinitialisation unique et sécurisé.
-                </p>
-              </div>
-
-              <div className="bg-white border border-blue-50 p-6 rounded-3xl shadow-sm space-y-4 relative overflow-hidden group">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-blue-50/50 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
-                <div className="flex items-start gap-4 relative z-10">
-                  <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform duration-300">
-                    <Shield className="w-5 h-5 text-blue-600" />
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-sm font-bold text-slate-900 leading-tight">Protocole de sécurité activé</p>
-                    <p className="text-xs text-slate-500 leading-relaxed font-semibold">
-                      Le lien de réinitialisation expire après <span className="text-blue-600 font-extrabold">15 minutes</span>.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <form onSubmit={handleSendResetLink} className="space-y-6">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Email professionnel</label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                      <Mail className={`h-5 w-5 ${emailError ? 'text-red-400' : 'text-slate-400'}`} />
-                    </div>
-                    <input
-                      type="email"
-                      value={resetEmail}
-                      onChange={e => { setResetEmail(e.target.value); setEmailError('') }}
-                      className={`block w-full pl-12 pr-4 py-4 border ${emailError ? 'border-red-300 focus:ring-red-500' : 'border-slate-100 focus:ring-blue-500/20'} rounded-2xl bg-slate-50/50 focus:bg-white transition-all duration-300 placeholder-slate-300 focus:outline-none focus:ring-4 sm:text-sm text-slate-900 font-medium`}
-                      placeholder="v.nom@clinique.org"
-                    />
-                  </div>
-                  {emailError && <p className="text-xs text-red-600 font-bold pl-1">{emailError}</p>}
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="w-full h-14 flex justify-center items-center gap-3 py-4 bg-gradient-to-r from-blue-600 to-blue-800 text-white font-bold rounded-2xl hover:shadow-xl hover:shadow-blue-600/20 active:scale-[0.98] transition-all duration-300 group disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isLoading ? (
-                    <span className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-                  ) : (
-                    <>
-                      <span className="text-sm">Envoyer le lien sécurisé</span>
-                      <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                    </>
-                  )}
-                </button>
-              </form>
-
-              <div className="flex items-center justify-center gap-3 py-4">
-                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Infrastucture Sécurisée AES-256</p>
-              </div>
-            </div>
-          ) : step === 'sent' ? (
-            <div className="space-y-10 animate-in fade-in zoom-in duration-500">
-              <div className="text-center space-y-4">
-                <div className="w-24 h-24 bg-emerald-50 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-sm ring-1 ring-emerald-100">
-                  <CheckCircle2 className="w-12 h-12 text-emerald-600" />
-                </div>
-                <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">Email envoyé !</h2>
-                <p className="text-slate-500 font-medium">
-                  Un lien sécurisé a été envoyé à :<br/>
-                  <span className="text-blue-600 font-bold">{resetEmail}</span>
-                </p>
-              </div>
-
-              <div className="bg-slate-50 rounded-3xl p-8 space-y-6 border border-slate-100">
-                {[
-                  { icon: Clock, title: 'Validité 15 minutes', desc: 'Le lien expire pour votre sécurité.' },
-                  { icon: Shield, title: 'Usage unique', desc: 'Lien réutilisable non autorisé.' },
-                  { icon: Mail, title: 'Dossier spam', desc: 'Vérifiez vos courriers indésirables.' },
-                ].map((item, i) => (
-                  <div key={i} className="flex gap-4">
-                    <div className="p-2 bg-white rounded-xl shadow-sm self-start">
-                      <item.icon className="w-4 h-4 text-blue-600" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-bold text-slate-900">{item.title}</p>
-                      <p className="text-xs text-slate-400 font-medium leading-relaxed">{item.desc}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="space-y-4">
-                <button 
-                  onClick={() => onNavigate('login')} 
-                  className="w-full py-4 text-blue-600 font-bold hover:bg-blue-50 rounded-2xl transition-all"
-                >
-                  Retour à la connexion
-                </button>
-                <button 
-                  onClick={() => setStep('email')} 
-                  className="w-full py-4 text-slate-400 text-xs font-black uppercase tracking-widest hover:text-slate-600 transition-all"
-                >
-                  Renvoyer l'email
-                </button>
-              </div>
-            </div>
-          ) : null}
-        </div>
+        )}
       </div>
 
-      <div className="hidden lg:flex w-[450px] xl:w-[550px] relative overflow-hidden bg-[#0a0f2c] flex-col justify-between p-16">
-        <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-blue-950 to-slate-950"></div>
-        <div className="absolute top-0 right-0 w-full h-full bg-[radial-gradient(circle_at_50%_0%,_rgba(59,130,246,0.15),transparent_50%)]"></div>
-        <div className="absolute bottom-0 left-0 w-full h-full bg-[radial-gradient(circle_at_0%_100%,_rgba(59,130,246,0.1),transparent_50%)]"></div>
-        
-        <div className="absolute top-1/4 -right-20 w-80 h-80 bg-blue-500/10 rounded-full blur-[100px] animate-pulse"></div>
-        <div className="absolute bottom-0 -left-20 w-80 h-80 bg-blue-400/5 rounded-full blur-[100px] animate-pulse" style={{ animationDelay: '2s' }}></div>
-
-        <div className="relative z-10">
-          <div className="inline-flex items-center gap-2 bg-white/5 border border-white/10 backdrop-blur-md rounded-full px-4 py-1.5">
-            <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping"></div>
-            <span className="text-[8px] font-black text-white uppercase tracking-widest">Medical Cloud Security</span>
-          </div>
-        </div>
-
-        <div className="relative z-10 space-y-10">
-          <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-blue-700 rounded-2xl p-0.5 shadow-2xl rotate-3">
-             <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center">
-                <Brain className="w-7 h-7 text-blue-400" />
-             </div>
-          </div>
-
-          <div className="space-y-6">
-            <h2 className="text-3xl font-extrabold text-white leading-tight tracking-tight">
-              Une sécurité <br/>
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-blue-200">
-                clinique sans faille.
-              </span>
-            </h2>
-            <p className="text-base text-blue-200/60 font-light leading-relaxed max-w-sm">
-              Accédez à vos outils de neuro-imagerie préférés en toute confiance.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4 pt-4">
-             {[
-               { label: 'Chiffrement', val: 'AES-256' },
-               { label: 'Standard', val: 'HIPAA' },
-               { label: 'Infrastructure', val: 'HDS' },
-               { label: 'Audit Log', val: 'Tier-III' }
-             ].map((stat, i) => (
-               <div key={i} className="p-4 bg-white/5 border border-white/5 rounded-2xl backdrop-blur-sm group hover:bg-white/10 transition-colors">
-                  <p className="text-blue-400 font-extrabold text-[10px] uppercase tracking-widest mb-1">{stat.label}</p>
-                  <p className="text-white font-bold text-base tracking-tight">{stat.val}</p>
-               </div>
-             ))}
-          </div>
-        </div>
-
-        <div className="relative z-10 flex gap-6 text-[10px] font-black text-white/30 uppercase tracking-widest">
-          <span>ISO 27001 Certified</span>
-          <span>NeuroScan Network</span>
-        </div>
+      {/* Right panel — same image as Login */}
+      <div style={{ width:480, position:'relative', overflow:'hidden', flexShrink:0 }}>
+        <RightPanel/>
       </div>
     </div>
   )

@@ -24,6 +24,7 @@ import Login from './pages/Login'
 import AdminDashboard from './pages/AdminDashboard'
 import DashboardHome from './pages/Dashboard'
 import { LandingPage } from './pages/LandingPage'
+import HomePage from './pages/HomePage'
 import { RegistrationPage } from './pages/RegistrationPage'
 import ForgotPasswordPage from './pages/ForgotPasswordPage'
 import ResetPasswordPage from './pages/ResetPasswordPage'
@@ -70,7 +71,7 @@ function goToPath(path) {
 }
 
 function isPortalAdminUser(user) {
-  return Boolean(user?.is_admin_dashboard || user?.username === '__neuroscan_portal_admin__')
+  return Boolean(user?.is_admin_dashboard || user?.username === '__braincore_portal_admin__')
 }
 
 function Protected({ user, children }) {
@@ -232,6 +233,7 @@ export default function App() {
         return
       }
       if (page === 'dashboard') {
+        if (isPortalAdminUser(user)) { navigate('/admin'); return }
         navigate(user?.is_emergency_session ? '/urgence' : '/dashboard')
         return
       }
@@ -298,52 +300,54 @@ export default function App() {
 
   return (
     <>
-      {!location.pathname.startsWith('/admin') && <ThemeToggle />}
-
       <Routes>
         <Route
           path="/"
-          element={<LandingPage user={user} onNavigate={handleNavigate} onLogout={handleLogout} />}
+          element={isPortalAdminUser(user) ? <Navigate to="/admin" replace /> : <HomePage user={user} onNavigate={handleNavigate} onLogout={handleLogout} />}
+        />
+        <Route
+          path="/landing"
+          element={isPortalAdminUser(user) ? <Navigate to="/admin" replace /> : <LandingPage user={user} onNavigate={handleNavigate} onLogout={handleLogout} />}
         />
         <Route
           path="/login"
-          element={user ? <Navigate to="/" replace /> : <Login onLogin={persistUserAndSet} />}
+          element={isPortalAdminUser(user) ? <Navigate to="/admin" replace /> : user ? <Navigate to="/" replace /> : <Login onLogin={persistUserAndSet} />}
         />
         <Route
           path="/forgot-password"
-          element={<ForgotPasswordPage onNavigate={handleAuthNavigate} />}
+          element={isPortalAdminUser(user) ? <Navigate to="/admin" replace /> : <ForgotPasswordPage onNavigate={handleAuthNavigate} />}
         />
         <Route
           path="/reset-password"
-          element={<ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} />}
+          element={isPortalAdminUser(user) ? <Navigate to="/admin" replace /> : <ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} />}
         />
         <Route
           path="/reset-password/"
-          element={<ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} />}
+          element={isPortalAdminUser(user) ? <Navigate to="/admin" replace /> : <ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} />}
         />
         <Route
           path="/reset_password"
-          element={<ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} />}
+          element={isPortalAdminUser(user) ? <Navigate to="/admin" replace /> : <ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} />}
         />
         <Route
           path="/reset_password/"
-          element={<ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} />}
+          element={isPortalAdminUser(user) ? <Navigate to="/admin" replace /> : <ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} />}
         />
         <Route
           path="/activate-account"
-          element={<ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} mode="activation" />}
+          element={isPortalAdminUser(user) ? <Navigate to="/admin" replace /> : <ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} mode="activation" />}
         />
         <Route
           path="/activate-account/"
-          element={<ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} mode="activation" />}
+          element={isPortalAdminUser(user) ? <Navigate to="/admin" replace /> : <ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} mode="activation" />}
         />
         <Route
           path="/activate_account"
-          element={<ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} mode="activation" />}
+          element={isPortalAdminUser(user) ? <Navigate to="/admin" replace /> : <ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} mode="activation" />}
         />
         <Route
           path="/activate_account/"
-          element={<ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} mode="activation" />}
+          element={isPortalAdminUser(user) ? <Navigate to="/admin" replace /> : <ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} mode="activation" />}
         />
         <Route
           path="/admin/*"

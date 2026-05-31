@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import AdminSidebar from '../components/AdminSidebar';
 import {
   Activity,
+  AlertTriangle,
   ArrowUpRight,
   Bell,
   Calendar,
@@ -18,9 +19,13 @@ import {
   Save,
   Search,
   Shield,
+  ShieldAlert,
   TrendingUp,
+  UserCheck,
   UserPlus,
-  Users
+  Users,
+  X,
+  Zap
 } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
@@ -74,6 +79,7 @@ export default function Dashboard({ user, onLogout }) {
 
   const [overviewData, setOverviewData] = useState(null);
   const [accountsData, setAccountsData] = useState(null);
+  const [accountsError, setAccountsError] = useState('');
   const [historyData, setHistoryData] = useState(null);
   const [settingsData, setSettingsData] = useState(null);
   const [analyticsData, setAnalyticsData] = useState(null);
@@ -163,8 +169,13 @@ export default function Dashboard({ user, onLogout }) {
   };
 
   const reloadAccounts = async () => {
-    const acc = await getAdminAccounts();
-    setAccountsData(acc.data || null);
+    try {
+      const acc = await getAdminAccounts();
+      setAccountsData(acc.data || null);
+      setAccountsError('');
+    } catch (e) {
+      setAccountsError(`Erreur API (${e?.response?.status || 'réseau'}) — vérifiez que le backend Django est démarré.`);
+    }
   };
 
   const reloadTestimonials = async () => {
@@ -232,6 +243,8 @@ export default function Dashboard({ user, onLogout }) {
         ]);
         const ovData = ov.status === 'fulfilled' ? (ov.value?.data || null) : null;
         const accData = acc.status === 'fulfilled' ? (acc.value?.data || null) : null;
+        if (acc.status === 'rejected') setAccountsError(`Erreur API (${acc.reason?.response?.status || 'réseau'}) — vérifiez que le backend Django est démarré.`);
+        else setAccountsError('');
         const histData = hist.status === 'fulfilled' ? (hist.value?.data || null) : null;
         const setData = setg.status === 'fulfilled' ? (setg.value?.data || null) : null;
         const anaData = ana.status === 'fulfilled' ? (ana.value?.data || null) : null;
@@ -308,7 +321,8 @@ export default function Dashboard({ user, onLogout }) {
   const stats = useMemo(() => {
     const s = overviewData?.stats;
     const d = s?.deltas || {};
-    const openReclamations = reclamationsData.filter((r) => r.etat === 'en_attente').length;
+    const reclamationsList = Array.isArray(reclamationsData) ? reclamationsData : [];
+    const openReclamations = reclamationsList.filter((r) => r.etat === 'en_attente').length;
     const reclamations = Number(s?.reclamations_ouvertes ?? openReclamations ?? 0);
 
     const now = new Date();
@@ -316,11 +330,11 @@ export default function Dashboard({ user, onLogout }) {
     const thisYear = now.getFullYear();
     const lastMonth = thisMonth === 0 ? 11 : thisMonth - 1;
     const lastMonthYear = thisMonth === 0 ? thisYear - 1 : thisYear;
-    const recThisMonth = reclamationsData.filter((r) => {
+    const recThisMonth = reclamationsList.filter((r) => {
       const d = new Date(r.date);
       return d.getMonth() === thisMonth && d.getFullYear() === thisYear;
     }).length;
-    const recLastMonth = reclamationsData.filter((r) => {
+    const recLastMonth = reclamationsList.filter((r) => {
       const d = new Date(r.date);
       return d.getMonth() === lastMonth && d.getFullYear() === lastMonthYear;
     }).length;
@@ -328,16 +342,16 @@ export default function Dashboard({ user, onLogout }) {
     const recDeltaLabel = recDelta > 0 ? `+${recDelta} ce mois` : recDelta < 0 ? `${recDelta} ce mois` : 'Stable ce mois';
 
     return [
-      { label: 'Médecins actifs', value: (s?.patients_actifs ?? 0).toLocaleString('fr-FR'), delta: `+${d.patients_actifs ?? 0}% ce mois`, icon: Users, iconClass: 'text-blue-600 bg-blue-100' },
-      { label: "Analyses effectuées ce mois", value: (s?.analyses_totales ?? 0).toLocaleString('fr-FR'), delta: `+${d.analyses_totales ?? 0} ce mois`, icon: Calendar, iconClass: 'text-emerald-600 bg-emerald-100' },
-      { label: "Réclamations en attente", value: reclamations.toLocaleString('fr-FR'), delta: recDeltaLabel, icon: MessageSquare, iconClass: 'text-amber-600 bg-amber-100' },
-      { label: 'Taux de disponibilité système', value: `${s?.taux_precision ?? 94}%`, delta: `+${d.taux_precision ?? 0.3}% ce mois`, icon: TrendingUp, iconClass: 'text-teal-600 bg-teal-100' },
+      { label: 'Médecins actifs', value: (s?.patients_actifs ?? 0).toLocaleString('fr-FR'), delta: `+${d.patients_actifs ?? 0}% ce mois`, icon: Users, color: '#3b82f6', iconClass: 'text-blue-600 bg-blue-100' },
+      { label: "Analyses effectuées", value: (s?.analyses_totales ?? 0).toLocaleString('fr-FR'), delta: `+${d.analyses_totales ?? 0} ce mois`, icon: Calendar, color: '#10b981', iconClass: 'text-emerald-600 bg-emerald-100' },
+      { label: "Réclamations", value: reclamations.toLocaleString('fr-FR'), delta: recDeltaLabel, icon: MessageSquare, color: '#f59e0b', iconClass: 'text-amber-600 bg-amber-100' },
+      { label: 'Disponibilité', value: `${s?.taux_precision ?? 94}%`, delta: `+${d.taux_precision ?? 0.3}% ce mois`, icon: TrendingUp, color: '#14b8a6', iconClass: 'text-teal-600 bg-teal-100' },
     ];
   }, [overviewData, historyData, reclamationsData]);
 
   const historyRows = useMemo(() => {
     const rows = overviewData?.activity || [];
-    return rows.map((r, idx) => ({
+    return rows.slice(0, 4).map((r, idx) => ({
       id: `${r.action || 'action'}-${idx}`,
       title: r.user || 'Utilisateur',
       subtitle: r.action || 'Action effectuée',
@@ -349,14 +363,15 @@ export default function Dashboard({ user, onLogout }) {
   }, [overviewData]);
 
   const complaintsRows = useMemo(() => {
-    return reclamationsData.slice(0, 4).map((it, idx) => {
+    const recList = Array.isArray(reclamationsData) ? reclamationsData : [];
+    return recList.slice(0, 4).map((it, idx) => {
       const statusText = String(it?.priorite || 'normale');
       const lowered = statusText.toLowerCase();
       const severityClass = lowered.includes('critique') || lowered.includes('haute')
-        ? 'bg-rose-100 text-rose-700'
+        ? 'bg-rose-100 text-rose-700 font-bold'
         : lowered.includes('basse')
-          ? 'bg-emerald-100 text-emerald-700'
-          : 'bg-teal-100 text-teal-700';
+          ? 'bg-emerald-100 text-emerald-700 font-medium'
+          : 'bg-blue-100 text-blue-700 font-medium';
 
       return {
         id: `${it?.numero || 'reclamation'}-${idx}`,
@@ -371,8 +386,10 @@ export default function Dashboard({ user, onLogout }) {
 
   const unreadCount = useMemo(() => {
     const pendingAcc = Number(accountsData?.pending_count || 0);
-    const pendingRecs = reclamationsData.filter((r) => r.etat === 'en_attente').length;
-    const pendingTes = (testimonialsData?.items || []).filter((t) => String(t?.status || '').toLowerCase() === 'pending').length;
+    const recList = Array.isArray(reclamationsData) ? reclamationsData : [];
+    const pendingRecs = recList.filter((r) => r.etat === 'en_attente').length;
+    const testList = Array.isArray(testimonialsData?.items) ? testimonialsData.items : [];
+    const pendingTes = testList.filter((t) => String(t?.status || '').toLowerCase() === 'pending').length;
     return pendingAcc + pendingRecs + pendingTes;
   }, [accountsData, reclamationsData, testimonialsData]);
 
@@ -397,17 +414,25 @@ export default function Dashboard({ user, onLogout }) {
 
   const accounts = useMemo(() => {
     const rows = accountsData?.accounts || [];
-    return rows.map((a) => [a.id, a.full_name || a.username, a.email, a.role, a.order_number || '-', a.status, formatDate(a.last_login), badgeClass(a.status)]);
+    return rows.map((a) => [
+      a.user_id || a.id, 
+      a.full_name || a.username, 
+      a.email, 
+      a.role || 'Médecin', 
+      a.order_number || '-', 
+      a.status || 'Actif', 
+      formatDate(a.last_login), 
+      badgeClass(a.status || 'Actif')
+    ]);
   }, [accountsData]);
 
   const pendingAccounts = useMemo(() => {
     const rows = accountsData?.accounts || [];
-    return rows.filter((a) => String(a?.status || '').toLowerCase().startsWith('en attente'));
+    return rows.filter((a) => String(a?.status || '').toLowerCase().startsWith('en attente') || a?.status === 'pending');
   }, [accountsData]);
 
   const testimonials = useMemo(() => {
-    const rows = testimonialsData?.items || [];
-    return rows;
+    return Array.isArray(testimonialsData?.items) ? testimonialsData.items : [];
   }, [testimonialsData]);
 
   const pendingTestimonials = useMemo(() => {
@@ -756,1043 +781,1150 @@ export default function Dashboard({ user, onLogout }) {
   ];
 
   const renderOverview = () => (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {stats.map((s) => {
+    <div className="space-y-10 animate-in fade-in slide-in-from-bottom-6 duration-1000">
+      {/* 1. Header Overview Metrics */}
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+        {stats.map((s, idx) => {
           const Icon = s.icon;
           return (
-            <div key={s.label} className="rounded-2xl border border-slate-200 bg-white p-3.5 shadow-[0_6px_16px_rgba(15,23,42,0.05)]">
-              <div className="flex items-start justify-between">
-                <p className="max-w-[170px] text-[12px] font-semibold leading-tight text-slate-500">{s.label}</p>
-                <span className={`rounded-xl p-2 ${s.iconClass}`}><Icon className="h-4 w-4" /></span>
+            <div key={s.label} className="group relative overflow-hidden rounded-[2.5rem] bg-white p-8 shadow-2xl shadow-slate-200/40 border border-slate-100/50 hover:shadow-blue-500/10 transition-all duration-500 hover:-translate-y-1">
+              {/* Glossy Overlay */}
+              <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-slate-50 transition-transform duration-700 group-hover:scale-[3]" />
+              
+              <div className="relative z-10">
+                <div className="mb-6 flex items-center justify-between">
+                  <div className={`h-10 w-10 rounded-xl flex items-center justify-center ${s.iconClass.replace('text-', 'bg-').replace('blue-600', 'blue-50').replace('emerald-600', 'emerald-50').replace('rose-600', 'rose-50').replace('purple-600', 'purple-50')} ${s.iconClass}`}>
+                    <Icon className="h-5 w-5" />
+                  </div>
+                  <div className="flex flex-col items-end">
+                    <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-400 mb-1" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>BrainCore</span>
+                    <span className="flex h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" />
+                  </div>
+                </div>
+
+                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1.5" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{s.label}</p>
+                <h3 className="text-3xl font-bold text-slate-900 mb-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{s.value}</h3>
+                <div className="flex items-center gap-2">
+                   <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+                     ↑ {s.delta || '+12%'}
+                   </div>
+                   <span className="text-[10px] text-slate-400">vs mois dernier</span>
+                </div>
               </div>
-              <p className="mt-2.5 text-2xl font-semibold tracking-tight text-slate-900">{s.value}</p>
-              <p className="text-sm text-slate-500">{s.delta || 'Données en temps réel'}</p>
+
+              {/* Decorative line */}
+              <div className="absolute bottom-0 left-0 h-1 w-0 bg-blue-600 transition-all duration-500 group-hover:w-full" />
             </div>
           );
         })}
       </div>
 
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-12">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_6px_16px_rgba(15,23,42,0.05)] xl:col-span-4">
-          <div className="mb-4 flex items-start justify-between">
-            <div>
-              <h3 className="text-lg font-semibold text-slate-900">Profils des médecins actifs</h3>
-              <p className="text-sm text-slate-500">Répartition par spécialité</p>
-            </div>
-            <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">Cible</span>
-          </div>
-          <div className="space-y-3">
-            {audienceSegments.map((seg) => (
-              <div key={seg.label}>
-                <div className="mb-1 flex items-center justify-between text-sm">
-                  <span className="font-medium text-slate-700">{seg.label}</span>
-                  <span className="font-semibold text-slate-900">{seg.percent}%</span>
-                </div>
-                <div className="h-2.5 w-full rounded-full bg-slate-100">
-                  <div className={`h-2.5 rounded-full ${seg.color}`} style={{ width: `${Math.max(seg.percent, 3)}%` }} />
-                </div>
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
+        {/* 2. Professional Network Distribution */}
+        <div className="xl:col-span-4 rounded-2xl bg-slate-900 p-6 shadow-xl shadow-slate-900/10 text-white relative overflow-hidden group">
+          <div className="absolute -right-20 -bottom-20 h-64 w-64 rounded-full bg-blue-600/10 blur-[80px]" />
+          
+          <div className="relative z-10">
+            <div className="mb-6 flex items-start justify-between">
+              <div>
+                <p className="text-[9px] font-semibold text-blue-400 uppercase tracking-[0.25em] mb-1.5" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Audience</p>
+                <h3 className="text-lg font-bold text-white" style={{ fontFamily: "'Playfair Display', serif" }}>Réseau Praticiens</h3>
               </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_6px_16px_rgba(15,23,42,0.05)] xl:col-span-5">
-          <div className="mb-4 flex items-start justify-between">
-            <div>
-              <h3 className="text-lg font-semibold text-slate-900">Évolution des analyses</h3>
-              <p className="text-sm text-slate-500">Segmentation vs Recalage </p>
-            </div>
-            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">Usage</span>
-          </div>
-          <div className="h-40 w-full">
-            <svg viewBox="0 0 360 140" className="h-full w-full">
-              <defs>
-                <linearGradient id="segFill" x1="0" x2="0" y1="0" y2="1">
-                  <stop offset="0%" stopColor="#2563eb" stopOpacity="0.22" />
-                  <stop offset="100%" stopColor="#2563eb" stopOpacity="0.02" />
-                </linearGradient>
-              </defs>
-              {[20, 45, 70, 95, 120].map((y) => (
-                <line key={y} x1="24" y1={y} x2="340" y2={y} stroke="#e2e8f0" strokeWidth="1" />
-              ))}
-              {(() => {
-                const max = Math.max(...usageTrend.map((m) => Math.max(m.segmentation, m.recalage)), 1);
-                const step = 316 / Math.max(usageTrend.length - 1, 1);
-                const segPoints = usageTrend
-                  .map((m, i) => `${24 + i * step},${120 - (m.segmentation / max) * 90}`)
-                  .join(' ');
-                const recPoints = usageTrend
-                  .map((m, i) => `${24 + i * step},${120 - (m.recalage / max) * 90}`)
-                  .join(' ');
-                const area = `${segPoints} 340,120 24,120`;
-                return (
-                  <>
-                    <polyline points={area} fill="url(#segFill)" stroke="none" />
-                    <polyline points={segPoints} fill="none" stroke="#2563eb" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-                    <polyline points={recPoints} fill="none" stroke="#0d9488" strokeWidth="2.5" strokeDasharray="5 4" strokeLinecap="round" strokeLinejoin="round" />
-                    {usageTrend.map((m, i) => {
-                      const x = 24 + i * step;
-                      const ys = 120 - (m.segmentation / max) * 90;
-                      const yr = 120 - (m.recalage / max) * 90;
-                      return (
-                        <g key={m.month}>
-                          <circle cx={x} cy={ys} r="3.5" fill="#2563eb" />
-                          <circle cx={x} cy={yr} r="3" fill="#0d9488" />
-                          <text x={x} y="136" textAnchor="middle" className="fill-slate-500 text-[9px]">{m.month}</text>
-                        </g>
-                      );
-                    })}
-                  </>
-                );
-              })()}
-            </svg>
-          </div>
-          <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-600">
-            <span className="inline-flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-sm bg-blue-600" />Segmentation</span>
-            <span className="inline-flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-sm bg-teal-600" />Recalage</span>
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_6px_16px_rgba(15,23,42,0.05)] xl:col-span-3">
-          <div className="mb-4 flex items-start justify-between">
-            <div>
-              <h3 className="text-lg font-semibold text-slate-900">État de la plateforme</h3>
-              <p className="text-sm text-slate-500">Supervision en temps réel</p>
-            </div>
-            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${systemHealth.statusClass}`}>{systemHealth.statusLabel}</span>
-          </div>
-          <div className="space-y-3">
-            <div className="rounded-xl bg-slate-50 p-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Disponibilité</p>
-              <p className="mt-1 text-2xl font-semibold text-slate-900">{systemHealth.availability.toFixed(1)}%</p>
-            </div>
-            <div className="rounded-xl bg-slate-50 p-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">ANALYSES SANS ERREUR</p>
-              <p className="mt-1 text-2xl font-semibold text-slate-900">{systemHealth.healthyOps.toFixed(1)}%</p>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="rounded-xl border border-rose-100 bg-rose-50 p-2.5 text-center">
-                <p className="text-[11px] font-semibold text-rose-700">Incidents</p>
-                <p className="text-lg font-semibold text-rose-800">{systemHealth.incidents}</p>
-              </div>
-              <div className="rounded-xl border border-amber-100 bg-amber-50 p-2.5 text-center">
-                <p className="text-[11px] font-semibold text-amber-700">Réclamations</p>
-                <p className="text-lg font-semibold text-amber-800">{systemHealth.openComplaints}</p>
+              <div className="h-10 w-10 rounded-xl bg-white/10 flex items-center justify-center backdrop-blur-md">
+                 <Users className="h-5 w-5 text-blue-400" />
               </div>
             </div>
-          </div>
-        </div>
-      </div>
 
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_6px_16px_rgba(15,23,42,0.05)]">
-          <h3 className="mb-3 text-2xl font-semibold text-slate-900">Activité récente</h3>
-          <div className="space-y-3">
-            {historyRows.slice(0, 4).map((row) => (
-              <div key={row.id} className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">{row.initials}</span>
-                  <div>
-                    <p className="text-base font-semibold text-slate-900">{row.title}</p>
-                    <p className="text-[13px] text-slate-500">{row.subtitle}</p>
+            <div className="space-y-5">
+              {audienceSegments.map((seg) => (
+                <div key={seg.label} className="group/item">
+                  <div className="mb-3 flex items-center justify-between">
+                    <span className="text-sm font-bold text-slate-300 group-hover/item:text-white transition-colors">{seg.label}</span>
+                    <span className="text-sm font-black text-blue-400" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{seg.percent}%</span>
+                  </div>
+                  <div className="h-1.5 w-full rounded-full bg-white/5 overflow-hidden">
+                    <div 
+                      className={`h-full rounded-full transition-all duration-1000 shadow-[0_0_12px_rgba(37,99,235,0.3)] ${seg.color.replace('bg-', 'bg-')}`} 
+                      style={{ width: `${Math.max(seg.percent, 3)}%` }} 
+                    />
                   </div>
                 </div>
-                <div className="text-right">
-                  <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${row.statusClass}`}>{row.status}</span>
-                  <p className="mt-1 text-[12px] text-slate-500">{row.time}</p>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
+
+            <button className="mt-12 w-full py-5 rounded-2xl bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-[0.2em] hover:bg-white/10 transition-all">
+               Exporter le Mapping
+            </button>
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_6px_16px_rgba(15,23,42,0.05)]">
-          <h3 className="mb-3 text-2xl font-semibold text-slate-900">Réclamations récentes</h3>
-          <div className="space-y-3">
-            {reclamationsLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <span className="inline-block h-6 w-6 animate-spin rounded-full border-[3px] border-blue-600 border-t-transparent" />
+        {/* 3. Analytics Growth Chart */}
+        <div className="xl:col-span-8 rounded-[3rem] bg-white p-10 shadow-2xl shadow-slate-200/50 border border-slate-50 relative overflow-hidden">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-[0.2em] mb-1" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Performance</p>
+                <h3 className="text-lg font-bold text-slate-900" style={{ fontFamily: "'Playfair Display', serif" }}>Croissance des Analyses</h3>
               </div>
-            ) : complaintsRows.length > 0 ? complaintsRows.map((item) => (
-              <div key={item.id} className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-base font-semibold text-slate-900">{item.title}</p>
-                  <p className="text-[13px] text-slate-500">{item.subtitle} - {item.date}</p>
+              <div className="flex gap-4">
+                 <div className="flex items-center gap-6">
+                    <div className="flex items-center gap-2">
+                       <span className="h-3 w-3 rounded-full bg-blue-600 shadow-[0_0_8px_rgba(37,99,235,0.4)]" />
+                       <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tighter">Segmentation</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                       <span className="h-3 w-3 rounded-full border-2 border-slate-300" />
+                       <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tighter">Recalage</span>
+                    </div>
+                 </div>
+              </div>
+            </div>
+
+            {(() => {
+              const hasData = usageTrend.some((m) => m.segmentation > 0 || m.recalage > 0);
+              const max = Math.max(...usageTrend.map((m) => Math.max(m.segmentation, m.recalage)), 1);
+              const step = 700 / Math.max(usageTrend.length - 1, 1);
+              const segPoints = usageTrend.map((m, i) => `${i * step},${200 - (m.segmentation / max) * 160}`).join(' ');
+              const recPoints = usageTrend.map((m, i) => `${i * step},${200 - (m.recalage / max) * 160}`).join(' ');
+              const areaPath = `0,200 ${segPoints} 700,200`;
+              const gridVals = [0, Math.round(max * 0.33), Math.round(max * 0.66), max];
+
+              return (
+                <div className="relative">
+                  <svg viewBox="0 0 700 230" className="h-52 w-full overflow-visible">
+                    <defs>
+                      <linearGradient id="chartGrad2" x1="0" x2="0" y1="0" y2="1">
+                        <stop offset="0%" stopColor="#2563eb" stopOpacity="0.10" />
+                        <stop offset="100%" stopColor="#2563eb" stopOpacity="0" />
+                      </linearGradient>
+                    </defs>
+
+                    {/* Grid lines */}
+                    {[200, 147, 93, 40].map((y, i) => (
+                      <g key={y}>
+                        <line x1="40" y1={y} x2="700" y2={y} stroke="#e2e8f0" strokeWidth="1" strokeDasharray={i === 3 ? '0' : '4 4'} />
+                        <text x="32" y={y + 4} textAnchor="end" style={{ fill: '#94a3b8', fontSize: 9, fontFamily: "'Space Grotesk', sans-serif" }}>
+                          {gridVals[3 - i]}
+                        </text>
+                      </g>
+                    ))}
+
+                    {hasData ? (
+                      <>
+                        <polygon points={`40,200 ${segPoints} 700,200`} fill="url(#chartGrad2)" />
+                        <polyline points={segPoints} fill="none" stroke="#2563eb" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                        <polyline points={recPoints} fill="none" stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="5 4" strokeLinecap="round" />
+                        {usageTrend.map((m, i) => {
+                          const x = i * step;
+                          const ys = 200 - (m.segmentation / max) * 160;
+                          return (
+                            <g key={m.month}>
+                              <circle cx={x} cy={ys} r="4" fill="white" stroke="#2563eb" strokeWidth="2" />
+                              <text x={x} y="220" textAnchor="middle" style={{ fill: '#94a3b8', fontSize: 9, fontFamily: "'Space Grotesk', sans-serif" }}>{m.month}</text>
+                            </g>
+                          );
+                        })}
+                      </>
+                    ) : (
+                      <>
+                        <line x1="40" y1="200" x2="700" y2="200" stroke="#e2e8f0" strokeWidth="1" />
+                        {usageTrend.map((m, i) => (
+                          <text key={m.month} x={i * step} y="220" textAnchor="middle" style={{ fill: '#94a3b8', fontSize: 9, fontFamily: "'Space Grotesk', sans-serif" }}>{m.month}</text>
+                        ))}
+                        <text x="350" y="120" textAnchor="middle" style={{ fill: '#cbd5e1', fontSize: 12, fontFamily: "'Noto Sans', sans-serif" }}>Aucune analyse enregistrée sur cette période</text>
+                      </>
+                    )}
+                  </svg>
                 </div>
-                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${item.severityClass}`}>{item.severity}</span>
-              </div>
-            )) : (
-              <div className="flex flex-col items-center justify-center py-8 text-center">
-                <MessageSquare className="mb-2 h-8 w-8 text-slate-300" />
-                <p className="text-sm font-semibold text-slate-500">Aucune réclamation</p>
-                <p className="text-xs text-slate-400">Toutes les réclamations ont été traitées.</p>
-              </div>
-            )}
-          </div>
+              );
+            })()}
+
+            <div className="mt-4 p-4 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                   <div className="h-8 w-8 rounded-lg bg-orange-100 flex items-center justify-center text-orange-600">
+                      <Zap className="h-4 w-4" />
+                   </div>
+                   <div>
+                      <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Optimisation IA active</p>
+                      <p className="text-[10px] text-slate-400">Temps de traitement moyen : 4.2s</p>
+                   </div>
+                </div>
+                <button className="px-4 py-1.5 rounded-lg bg-white border border-slate-200 text-[10px] font-semibold text-slate-600 uppercase tracking-wider hover:border-blue-400 hover:text-blue-600 transition-all" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Détails</button>
+            </div>
         </div>
       </div>
     </div>
   );
 
   const renderAccounts = () => (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_8px_18px_rgba(15,23,42,0.06)]">
-      <div className="mb-5 flex flex-col items-start justify-between gap-3 md:flex-row md:items-center">
+    <div className="space-y-8 animate-in fade-in duration-500">
+      {/* Page Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
-          <h3 className="text-xl font-semibold text-slate-900">Gestion des comptes</h3>
-          <p className="text-sm text-slate-500">{accountsData?.count ?? accounts.length} utilisateurs enregistrés</p>
-          <p className="text-xs font-semibold text-amber-700">{pendingAccounts.length} compte(s) en attente de validation</p>
+          <h2 className="text-xl font-bold text-slate-900" style={{ fontFamily: "'Playfair Display', serif" }}>Habilitations Médicales</h2>
+          <p className="text-sm text-slate-400 font-medium mt-1">
+            {accountsData?.count ?? accounts.length} praticiens répertoriés sur la plateforme
+          </p>
         </div>
-        <button onClick={openCreateModal} className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(37,99,235,0.26)] transition-transform hover:-translate-y-0.5"><UserPlus className="h-4 w-4" />+ Nouveau compte</button>
+        <button 
+          onClick={openCreateModal} 
+          className="group flex items-center gap-3 rounded-2xl bg-slate-900 px-6 py-4 text-xs font-black text-white hover:bg-blue-600 transition-all shadow-xl shadow-slate-900/10 hover:shadow-blue-500/20 active:scale-95 uppercase tracking-widest"
+          style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+        >
+          <UserPlus className="h-4 w-4 transition-transform group-hover:scale-110" />
+          Nouveau Praticien
+        </button>
       </div>
 
-      {decisionMessage && (
-        <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">{decisionMessage}</div>
-      )}
-      {activationNotice && (
-        <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700">{activationNotice}</div>
-      )}
-      {createdPassword && (
-        <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700">
-          Mot de passe provisoire généré: <span className="font-bold">{createdPassword}</span>
-        </div>
-      )}
-      {decisionError && !rejectModal.open && (
-        <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{decisionError}</div>
-      )}
+      {/* Decision Notices */}
+      <div className="space-y-3">
+        {decisionMessage && (
+          <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center gap-3 text-emerald-700 text-sm font-bold animate-in slide-in-from-top-2">
+            <CheckCircle2 className="h-5 w-5" /> {decisionMessage}
+          </div>
+        )}
+        {decisionError && !rejectModal.open && (
+          <div className="p-4 rounded-2xl bg-rose-50 border border-rose-100 flex items-center gap-3 text-rose-700 text-sm font-bold animate-in slide-in-from-top-2">
+            <AlertTriangle className="h-5 w-5" /> {decisionError}
+          </div>
+        )}
+      </div>
 
-      <div className="mb-5 overflow-x-auto rounded-2xl border border-amber-100">
-        <table className="w-full text-left">
-          <thead className="bg-amber-50 text-amber-700 text-xs uppercase tracking-[0.12em]">
-            <tr>
-              <th className="p-3">Nom</th>
-              <th className="p-3">Email</th>
-              <th className="p-3">N° ordre</th>
-              <th className="p-3">Spécialité</th>
-              <th className="p-3">Affiliation</th>
-              <th className="p-3">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-amber-100 bg-white">
-            {pendingAccounts.length === 0 && (
-              <tr>
-                <td className="p-3 text-slate-500" colSpan={6}>Aucun compte en attente.</td>
-              </tr>
-            )}
+      {/* Pending Validation Section */}
+      {pendingAccounts.length > 0 && (
+        <div className="rounded-[2.5rem] bg-amber-50/50 border-2 border-dashed border-amber-200 p-6 overflow-hidden relative">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="h-8 w-8 rounded-full bg-amber-500 flex items-center justify-center text-white shadow-lg shadow-amber-500/20">
+              <Shield className="h-4 w-4" />
+            </div>
+            <h3 className="text-sm font-black text-amber-800 uppercase tracking-widest" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+              {pendingAccounts.length} Validation{pendingAccounts.length > 1 ? 's' : ''} en attente
+            </h3>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {pendingAccounts.map((a) => (
-              <tr key={`pending-${a.user_id}`}>
-                <td className="p-3 font-semibold text-slate-900">{a.full_name || a.username}</td>
-                <td className="p-3 text-slate-600">{a.email}</td>
-                <td className="p-3 text-slate-600">{a.order_number || '-'}</td>
-                <td className="p-3 text-slate-600">{a.specialty || '-'}</td>
-                <td className="p-3 text-slate-600">{a.affiliation || '-'}</td>
-                <td className="p-3">
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleApprove(a.user_id)}
-                      disabled={isProcessingDecision}
-                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
-                    >
-                      Accepter
-                    </button>
-                    <button
-                      onClick={() => openRejectModal(a.user_id, a.full_name || a.username)}
-                      disabled={isProcessingDecision}
-                      className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
-                    >
-                      Refuser
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="overflow-x-auto rounded-2xl border border-slate-100">
-        <table className="w-full text-left">
-          <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-[0.12em]">
-            <tr><th className="p-3">ID</th><th className="p-3">Nom</th><th className="p-3">Email</th><th className="p-3">Rôle</th><th className="p-3">N° ordre</th><th className="p-3">Statut</th><th className="p-3">Dernière connexion</th></tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {accounts.map((a) => (
-              <tr key={a[0]}>
-                <td className="p-3 text-slate-500">{a[0]}</td>
-                <td className="p-3 font-bold text-slate-900">{a[1]}</td>
-                <td className="p-3 text-slate-600">{a[2]}</td>
-                <td className="p-3 text-slate-900">{a[3]}</td>
-                <td className="p-3 text-slate-700 font-medium">{a[4]}</td>
-                <td className="p-3"><span className={`rounded-full px-3 py-1 text-xs font-bold ${a[7].replace('400/20','100').replace('300','700')}`}>{a[5]}</span></td>
-                <td className="p-3 text-slate-500">{a[6]}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {rejectModal.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
-            <h4 className="text-lg font-semibold text-slate-900">Refuser le compte</h4>
-            <p className="mt-1 text-sm text-slate-600">Compte: {rejectModal.displayName}</p>
-            <label className="mt-4 block text-sm font-semibold text-slate-700">Motif (obligatoire)</label>
-            <textarea
-              value={rejectReason}
-              onChange={(e) => setRejectReason(e.target.value)}
-              className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-400"
-              rows={4}
-              placeholder="Précisez le motif du refus..."
-            />
-            {decisionError && (
-              <p className="mt-2 text-sm font-semibold text-rose-700">{decisionError}</p>
-            )}
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => { setRejectModal({ open: false, userId: null, displayName: '' }); setDecisionError(''); }}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700"
-              >
-                Annuler
-              </button>
-              <button
-                onClick={handleReject}
-                disabled={isProcessingDecision}
-                className="rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
-              >
-                Confirmer le refus
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {createModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-4">
-          <div className="w-full max-w-2xl rounded-2xl bg-white p-5 shadow-2xl">
-            <h4 className="text-lg font-semibold text-slate-900">Créer un nouveau compte médecin</h4>
-            <p className="mt-1 text-sm text-slate-600">Onboarding direct par l’administrateur</p>
-            <p className="mt-2 text-xs font-semibold text-rose-600">* Champs obligatoires</p>
-
-            <input type="text" name="fake_username" autoComplete="username" className="hidden" tabIndex={-1} aria-hidden="true" />
-            <input type="password" name="fake_password" autoComplete="new-password" className="hidden" tabIndex={-1} aria-hidden="true" />
-
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-              <div>
-                <label className="mb-1.5 block text-sm font-semibold text-slate-600">Nom <span className="text-rose-600">*</span></label>
-                <input
-                  id="create-nom"
-                  value={createForm.nom}
-                  onChange={(e) => {
-                    setCreateForm((p) => ({ ...p, nom: e.target.value }));
-                    setCreateFieldErrors((prev) => ({ ...prev, nom: '' }));
-                  }}
-                  className={`w-full rounded-xl border px-3 py-2 text-sm ${createFieldErrors.nom ? 'border-rose-300 bg-rose-50/40' : 'border-slate-300'}`}
-                  placeholder="Nom"
-                />
-                {createFieldErrors.nom && <p className="mt-1 text-xs font-semibold text-rose-700">{createFieldErrors.nom}</p>}
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-semibold text-slate-600">Prénom <span className="text-rose-600">*</span></label>
-                <input
-                  id="create-prenom"
-                  value={createForm.prenom}
-                  onChange={(e) => {
-                    setCreateForm((p) => ({ ...p, prenom: e.target.value }));
-                    setCreateFieldErrors((prev) => ({ ...prev, prenom: '' }));
-                  }}
-                  className={`w-full rounded-xl border px-3 py-2 text-sm ${createFieldErrors.prenom ? 'border-rose-300 bg-rose-50/40' : 'border-slate-300'}`}
-                  placeholder="Prénom"
-                />
-                {createFieldErrors.prenom && <p className="mt-1 text-xs font-semibold text-rose-700">{createFieldErrors.prenom}</p>}
-              </div>
-              <div className="md:col-span-2">
-                <label className="mb-1.5 block text-sm font-semibold text-slate-600">Numéro d'ordre tunisien <span className="text-rose-600">*</span></label>
-                <input
-                  id="create-order-number"
-                  value={createForm.orderNumber}
-                  onChange={(e) => {
-                    setCreateForm((p) => ({ ...p, orderNumber: e.target.value.toUpperCase() }));
-                    setCreateFieldErrors((prev) => ({ ...prev, orderNumber: '' }));
-                  }}
-                  className={`w-full rounded-xl border px-3 py-2 text-sm ${createFieldErrors.orderNumber ? 'border-rose-300 bg-rose-50/40' : 'border-slate-300'}`}
-                  placeholder="Ex: 12345 ou T-12345"
-                />
-                {createFieldErrors.orderNumber && <p className="mt-1 text-xs font-semibold text-rose-700">{createFieldErrors.orderNumber}</p>}
-                <p className="mt-1 text-xs text-slate-500">Format autorisé: 4 à 6 chiffres, avec ou sans préfixe T-.</p>
-              </div>
-              <div className="md:col-span-2">
-                <label className="mb-1.5 block text-sm font-semibold text-slate-600">Email professionnel <span className="text-rose-600">*</span></label>
-                <input
-                  id="create-email"
-                  type="email"
-                  name="doctor_email"
-                  readOnly={!allowManualDoctorEmail}
-                  onFocus={() => setAllowManualDoctorEmail(true)}
-                  autoComplete="new-password"
-                  value={createForm.email}
-                  onChange={(e) => {
-                    setCreateForm((p) => ({ ...p, email: e.target.value }));
-                    setCreateFieldErrors((prev) => ({ ...prev, email: '' }));
-                  }}
-                  className={`w-full rounded-xl border px-3 py-2 text-sm ${createFieldErrors.email ? 'border-rose-300 bg-rose-50/40' : 'border-slate-300'}`}
-                  placeholder="medecin@hopital.com"
-                />
-                {createFieldErrors.email && <p className="mt-1 text-xs font-semibold text-rose-700">{createFieldErrors.email}</p>}
-              </div>
-              <div className="md:col-span-2">
-                <label className="mb-1.5 block text-sm font-semibold text-slate-600">Affiliation <span className="text-rose-600">*</span></label>
-                <select
-                  id="create-affiliation"
-                  value={createForm.affiliation}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    setCreateForm((p) => ({ ...p, affiliation: value }));
-                    setCreateFieldErrors((prev) => ({ ...prev, affiliation: '', customAffiliation: '' }));
-                    if (value !== 'Autre') {
-                      setCustomAffiliation('');
-                    }
-                  }}
-                  className={`w-full rounded-xl border px-3 py-2 text-sm ${createFieldErrors.affiliation ? 'border-rose-300 bg-rose-50/40' : 'border-slate-300'}`}
-                >
-                  <option value="">Sélectionner</option>
-                  {AFFILIATION_OPTIONS.map((option) => (
-                    <option key={option} value={option}>{option}</option>
-                  ))}
-                </select>
-                {createFieldErrors.affiliation && <p className="mt-1 text-xs font-semibold text-rose-700">{createFieldErrors.affiliation}</p>}
-              </div>
-              {createForm.affiliation === 'Autre' && (
-                <div className="md:col-span-2">
-                  <label className="mb-1.5 block text-sm font-semibold text-slate-600">Préciser l'affiliation <span className="text-rose-600">*</span></label>
-                  <input
-                    id="create-custom-affiliation"
-                    value={customAffiliation}
-                    onChange={(e) => {
-                      setCustomAffiliation(e.target.value);
-                      setCreateFieldErrors((prev) => ({ ...prev, customAffiliation: '' }));
-                    }}
-                    className={`w-full rounded-xl border px-3 py-2 text-sm ${createFieldErrors.customAffiliation ? 'border-rose-300 bg-rose-50/40' : 'border-slate-300'}`}
-                    placeholder="Nom de l'établissement"
-                  />
-                  {createFieldErrors.customAffiliation && <p className="mt-1 text-xs font-semibold text-rose-700">{createFieldErrors.customAffiliation}</p>}
+              <div key={`pending-${a.user_id}`} className="bg-white p-5 rounded-3xl border border-amber-100 shadow-sm hover:shadow-md transition-shadow flex flex-col gap-4">
+                <div className="flex items-center gap-4">
+                   <div className="h-12 w-12 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-600 font-black text-lg shadow-inner" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+                     {(a.full_name || a.username || '?').charAt(0).toUpperCase()}
+                   </div>
+                   <div className="min-w-0">
+                      <p className="text-sm font-black text-slate-900 leading-tight truncate">{a.full_name || a.username}</p>
+                      <p className="text-[11px] text-slate-400 font-bold truncate mt-0.5">{a.email}</p>
+                   </div>
                 </div>
-              )}
-              <div>
-                <label className="mb-1.5 block text-sm font-semibold text-slate-600">Spécialité (optionnel)</label>
-                <select value={createForm.specialty} onChange={(e) => setCreateForm((p) => ({ ...p, specialty: e.target.value }))} className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm">
-                  <option value="">Sélectionner</option>
-                  <option value="neuroradiologie">Neuroradiologie</option>
-                  <option value="neurologie">Neurologie</option>
-                  <option value="medecine_nucleaire">Médecine nucléaire</option>
-                  <option value="autre">Autre</option>
-                </select>
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-semibold text-slate-600">Grade (optionnel)</label>
-                <select
-                  value={createForm.grade}
-                  onChange={(e) => setCreateForm((p) => ({ ...p, grade: e.target.value }))}
-                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-                >
-                  <option value="">Sélectionner</option>
-                  {GRADE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-semibold text-slate-600">Téléphone (optionnel)</label>
-                <input
-                  id="create-telephone"
-                  type="tel"
-                  name="doctor_phone"
-                  readOnly={!allowManualDoctorPhone}
-                  onFocus={() => setAllowManualDoctorPhone(true)}
-                  autoComplete="new-password"
-                  value={createForm.telephone}
-                  onChange={(e) => {
-                    setCreateForm((p) => ({ ...p, telephone: e.target.value }));
-                    setCreateFieldErrors((prev) => ({ ...prev, telephone: '' }));
-                  }}
-                  className={`w-full rounded-xl border px-3 py-2 text-sm ${createFieldErrors.telephone ? 'border-rose-300 bg-rose-50/40' : 'border-slate-300'}`}
-                  placeholder="22345678"
-                />
-                {createFieldErrors.telephone && <p className="mt-1 text-xs font-semibold text-rose-700">{createFieldErrors.telephone}</p>}
-                <p className="mt-1 text-xs text-slate-500">Format tunisien: 8 chiffres, commence par 2, 4, 5, 7 ou 9.</p>
-              </div>
-            </div>
+                
+                <div className="grid grid-cols-2 gap-2">
+                   <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-tighter mb-0.5">Spécialité</p>
+                      <p className="text-[10px] font-bold text-slate-600 truncate">{a.specialty || 'Non précisé'}</p>
+                   </div>
+                   <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-tighter mb-0.5">Matricule</p>
+                      <p className="text-[10px] font-bold text-slate-600 truncate">{a.order_number || 'En attente'}</p>
+                   </div>
+                </div>
 
-            {decisionError && (
-              <p className="mt-3 text-sm font-semibold text-rose-700">{decisionError}</p>
-            )}
-
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => { setCreateModalOpen(false); setDecisionError(''); }}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700"
-              >
-                Annuler
-              </button>
-              <button
-                onClick={handleCreateAccount}
-                disabled={isProcessingDecision}
-                className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
-              >
-                Créer le compte
-              </button>
-            </div>
+                <div className="flex items-center gap-2 mt-2">
+                  <button
+                    onClick={() => handleApprove(a.user_id)}
+                    disabled={isProcessingDecision}
+                    className="flex-1 py-3 px-4 rounded-xl bg-emerald-500 text-white text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all disabled:opacity-50"
+                  >
+                    Approuver
+                  </button>
+                  <button
+                    onClick={() => openRejectModal(a.user_id, a.full_name || a.username)}
+                    disabled={isProcessingDecision}
+                    className="flex-1 py-3 px-4 rounded-xl bg-white border border-rose-200 text-rose-500 text-[10px] font-black uppercase tracking-widest hover:bg-rose-50 transition-all disabled:opacity-50"
+                  >
+                    Refuser
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
+
+      {/* Main Accounts Table */}
+      <div className="rounded-[3rem] bg-white shadow-2xl shadow-slate-200/50 border border-slate-100/60 overflow-hidden">
+        {accountsError ? (
+          <div className="p-20 text-center flex flex-col items-center">
+            <div className="h-16 w-16 rounded-full bg-rose-50 flex items-center justify-center mb-6">
+              <AlertTriangle className="h-8 w-8 text-rose-500" />
+            </div>
+            <h4 className="text-lg font-black text-slate-900 mb-2">Erreur de chargement</h4>
+            <p className="text-sm text-slate-400 max-w-sm font-medium mb-8">{accountsError}</p>
+            <button onClick={() => void reloadAccounts()} className="px-8 py-3 rounded-2xl bg-slate-900 text-white text-xs font-black uppercase tracking-widest hover:bg-blue-600 transition-all">
+              Tenter une reconnexion
+            </button>
+          </div>
+        ) : accounts.length === 0 ? (
+          <div className="p-20 text-center flex flex-col items-center">
+            <Users className="h-16 w-16 text-slate-100 mb-6" />
+            <p className="text-slate-400 font-black uppercase tracking-widest text-xs">Aucun praticien enregistré</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto no-scrollbar">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50/50 border-b border-slate-100">
+                  {['Nom & Profil', 'Grade', 'Spécialité', 'Statut', 'Dernière Session', 'Actions'].map(col => (
+                    <th key={col} className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{col}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {accounts.map((a) => (
+                  <tr key={a[0]} className="hover:bg-blue-50/30 transition-all duration-300 group">
+                    <td className="px-8 py-6">
+                      <div className="flex items-center gap-4">
+                        <div className="h-12 w-12 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-500 font-black text-base shadow-inner group-hover:bg-blue-100 group-hover:text-blue-600 transition-all" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+                          {String(a[1]).charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <p className="text-[13px] font-black text-slate-900 leading-tight">{a[1]}</p>
+                          <p className="text-[11px] text-slate-400 font-bold mt-0.5">{a[2]}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-8 py-6">
+                       <span className="text-xs font-bold text-slate-600" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{a[3]}</span>
+                    </td>
+                    <td className="px-8 py-6">
+                       <span className="text-xs font-bold text-slate-400">{a[4]}</span>
+                    </td>
+                    <td className="px-8 py-6">
+                      <span className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest ${a[7]}`}>
+                        {a[5]}
+                      </span>
+                    </td>
+                    <td className="px-8 py-6">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{a[6]}</p>
+                    </td>
+                    <td className="px-8 py-6">
+                       <button className="h-10 w-10 flex items-center justify-center rounded-xl bg-slate-50 text-slate-400 hover:bg-slate-900 hover:text-white transition-all group-hover:shadow-lg">
+                          <Eye className="h-4 w-4" />
+                       </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 
   const renderTestimonials = () => (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_8px_18px_rgba(15,23,42,0.06)]">
-      <div className="mb-5 flex flex-col items-start justify-between gap-3 md:flex-row md:items-center">
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
-          <h3 className="text-xl font-semibold text-slate-900">Modération des témoignages</h3>
-          <p className="text-sm text-slate-500">{testimonialsData?.count ?? testimonials.length} témoignage(s) enregistrés</p>
-          <p className="text-xs font-semibold text-amber-700">{pendingTestimonials.length} témoignage(s) en attente de validation</p>
+          <h2 className="text-xl font-bold text-slate-900" style={{ fontFamily: "'Playfair Display', serif" }}>Voix des Praticiens</h2>
+          <p className="text-sm text-slate-400 font-medium mt-1">
+            {testimonialsData?.count ?? testimonials.length} témoignages enregistrés sur BrainCore
+          </p>
         </div>
       </div>
 
-      {testimonialDecisionMessage && (
-        <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">{testimonialDecisionMessage}</div>
-      )}
-      {testimonialDecisionError && (
-        <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{testimonialDecisionError}</div>
-      )}
-      {testimonialsFetchError && (
-        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">
-          {testimonialsFetchError}
-          <button
-            type="button"
-            onClick={() => void reloadTestimonials()}
-            className="ml-3 text-blue-600 underline"
-          >
-            Réessayer
-          </button>
-        </div>
-      )}
+      <div className="space-y-4">
+        {testimonialDecisionMessage && (
+          <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center gap-3 text-emerald-700 text-sm font-bold animate-in slide-in-from-top-2">
+            <CheckCircle2 className="h-5 w-5" /> {testimonialDecisionMessage}
+          </div>
+        )}
+        {testimonialDecisionError && (
+          <div className="p-4 rounded-2xl bg-rose-50 border border-rose-100 flex items-center gap-3 text-rose-700 text-sm font-bold animate-in slide-in-from-top-2">
+            <AlertTriangle className="h-5 w-5" /> {testimonialDecisionError}
+          </div>
+        )}
+      </div>
 
-      <div className="mb-5 overflow-x-auto rounded-2xl border border-amber-100">
-        <table className="w-full text-left">
-          <thead className="bg-amber-50 text-amber-700 text-xs uppercase tracking-[0.12em]">
-            <tr>
-              <th className="p-3">Nom</th>
-              <th className="p-3">Spécialité / Établissement</th>
-              <th className="p-3">Témoignage</th>
-              <th className="p-3">Date</th>
-              <th className="p-3">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-amber-100 bg-white">
-            {pendingTestimonials.length === 0 && (
-              <tr>
-                <td className="p-3 text-slate-500" colSpan={5}>Aucun témoignage en attente.</td>
-              </tr>
-            )}
+      {pendingTestimonials.length > 0 && (
+        <div className="rounded-[2.5rem] bg-amber-50/50 border-2 border-dashed border-amber-200 p-8 overflow-hidden relative">
+          <div className="flex items-center gap-3 mb-8">
+            <div className="h-10 w-10 rounded-2xl bg-amber-500 flex items-center justify-center text-white shadow-xl shadow-amber-500/20">
+              <MessageSquare className="h-5 w-5" />
+            </div>
+            <h3 className="text-sm font-black text-amber-800 uppercase tracking-widest" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+              {pendingTestimonials.length} Témoignage{pendingTestimonials.length > 1 ? 's' : ''} à modérer
+            </h3>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {pendingTestimonials.map((t) => (
-              <tr key={`pending-testimonial-${t.id}`}>
-                <td className="p-3 font-semibold text-slate-900">{t.name}</td>
-                <td className="p-3 text-slate-600">{t.role}</td>
-                <td className="p-3 text-slate-600 max-w-[420px]">{t.text}</td>
-                <td className="p-3 text-slate-500">{formatDate(t.created_at)}</td>
-                <td className="p-3">
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleApproveTestimonial(t.id)}
-                      disabled={isProcessingTestimonialDecision}
-                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
-                    >
-                      Approuver
-                    </button>
-                    <button
-                      onClick={() => handleRejectTestimonial(t.id)}
-                      disabled={isProcessingTestimonialDecision}
-                      className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
-                    >
-                      Rejeter
-                    </button>
+              <div key={`pending-testimonial-${t.id}`} className="bg-white p-6 rounded-[2rem] border border-amber-100 shadow-xl shadow-amber-900/5 flex flex-col gap-6 relative group overflow-hidden">
+                <div className="flex-1 relative z-10">
+                  <div className="flex items-center gap-3 mb-4">
+                    <p className="text-[13px] font-black text-slate-900">{t.name}</p>
+                    {t.role && (
+                      <span className="text-[9px] font-black text-slate-400 bg-slate-100 px-3 py-1 rounded-full uppercase tracking-tighter" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+                        {t.role}
+                      </span>
+                    )}
                   </div>
-                </td>
-              </tr>
+                  <div className="relative p-5 rounded-2xl bg-slate-50/50 border border-slate-50 italic text-sm text-slate-600 line-clamp-4 leading-relaxed group-hover:bg-white transition-all">
+                    "{t.text}"
+                    <div className="absolute top-0 right-0 p-2 opacity-10">
+                       <MessageSquare className="h-8 w-8 text-slate-900 rotate-12" />
+                    </div>
+                  </div>
+                  <p className="mt-4 text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                    <Clock3 className="h-3 w-3" /> {formatDate(t.created_at)}
+                  </p>
+                </div>
+                
+                <div className="flex items-center gap-3 relative z-10">
+                  <button
+                    onClick={() => handleApproveTestimonial(t.id)}
+                    disabled={isProcessingTestimonialDecision}
+                    className="flex-1 py-4 px-6 rounded-2xl bg-emerald-500 text-white text-[10px] font-black uppercase tracking-[0.2em] hover:bg-emerald-600 transition-all disabled:opacity-50 shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/40"
+                  >
+                    Approuver
+                  </button>
+                  <button
+                    onClick={() => handleRejectTestimonial(t.id)}
+                    disabled={isProcessingTestimonialDecision}
+                    className="flex-1 py-4 px-6 rounded-2xl bg-white border border-rose-200 text-rose-500 text-[10px] font-black uppercase tracking-[0.2em] hover:bg-rose-50 transition-all disabled:opacity-50"
+                  >
+                    Rejeter
+                  </button>
+                </div>
+                
+                <div className="absolute top-0 right-0 h-40 w-40 bg-amber-500/5 rounded-full blur-3xl -mr-20 -mt-20 group-hover:bg-amber-500/10 transition-all" />
+              </div>
             ))}
-          </tbody>
-        </table>
-      </div>
+          </div>
+        </div>
+      )}
 
-      <div className="overflow-x-auto rounded-2xl border border-slate-100">
-        <table className="w-full text-left">
-          <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-[0.12em]">
-            <tr>
-              <th className="p-3">Nom</th>
-              <th className="p-3">Rôle</th>
-              <th className="p-3">Statut</th>
-              <th className="p-3">Soumis le</th>
-              <th className="p-3">Traité le</th>
-              <th className="p-3">Traité par</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {testimonials.map((t) => (
-              <tr key={`testimonial-${t.id}`}>
-                <td className="p-3 font-bold text-slate-900">{t.name}</td>
-                <td className="p-3 text-slate-600">{t.role}</td>
-                <td className="p-3">
-                  <span className={`rounded-full px-3 py-1 text-xs font-bold ${String(t.status) === 'approved' ? 'bg-emerald-100 text-emerald-700' : String(t.status) === 'rejected' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
-                    {String(t.status) === 'approved' ? 'Approuvé' : String(t.status) === 'rejected' ? 'Rejeté' : 'En attente'}
-                  </span>
-                </td>
-                <td className="p-3 text-slate-500">{formatDate(t.created_at)}</td>
-                <td className="p-3 text-slate-500">{formatDate(t.reviewed_at)}</td>
-                <td className="p-3 text-slate-700">{t.reviewed_by || '-'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="rounded-[3rem] bg-white shadow-2xl shadow-slate-200/50 border border-slate-100/60 overflow-hidden">
+        <div className="p-8 border-b border-slate-100 flex items-center justify-between">
+           <h3 className="text-xl font-black text-slate-900" style={{ fontFamily: "'Playfair Display', serif" }}>Archives Témoignages</h3>
+        </div>
+        
+        {testimonials.length === 0 ? (
+          <div className="p-20 text-center flex flex-col items-center">
+            <MessageSquare className="h-16 w-16 text-slate-100 mb-6" />
+            <p className="text-slate-400 font-black uppercase tracking-widest text-[10px]">Aucune archive disponible</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto no-scrollbar">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50/50 border-b border-slate-100">
+                  {['Emetteur', 'Rôle', 'Message Statut', 'Dates Actions'].map(col => (
+                    <th key={col} className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{col}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {testimonials.map((t) => (
+                  <tr key={`testimonial-${t.id}`} className="hover:bg-blue-50/30 transition-all duration-300 group">
+                    <td className="px-8 py-6">
+                      <p className="text-[13px] font-black text-slate-900 leading-tight">{t.name}</p>
+                    </td>
+                    <td className="px-8 py-6">
+                       <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">{t.role || 'Citoyen'}</span>
+                    </td>
+                    <td className="px-8 py-6">
+                      <div className="flex flex-col gap-2">
+                        <span className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest self-start ${String(t.status) === 'approved' ? 'bg-emerald-100 text-emerald-700' : String(t.status) === 'rejected' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
+                          {String(t.status) === 'approved' ? 'Diffusion Publique' : String(t.status) === 'rejected' ? 'Refusé' : 'Modération'}
+                        </span>
+                        <p className="text-xs text-slate-500 font-medium line-clamp-1 italic max-w-xs pr-4 group-hover:line-clamp-none transition-all">"{t.text}"</p>
+                      </div>
+                    </td>
+                    <td className="px-8 py-6">
+                      <div className="flex flex-col gap-1">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Soumis: {formatDate(t.created_at)}</p>
+                        {t.reviewed_at && <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Traité: {formatDate(t.reviewed_at)}</p>}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
 
   const renderHistory = () => (
-    <div className="space-y-3">
-      <div className="flex flex-col items-start justify-between gap-3 md:flex-row md:items-center">
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
-          <h3 className="text-xl font-semibold text-slate-900">Historique des activités</h3>
-          <p className="text-sm text-slate-500">Suivi complet des actions sur la plateforme</p>
-        </div>
-        <div className="rounded-2xl bg-slate-100 p-1 text-sm font-semibold text-slate-500 flex gap-1">
-          <button className="rounded-xl bg-white px-4 py-2 text-slate-900 shadow-sm">Tout</button>
-          <button className="rounded-xl px-4 py-2">Analyses</button>
-          <button className="rounded-xl px-4 py-2">Rapports</button>
+          <h2 className="text-xl font-bold text-slate-900" style={{ fontFamily: "'Playfair Display', serif" }}>Journal d'Audit</h2>
+          <p className="text-sm text-slate-400 font-medium mt-1">Hystorique de toutes les opérations de gouvernance BrainCore</p>
         </div>
       </div>
-      {timeline.map((t) => {
-        const Icon = t[5];
-        return (
-          <div key={t[0]} className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-[0_8px_18px_rgba(15,23,42,0.06)] md:flex-row md:items-center md:justify-between">
-            <div className="flex items-center gap-4">
-              <span className="rounded-xl bg-blue-50 p-2.5 text-blue-600"><Icon className="h-4 w-4" /></span>
-              <div>
-                <p className="text-base font-semibold text-slate-900">{t[0]}</p>
-                <p className="text-sm text-slate-500">{t[1]}</p>
+
+      <div className="rounded-[3rem] bg-white shadow-2xl shadow-slate-200/50 border border-slate-100/60 overflow-hidden">
+        <div className="p-8 border-b border-slate-100 flex items-center justify-between">
+           <div className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Live Audit Feed</span>
+           </div>
+        </div>
+        
+        <div className="divide-y divide-slate-50">
+          {(historyData?.items || []).length === 0 ? (
+            <div className="p-40 text-center flex flex-col items-center">
+               <Database className="h-16 w-16 text-slate-100 mb-6" />
+               <p className="text-slate-400 font-black uppercase tracking-widest text-[10px]">Aucune donnée dans le journal</p>
+            </div>
+          ) : (historyData?.items || []).map((t, idx) => {
+            const Icon = t.icon || Clock3;
+            return (
+              <div key={idx} className="flex flex-col md:flex-row md:items-center justify-between gap-6 px-10 py-8 hover:bg-slate-50/80 transition-all duration-300 group">
+                <div className="flex items-center gap-6">
+                  <div className="h-16 w-16 rounded-[2rem] bg-white shadow-xl shadow-slate-900/5 flex items-center justify-center text-slate-900 border border-slate-100 group-hover:bg-slate-900 group-hover:text-white transition-all transform group-hover:rotate-6">
+                    <Database className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <h4 className="text-[15px] font-black text-slate-900 leading-tight mb-1">{t.user || 'Processus Système'}</h4>
+                    <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">{t.action || 'Opération Trace'}</p>
+                    <div className="mt-3 flex items-center gap-3">
+                       <span className="text-[10px] text-slate-400 font-black tracking-widest flex items-center gap-1.5"><Clock3 className="h-3 w-3" /> {formatDate(t.date)}</span>
+                       <span className="h-1 w-1 rounded-full bg-slate-200" />
+                       <span className="text-[10px] text-slate-400 font-black tracking-widest flex items-center gap-1.5"><Shield className="h-3 w-3" /> ID: #{String(t.id || idx).slice(-4)}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-8 self-end md:self-center">
+                  <span className={`px-5 py-2 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] shadow-sm transform group-hover:scale-105 transition-transform ${badgeClass(t.status || 'Info')}`}>
+                    {t.status || 'Success'}
+                  </span>
+                </div>
               </div>
-            </div>
-            <div className="flex items-center gap-4 md:gap-6">
-              <span className={`rounded-full px-3 py-1 text-xs font-bold ${String(t[4]).replace('400/20','100').replace('300','700')}`}>{t[2]}</span>
-              <span className="text-slate-500">{t[3]}</span>
-            </div>
-          </div>
-        );
-      })}
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 
   const renderSettings = () => (
-    <div className="space-y-4">
-      <div className="flex flex-col items-start justify-between gap-3 md:flex-row md:items-center">
+    <div className="space-y-10 animate-in fade-in slide-in-from-bottom-6 duration-700 pb-20 mt-8">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-12">
         <div>
-          <h3 className="text-xl font-semibold text-slate-900">Paramètres</h3>
-          <p className="text-sm text-slate-500">Configuration générale de la plateforme</p>
+          <h2 className="text-4xl font-black text-slate-900" style={{ fontFamily: "'Playfair Display', serif" }}>Configuration Globale</h2>
+          <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-2 flex items-center gap-2">
+            <Lock className="h-4 w-4 text-blue-500" /> Gouvernance & Sécurité BrainCore
+          </p>
         </div>
         <button
           onClick={handleSaveSettings}
-          className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(37,99,235,0.26)] transition-transform hover:-translate-y-0.5"
+          className="group relative flex items-center gap-4 overflow-hidden rounded-[1.8rem] bg-slate-900 px-10 py-5 text-[10px] font-black uppercase tracking-widest text-white transition-all hover:bg-blue-600 hover:shadow-2xl hover:shadow-blue-500/20 active:scale-[0.98]"
         >
-          <Save className="h-4 w-4" />Sauvegarder
+          <div className="absolute inset-x-0 bottom-0 h-1 w-full bg-blue-400/30 transition-all duration-300 group-hover:h-2" />
+          <Save className="h-4 w-4 transition-transform group-hover:scale-110" />
+          Sauvegarder les Protocoles
         </button>
       </div>
 
       {settingsSavedNotice && (
-        <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">
-          <CheckCircle2 className="h-4 w-4" />
-          {settingsSavedNotice}
+        <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center gap-3 text-emerald-700 text-sm font-bold animate-in slide-in-from-top-2 mb-8">
+          <CheckCircle2 className="h-5 w-5" /> {settingsSavedNotice}
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-        <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-700">Risque sécurité</p>
-          <p className="mt-1 text-2xl font-semibold text-blue-900">
-            {adminSettingsForm.twoFactorRequired && adminSettingsForm.forceStrongPassword ? 'Faible' : 'Moyen'}
+      {/* KPI Row for Settings */}
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-3 mb-10">
+        <div className="rounded-[2.5rem] bg-white p-8 shadow-xl shadow-slate-200/40 border border-slate-100/50 group hover:border-blue-200 transition-all">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Niveau de Risque</p>
+          <p className="text-xl font-bold text-slate-900 mb-2 truncate" style={{ fontFamily: "'Playfair Display', serif" }}>
+            {adminSettingsForm.twoFactorRequired && adminSettingsForm.forceStrongPassword ? 'Minimal' : 'ProtÃ©gÃ©'}
           </p>
-          <p className="mt-1 text-xs text-blue-700">Basé sur 2FA et robustesse des mots de passe.</p>
+          <div className="flex items-center gap-2">
+             <span className="h-2 w-2 rounded-full bg-emerald-500" />
+             <span className="text-[10px] font-medium text-slate-400">BasÃ© sur 2FA & Mots de passe</span>
+          </div>
         </div>
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-amber-700">Canaux actifs</p>
-          <p className="mt-1 text-2xl font-semibold text-amber-900">
+
+        <div className="rounded-[2.5rem] bg-white p-8 shadow-xl shadow-slate-200/40 border border-slate-100/50 group hover:border-amber-200 transition-all">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Communication Admin</p>
+          <p className="text-xl font-bold text-slate-900 mb-2" style={{ fontFamily: "'Playfair Display', serif" }}>
             {[adminSettingsForm.emailNotifications, adminSettingsForm.pushNotifications, adminSettingsForm.weeklyDigest].filter(Boolean).length}/3
           </p>
-          <p className="mt-1 text-xs text-amber-700">Notifications activées pour l'équipe admin.</p>
+          <div className="flex items-center gap-2">
+             <span className="h-2 w-2 rounded-full bg-amber-500" />
+             <span className="text-[10px] font-medium text-slate-400">Canaux de notification actifs</span>
+          </div>
         </div>
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-emerald-700">Conformité</p>
-          <p className="mt-1 text-2xl font-semibold text-emerald-900">
-            {adminSettingsForm.auditLogRetention && adminSettingsForm.manualAccountApproval ? 'Élevée' : 'Partielle'}
+
+        <div className="rounded-[2.5rem] bg-white p-8 shadow-xl shadow-slate-200/40 border border-slate-100/50 group hover:border-blue-200 transition-all">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>ConformitÃ© RGPD</p>
+          <p className="text-xl font-bold text-slate-900 mb-2" style={{ fontFamily: "'Playfair Display', serif" }}>
+            {adminSettingsForm.auditLogRetention && adminSettingsForm.manualAccountApproval ? 'CertifiÃ©e' : 'IntermÃ©diaire'}
           </p>
-          <p className="mt-1 text-xs text-emerald-700">Pilotée par rétention des logs et validation manuelle.</p>
+          <div className="flex items-center gap-2">
+             <span className="h-2 w-2 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
+             <span className="text-[10px] font-medium text-slate-400">Rétention & Validation active</span>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-        <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_8px_18px_rgba(15,23,42,0.06)]">
-          <h4 className="flex items-center gap-2 text-lg font-semibold text-slate-900"><Users className="h-4 w-4 text-blue-600" />Profil administrateur</h4>
-          <div className="flex justify-between text-slate-600"><span>Nom complet</span><span className="font-bold text-slate-900">{settingsData?.profile?.full_name || 'Admin'}</span></div>
-          <div className="flex justify-between text-slate-600"><span>Email</span><span className="font-bold text-slate-900">{settingsData?.profile?.email || '-'}</span></div>
-          <div className="flex justify-between text-slate-600"><span>Rôle</span><span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700">{settingsData?.profile?.role || 'Admin'}</span></div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+        {/* Hardware & Identity */}
+        <div className="space-y-10">
+          <div className="rounded-[3rem] bg-white p-10 shadow-2xl shadow-slate-200/40 border border-slate-100/50">
+             <div className="flex items-center gap-4 mb-10">
+                <div className="h-14 w-14 rounded-3xl bg-blue-50 flex items-center justify-center">
+                   <ShieldAlert className="h-7 w-7 text-blue-600" />
+                </div>
+                <div>
+                   <h4 className="text-xl font-black text-slate-900" style={{ fontFamily: "'Playfair Display', serif" }}>Durcissement IdentitÃ©</h4>
+                   <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">ContrÃ´les Critiques</p>
+                </div>
+             </div>
+
+             <div className="space-y-6">
+                {[
+                  { id: 'twoFactorRequired', label: 'Authentification Ã  deux facteurs (2FA)', desc: 'Exiger un code OTP pour chaque session administrative.', icon: Lock },
+                  { id: 'forceStrongPassword', label: 'Mots de passe complexes', desc: 'Obligatoire: 8+ caractÃ¨res, majuscules et symboles.', icon: Shield },
+                  { id: 'lockAfterInactivity', label: 'Verrouillage Session', desc: 'DÃ©connexion automatique aprÃ¨s 15 min d\'inactivitÃ©.', icon: Clock3 }
+                ].map((s) => (
+                  <div key={s.id} className="flex items-center justify-between p-6 rounded-[2rem] bg-slate-50 border border-slate-100 transition-all hover:bg-white hover:shadow-xl hover:shadow-slate-200/40 group">
+                    <div className="flex-1 pr-6">
+                      <div className="flex items-center gap-2 mb-1">
+                        <s.icon className="h-4 w-4 text-slate-400 group-hover:text-blue-500 transition-colors" />
+                        <p className="text-sm font-black text-slate-800" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{s.label}</p>
+                      </div>
+                      <p className="text-xs text-slate-500 leading-relaxed">{s.desc}</p>
+                    </div>
+                    <label className="relative inline-flex h-8 w-14 items-center flex-shrink-0 cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={adminSettingsForm[s.id]} 
+                        onChange={() => updateSetting(s.id)}
+                        className="peer hidden" 
+                      />
+                      <div className="h-full w-full rounded-full bg-slate-200 transition-colors peer-checked:bg-blue-600 after:absolute after:left-1 after:top-1 after:h-6 after:w-6 after:rounded-full after:bg-white after:shadow-md after:transition-all peer-checked:after:translate-x-6" />
+                    </label>
+                  </div>
+                ))}
+             </div>
+          </div>
         </div>
-        <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_8px_18px_rgba(15,23,42,0.06)]">
-          <h4 className="flex items-center gap-2 text-lg font-semibold text-slate-900"><Shield className="h-4 w-4 text-blue-600" />Sécurité</h4>
-          <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 px-3 py-2.5 text-slate-700">
-            <span className="inline-flex items-center gap-2"><Lock className="h-4 w-4 text-slate-500" />Authentification à deux facteurs (2FA)</span>
-            <input type="checkbox" checked={adminSettingsForm.twoFactorRequired} onChange={() => updateSetting('twoFactorRequired')} className="h-4 w-4 accent-blue-600" />
-          </label>
-          <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 px-3 py-2.5 text-slate-700">
-            <span className="inline-flex items-center gap-2"><Shield className="h-4 w-4 text-slate-500" />Forcer des mots de passe robustes</span>
-            <input type="checkbox" checked={adminSettingsForm.forceStrongPassword} onChange={() => updateSetting('forceStrongPassword')} className="h-4 w-4 accent-blue-600" />
-          </label>
-          <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 px-3 py-2.5 text-slate-700">
-            <span className="inline-flex items-center gap-2"><Clock3 className="h-4 w-4 text-slate-500" />Verrouillage après inactivité</span>
-            <input type="checkbox" checked={adminSettingsForm.lockAfterInactivity} onChange={() => updateSetting('lockAfterInactivity')} className="h-4 w-4 accent-blue-600" />
-          </label>
-          <div className="flex justify-between text-slate-600"><span>Expiration de session</span><span className="font-bold text-slate-900">{settingsData?.security?.session_expiration || '30 min'}</span></div>
-          <div className="flex justify-between text-slate-600"><span>Forcer changement mot de passe</span><span className="font-bold text-slate-900">{settingsData?.security?.password_rotation || '90 jours'}</span></div>
-        </div>
-        <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_8px_18px_rgba(15,23,42,0.06)]">
-          <h4 className="flex items-center gap-2 text-lg font-semibold text-slate-900"><Bell className="h-4 w-4 text-blue-600" />Notifications</h4>
-          <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 px-3 py-2.5 text-slate-700">
-            <span className="inline-flex items-center gap-2"><Mail className="h-4 w-4 text-slate-500" />Notifications par email</span>
-            <input type="checkbox" checked={adminSettingsForm.emailNotifications} onChange={() => updateSetting('emailNotifications')} className="h-4 w-4 accent-blue-600" />
-          </label>
-          <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 px-3 py-2.5 text-slate-700">
-            <span className="inline-flex items-center gap-2"><Bell className="h-4 w-4 text-slate-500" />Notifications push</span>
-            <input type="checkbox" checked={adminSettingsForm.pushNotifications} onChange={() => updateSetting('pushNotifications')} className="h-4 w-4 accent-blue-600" />
-          </label>
-          <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 px-3 py-2.5 text-slate-700">
-            <span className="inline-flex items-center gap-2"><Calendar className="h-4 w-4 text-slate-500" />Digest hebdomadaire</span>
-            <input type="checkbox" checked={adminSettingsForm.weeklyDigest} onChange={() => updateSetting('weeklyDigest')} className="h-4 w-4 accent-blue-600" />
-          </label>
-          <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 px-3 py-2.5 text-slate-700">
-            <span className="inline-flex items-center gap-2"><MessageSquareWarning className="h-4 w-4 text-slate-500" />Alertes critiques immédiates</span>
-            <input type="checkbox" checked={adminSettingsForm.criticalAlerts} onChange={() => updateSetting('criticalAlerts')} className="h-4 w-4 accent-blue-600" />
-          </label>
-        </div>
-        <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_8px_18px_rgba(15,23,42,0.06)]">
-          <h4 className="flex items-center gap-2 text-lg font-semibold text-slate-900"><Globe className="h-4 w-4 text-blue-600" />Plateforme</h4>
-          <div className="flex justify-between text-slate-600"><span>Langue</span><span className="font-bold text-slate-900">{settingsData?.platform?.language || 'Français'}</span></div>
-          <div className="flex justify-between text-slate-600"><span>Fuseau horaire</span><span className="font-bold text-slate-900">{settingsData?.platform?.timezone || 'Europe/Paris (UTC+2)'}</span></div>
-          <div className="flex justify-between text-slate-600"><span>Format de date</span><span className="font-bold text-slate-900">{settingsData?.platform?.date_format || 'DD/MM/YYYY'}</span></div>
-        </div>
-        <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_8px_18px_rgba(15,23,42,0.06)] xl:col-span-2">
-          <h4 className="flex items-center gap-2 text-lg font-semibold text-slate-900"><Database className="h-4 w-4 text-blue-600" />Gouvernance et traçabilité</h4>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 px-3 py-2.5 text-slate-700">
-              <span>Validation manuelle des comptes médecins</span>
-              <input type="checkbox" checked={adminSettingsForm.manualAccountApproval} onChange={() => updateSetting('manualAccountApproval')} className="h-4 w-4 accent-blue-600" />
-            </label>
-            <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 px-3 py-2.5 text-slate-700">
-              <span>Modération obligatoire des témoignages</span>
-              <input type="checkbox" checked={adminSettingsForm.testimonialModeration} onChange={() => updateSetting('testimonialModeration')} className="h-4 w-4 accent-blue-600" />
-            </label>
-            <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 px-3 py-2.5 text-slate-700 md:col-span-2">
-              <span>Conserver les journaux d'audit (90 jours minimum)</span>
-              <input type="checkbox" checked={adminSettingsForm.auditLogRetention} onChange={() => updateSetting('auditLogRetention')} className="h-4 w-4 accent-blue-600" />
-            </label>
+
+        {/* Communications & Governance */}
+        <div className="space-y-10">
+          <div className="rounded-[3rem] bg-white p-10 shadow-2xl shadow-slate-200/40 border border-slate-100/50">
+             <div className="flex items-center gap-4 mb-10">
+                <div className="h-14 w-14 rounded-3xl bg-slate-900 flex items-center justify-center">
+                   <Bell className="h-7 w-7 text-white" />
+                </div>
+                <div>
+                   <h4 className="text-xl font-black text-slate-900" style={{ fontFamily: "'Playfair Display', serif" }}>Flux de Signalement</h4>
+                   <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Alertes & Monitoring</p>
+                </div>
+             </div>
+
+             <div className="space-y-6">
+                {[
+                  { id: 'emailNotifications', label: 'Alertes Email High-Priority', desc: 'Notification immÃ©diate pour les erreurs critiques serveurs.', icon: Mail },
+                  { id: 'manualAccountApproval', label: 'ModÃ©ration Habilitations', desc: 'Validation manuelle obligatoire pour tout nouveau compte.', icon: UserCheck },
+                  { id: 'testimonialModeration', label: 'Filtrage TÃ©moignages', desc: 'Les messages ne sont publics qu\'aprÃ¨s validation admin.', icon: MessageSquare }
+                ].map((s) => (
+                  <div key={s.id} className="flex items-center justify-between p-6 rounded-[2rem] bg-slate-50 border border-slate-100 transition-all hover:bg-white hover:shadow-xl hover:shadow-slate-200/40 group">
+                    <div className="flex-1 pr-6">
+                      <div className="flex items-center gap-2 mb-1">
+                        <s.icon className="h-4 w-4 text-slate-400 group-hover:text-blue-500 transition-colors" />
+                        <p className="text-sm font-black text-slate-800" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{s.label}</p>
+                      </div>
+                      <p className="text-xs text-slate-500 leading-relaxed">{s.desc}</p>
+                    </div>
+                    <label className="relative inline-flex h-8 w-14 items-center flex-shrink-0 cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={adminSettingsForm[s.id]} 
+                        onChange={() => updateSetting(s.id)}
+                        className="peer hidden" 
+                      />
+                      <div className="h-full w-full rounded-full bg-slate-200 transition-colors peer-checked:bg-blue-600 after:absolute after:left-1 after:top-1 after:h-6 after:w-6 after:rounded-full after:bg-white after:shadow-md after:transition-all peer-checked:after:translate-x-6" />
+                    </label>
+                  </div>
+                ))}
+             </div>
+          </div>
+
+          <div className="rounded-[3rem] bg-slate-900 p-10 shadow-2xl shadow-slate-900/50 text-white overflow-hidden relative group">
+             <div className="absolute -right-10 -bottom-10 h-40 w-40 rounded-full bg-blue-600/20 blur-[60px]" />
+             <div className="relative z-10 flex items-center justify-between">
+                <div>
+                   <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-blue-400 mb-2">SantÃ© SystÃ¨me</h4>
+                   <p className="text-xl font-black" style={{ fontFamily: "'Playfair Display', serif" }}>Infrastructure Stable</p>
+                </div>
+                <div className="h-12 w-12 rounded-full border-2 border-emerald-500/30 flex items-center justify-center">
+                   <Activity className="h-5 w-5 text-emerald-400 animate-pulse" />
+                </div>
+             </div>
           </div>
         </div>
       </div>
     </div>
   );
 
-  const renderReclamations = () => (
-    <div className="space-y-4">
-      <div className="flex flex-col items-start justify-between gap-3 md:flex-row md:items-center">
-        <div>
-          <h3 className="text-xl font-semibold text-slate-900">Module de Gestion des Réclamations</h3>
-          <p className="text-sm text-slate-500">Gérez les retours et incidents signalés par le personnel médical</p>
+  const renderReclamations = () => {
+    const recs = Array.isArray(reclamationsData) ? reclamationsData : [];
+    
+    return (
+      <div className="space-y-8 animate-in fade-in duration-500">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900" style={{ fontFamily: "'Playfair Display', serif" }}>Centre de Support</h2>
+            <p className="text-sm text-slate-400 font-medium mt-1">Gérez les incidents et retours techniques du corps médical</p>
+          </div>
         </div>
-        <div className="flex gap-2" />
-      </div>
 
-      <div className="grid grid-cols-1 gap-4">
-        {reclamationDecisionError && (
-          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-            {reclamationDecisionError}
-          </div>
-        )}
-        {reclamationsLoading ? (
-          <div className="flex items-center justify-center rounded-3xl border border-slate-200 bg-white py-14">
-            <span className="inline-block h-8 w-8 animate-spin rounded-full border-[3px] border-blue-600 border-t-transparent" />
-          </div>
-        ) : reclamationsError ? (
-          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-            {reclamationsError}
-          </div>
-        ) : reclamationsData.length > 0 ? reclamationsData.map((c) => {
-          const statusLabel = c.etat === 'validee' ? 'Validée' : c.etat === 'non_validee' ? 'Non validée' : 'En attente';
-          const statusClass = c.etat === 'validee'
-            ? 'bg-emerald-100 text-emerald-700'
-            : c.etat === 'non_validee'
-              ? 'bg-rose-100 text-rose-700'
-              : 'bg-amber-100 text-amber-700';
-          const prioriteClass = c.priorite === 'critique' || c.priorite === 'haute'
-            ? 'bg-rose-50 text-rose-700'
-            : c.priorite === 'basse'
-              ? 'bg-emerald-50 text-emerald-700'
-              : 'bg-slate-100 text-slate-700';
-          const doctorName = c?.user_info?.first_name || c?.user_info?.last_name
-            ? `${c.user_info?.first_name || ''} ${c.user_info?.last_name || ''}`.trim()
-            : c?.user_info?.username || 'Medecin';
+        <div className="grid grid-cols-1 gap-6">
+          {reclamationDecisionError && (
+            <div className="p-4 rounded-2xl bg-rose-50 border border-rose-100 flex items-center gap-3 text-rose-700 text-sm font-bold animate-in slide-in-from-top-2">
+              <AlertTriangle className="h-5 w-5" /> {reclamationDecisionError}
+            </div>
+          )}
 
-          return (
-            <div key={c.id} className="group relative flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-all hover:shadow-md">
-              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <div className="flex items-start gap-4">
-                  <div className="mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
-                    <MessageSquareWarning className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <div className="flex flex-wrap items-center gap-3">
-                      <h4 className="text-base font-bold text-slate-900">{c.categorie ? `Reclamation ${c.categorie}` : 'Reclamation'}</h4>
-                      <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${prioriteClass}`}>
-                        {c.priorite || 'normale'}
-                      </span>
-                      <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${statusClass}`}>
+          {reclamationsLoading ? (
+            <div className="p-20 flex flex-col items-center justify-center bg-white rounded-[3rem] border border-slate-100 shadow-xl shadow-slate-200/50">
+              <div className="h-12 w-12 border-4 border-slate-100 border-t-blue-600 rounded-full animate-spin mb-4" />
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Synchronisation Support...</p>
+            </div>
+          ) : reclamationsError ? (
+            <div className="p-20 text-center flex flex-col items-center bg-white rounded-[3rem] border border-slate-100">
+               <div className="h-16 w-16 rounded-full bg-rose-50 flex items-center justify-center mb-6">
+                 <AlertTriangle className="h-8 w-8 text-rose-500" />
+               </div>
+               <h4 className="text-lg font-black text-slate-900 mb-2">Service Indisponible</h4>
+               <p className="text-sm text-slate-400 max-w-sm font-medium">{reclamationsError}</p>
+            </div>
+          ) : recs.length > 0 ? recs.map((c) => {
+            const statusLabel = c.etat === 'validee' ? 'Résolu' : c.etat === 'non_validee' ? 'Fermé' : 'Ouvert';
+            const statusClass = c.etat === 'validee'
+              ? 'bg-emerald-500 text-white'
+              : c.etat === 'non_validee'
+                ? 'bg-rose-500 text-white'
+                : 'bg-amber-500 text-white';
+            
+            const prioriteClass = c.priorite === 'critique' || c.priorite === 'haute'
+              ? 'bg-rose-50 text-rose-700 border-rose-100'
+              : 'bg-slate-50 text-slate-600 border-slate-100';
+
+            const doctorName = c?.user_info?.first_name || c?.user_info?.last_name
+              ? `${c.user_info?.first_name || ''} ${c.user_info?.last_name || ''}`.trim()
+              : c?.user_info?.username || 'Praticien';
+
+            return (
+              <div key={c.id} className="group relative bg-white rounded-[2.5rem] border border-slate-100 p-8 shadow-xl shadow-slate-200/40 hover:shadow-blue-900/5 transition-all duration-500 overflow-hidden">
+                <div className="flex flex-col md:flex-row gap-8 relative z-10">
+                  <div className="flex-1">
+                    <div className="flex flex-wrap items-center gap-3 mb-6">
+                      <div className={`px-4 py-1.5 rounded-xl border text-[9px] font-black uppercase tracking-widest ${prioriteClass}`}>
+                        {c.priorite || 'Priorité Normale'}
+                      </div>
+                      <div className={`px-4 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest ${statusClass}`}>
                         {statusLabel}
+                      </div>
+                      <span className="text-[10px] font-black text-slate-300 ml-auto tracking-tighter" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+                        REF: #{c.numero || c.id}
                       </span>
                     </div>
-                    <p className="mt-1 text-sm text-slate-600">{c.description}</p>
-                    <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-400">
-                      <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> {formatDate(c.date)}</span>
-                      <span className="flex items-center gap-1 font-medium text-blue-600">#{c.numero || c.id}</span>
-                      <span className="text-slate-500">{doctorName}</span>
+
+                    <h4 className="text-xl font-black text-slate-900 mb-3" style={{ fontFamily: "'Playfair Display', serif" }}>
+                      {c.categorie || 'Incident Technique'}
+                    </h4>
+                    
+                    <div className="p-6 rounded-3xl bg-slate-50 border border-slate-50 text-sm text-slate-600 leading-relaxed mb-6 italic">
+                      "{c.description}"
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-6">
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 font-black text-xs">
+                          {doctorName.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                           <p className="text-xs font-black text-slate-900">{doctorName}</p>
+                           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Auteur</p>
+                        </div>
+                      </div>
+                      
+                      <div className="h-8 w-px bg-slate-100 hidden md:block" />
+
+                      <div className="flex items-center gap-2 text-slate-400 uppercase tracking-tighter font-black text-[10px]">
+                        <Calendar className="h-4 w-4" /> {formatDate(c.date)}
+                      </div>
+
                       {c.fichier_url && (
-                        <a className="text-blue-600 hover:underline" href={c.fichier_url} target="_blank" rel="noreferrer">
-                          Voir piece jointe
+                        <a href={c.fichier_url} target="_blank" rel="noreferrer" className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-50 text-blue-600 text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all">
+                          <Eye className="h-3 w-3" /> Pièce Jointe
                         </a>
                       )}
                     </div>
                   </div>
-                </div>
 
-                <div className="flex items-center gap-3 border-t border-slate-50 pt-3 md:border-none md:pt-0">
-                  <button
-                    className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 md:flex-none disabled:opacity-50"
-                    onClick={() => handleReclamationDecision(c.id, 'non_validee')}
-                    disabled={c.etat !== 'en_attente'}
-                  >
-                    Non validée
-                  </button>
-                  <button
-                    className="flex-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 md:flex-none disabled:opacity-50"
-                    onClick={() => handleReclamationDecision(c.id, 'validee')}
-                    disabled={c.etat !== 'en_attente'}
-                  >
-                    Valider
-                  </button>
+                  <div className="flex md:flex-col gap-3 justify-end items-end">
+                    <button
+                      disabled={c.etat !== 'en_attente'}
+                      onClick={() => handleReclamationDecision(c.id, 'validee')}
+                      className="w-full md:w-32 py-4 rounded-2xl bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 disabled:opacity-20 transition-all shadow-xl shadow-slate-900/10"
+                    >
+                      Résoudre
+                    </button>
+                    <button
+                      disabled={c.etat !== 'en_attente'}
+                      onClick={() => handleReclamationDecision(c.id, 'non_validee')}
+                      className="w-full md:w-32 py-4 rounded-2xl bg-white border border-slate-200 text-slate-500 text-[10px] font-black uppercase tracking-widest hover:bg-rose-50 hover:text-rose-500 hover:border-rose-100 disabled:opacity-20 transition-all"
+                    >
+                      Classer
+                    </button>
+                  </div>
                 </div>
+                
+                {/* Background Decoration */}
+                <div className="absolute top-0 right-0 h-full w-1/3 bg-gradient-to-l from-slate-50/50 to-transparent pointer-events-none" />
               </div>
+            );
+          }) : (
+            <div className="p-20 flex flex-col items-center justify-center bg-white rounded-[3rem] border-2 border-dashed border-slate-100">
+               <div className="h-20 w-20 rounded-full bg-emerald-50 flex items-center justify-center mb-8">
+                 <CheckCircle2 className="h-10 w-10 text-emerald-500" />
+               </div>
+               <h4 className="text-xl font-black text-slate-900 mb-2">Boîte de réception vide</h4>
+               <p className="text-sm text-slate-400 font-medium">Félicitations, aucun incident n'est actuellement en attente.</p>
             </div>
-          );
-        }) : (
-          <div className="flex flex-col items-center justify-center rounded-3xl border-2 border-dashed border-slate-200 bg-white/50 py-16 text-center">
-            <div className="mb-4 rounded-full bg-slate-100 p-4">
-              <MessageSquareWarning className="h-8 w-8 text-slate-400" />
-            </div>
-            <h4 className="text-lg font-semibold text-slate-900">Aucune réclamation</h4>
-            <p className="mx-auto max-w-sm text-sm text-slate-500">Toutes les réclamations des médecins ont été traitées ou aucune n'a été soumise pour le moment.</p>
-          </div>
-        )}
+          )}
+        </div>
       </div>
+    );
+  };
 
+  const renderModals = () => (
+    <>
       {reclamationConfirm.open && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-white/60 bg-white/90 p-6 shadow-[0_28px_80px_rgba(15,23,42,0.35)]">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.2em] text-blue-500">Confirmation</p>
-                <h4 className="mt-1 text-lg font-bold text-slate-900">
-                  {reclamationConfirm.actionLabel === 'valider' ? 'Valider la réclamation ?' : 'Rejeter la réclamation ?'}
-                </h4>
-                <p className="mt-2 text-sm text-slate-600">
-                  Cette action marque la réclamation comme <span className="font-semibold text-slate-900">{reclamationConfirm.actionLabel}</span>.
-                </p>
+         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/80 p-4 backdrop-blur-xl animate-in fade-in duration-300">
+           <div className="w-full max-w-md bg-white rounded-[3rem] p-10 shadow-2xl animate-in zoom-in-95 duration-300">
+              <div className="h-16 w-16 rounded-3xl bg-blue-50 flex items-center justify-center text-blue-600 mb-8 mx-auto">
+                 <Shield className="h-8 w-8" />
               </div>
-              <button
-                type="button"
-                onClick={() => setReclamationConfirm({ open: false, reclamationId: null, nextStatus: 'validee', actionLabel: 'valider' })}
-                className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-500 hover:text-slate-700"
-              >
-                Fermer
-              </button>
-            </div>
+              <h4 className="text-2xl font-black text-center text-slate-900 mb-4" style={{ fontFamily: "'Playfair Display', serif" }}>
+                {reclamationConfirm.actionLabel === 'valider' ? 'Valider la résolution' : 'Classer sans suite'}
+              </h4>
+              <p className="text-center text-sm text-slate-500 font-medium mb-10 leading-relaxed">
+                Cette décision sera notifiée au praticien concerné et archivée dans le journal d'audit BrainCore.
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <button
+                  onClick={() => setReclamationConfirm({ open: false, reclamationId: null, nextStatus: 'validee', actionLabel: 'valider' })}
+                  className="py-4 rounded-2xl bg-slate-50 text-slate-400 text-[10px] font-black uppercase tracking-widest hover:bg-slate-100 transition-all font-['Space_Grotesk']"
+                >
+                  Annuler
+                </button>
+                <button
+                  onClick={confirmReclamationDecision}
+                  className="py-4 rounded-2xl bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 transition-all shadow-xl shadow-blue-900/20 font-['Space_Grotesk']"
+                >
+                  Confirmer
+                </button>
+              </div>
+           </div>
+         </div>
+      )}
 
-            <div className="mt-6 flex flex-wrap justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setReclamationConfirm({ open: false, reclamationId: null, nextStatus: 'validee', actionLabel: 'valider' })}
-                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-              >
-                Annuler
-              </button>
-              <button
-                type="button"
-                onClick={confirmReclamationDecision}
-                className="rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-[0_8px_18px_rgba(37,99,235,0.35)] hover:from-blue-700 hover:to-indigo-700"
-              >
-                Confirmer
-              </button>
-            </div>
-          </div>
+      {rejectModal.open && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/80 p-4 backdrop-blur-xl animate-in fade-in duration-300">
+           <div className="w-full max-w-md bg-white rounded-[3rem] p-10 shadow-2xl animate-in zoom-in-95 duration-300">
+              <div className="h-16 w-16 rounded-3xl bg-rose-50 flex items-center justify-center text-rose-600 mb-8 mx-auto">
+                 <AlertTriangle className="h-8 w-8" />
+              </div>
+              <h4 className="text-2xl font-black text-center text-slate-900 mb-4" style={{ fontFamily: "'Playfair Display', serif" }}>
+                Refuser l'Habilitation
+              </h4>
+              <p className="text-center text-sm text-slate-500 font-medium mb-8">
+                Indiquez le motif du refus pour <span className="font-black text-slate-900">{rejectModal.displayName}</span>.
+              </p>
+              
+              <textarea
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                className="w-full rounded-2xl border border-slate-200 p-5 text-sm outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-500/5 transition-all mb-6"
+                rows={4}
+                placeholder="Ex: Document d'ordre non lisible ou expiré..."
+              />
+
+              {decisionError && (
+                <div className="mb-6 p-4 rounded-xl bg-rose-50 text-rose-700 text-xs font-bold border border-rose-100 italic">
+                  {decisionError}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
+                <button
+                  onClick={() => { setRejectModal({ open: false, userId: null, displayName: '' }); setDecisionError(''); }}
+                  className="py-4 rounded-2xl bg-slate-50 text-slate-400 text-[10px] font-black uppercase tracking-widest hover:bg-slate-100 transition-all font-['Space_Grotesk']"
+                >
+                  Annuler
+                </button>
+                <button
+                  onClick={handleReject}
+                  disabled={isProcessingDecision}
+                  className="py-4 rounded-2xl bg-rose-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-rose-700 transition-all shadow-xl shadow-rose-600/20 font-['Space_Grotesk'] disabled:opacity-50"
+                >
+                  Confirmer le Refus
+                </button>
+              </div>
+           </div>
         </div>
       )}
-    </div>
+
+      {createModalOpen && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/80 p-4 backdrop-blur-xl animate-in fade-in duration-300 overflow-y-auto">
+           <div className="w-full max-w-2xl bg-white rounded-[3rem] p-10 shadow-2xl animate-in zoom-in-95 duration-300 my-8">
+              <div className="flex items-center justify-between mb-10">
+                <div>
+                  <h4 className="text-2xl font-black text-slate-900" style={{ fontFamily: "'Playfair Display', serif" }}>Nouveau Praticien</h4>
+                  <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Onboarding Direct BrainCore</p>
+                </div>
+                <button 
+                  onClick={() => setCreateModalOpen(false)}
+                  className="h-12 w-12 rounded-2xl bg-slate-50 flex items-center justify-center text-slate-400 hover:bg-slate-900 hover:text-white transition-all"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Nom Patronyme *</label>
+                  <input
+                    value={createForm.nom}
+                    onChange={(e) => {
+                      setCreateForm((p) => ({ ...p, nom: e.target.value }));
+                      setCreateFieldErrors((prev) => ({ ...prev, nom: '' }));
+                    }}
+                    className={`w-full rounded-2xl border p-4 text-sm font-bold transition-all ${createFieldErrors.nom ? 'border-rose-300 bg-rose-50' : 'border-slate-100 bg-slate-50/50 focus:bg-white focus:border-blue-400'}`}
+                    placeholder="ex: Ben Ali"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Prénom *</label>
+                  <input
+                    value={createForm.prenom}
+                    onChange={(e) => {
+                      setCreateForm((p) => ({ ...p, prenom: e.target.value }));
+                      setCreateFieldErrors((prev) => ({ ...prev, prenom: '' }));
+                    }}
+                    className={`w-full rounded-2xl border p-4 text-sm font-bold transition-all ${createFieldErrors.prenom ? 'border-rose-300 bg-rose-50' : 'border-slate-100 bg-slate-50/50 focus:bg-white focus:border-blue-400'}`}
+                    placeholder="ex: Ahmed"
+                  />
+                </div>
+                <div className="md:col-span-2 space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Numéro d'Ordre National *</label>
+                  <input
+                    value={createForm.orderNumber}
+                    onChange={(e) => {
+                      setCreateForm((p) => ({ ...p, orderNumber: e.target.value.toUpperCase() }));
+                      setCreateFieldErrors((prev) => ({ ...prev, orderNumber: '' }));
+                    }}
+                    className={`w-full rounded-2xl border p-4 text-sm font-bold transition-all ${createFieldErrors.orderNumber ? 'border-rose-300 bg-rose-50' : 'border-slate-100 bg-slate-50/50 focus:bg-white focus:border-blue-400'}`}
+                    placeholder="Ex: 5678 ou T-5678"
+                  />
+                </div>
+                <div className="md:col-span-2 space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Email Professionnel *</label>
+                  <input
+                    type="email"
+                    value={createForm.email}
+                    onChange={(e) => {
+                      setCreateForm((p) => ({ ...p, email: e.target.value }));
+                      setCreateFieldErrors((prev) => ({ ...prev, email: '' }));
+                    }}
+                    className={`w-full rounded-2xl border p-4 text-sm font-bold transition-all ${createFieldErrors.email ? 'border-rose-300 bg-rose-50' : 'border-slate-100 bg-slate-50/50 focus:bg-white focus:border-blue-400'}`}
+                    placeholder="medecin@visionmed.tn"
+                  />
+                </div>
+              </div>
+
+              {decisionError && (
+                <div className="mt-8 p-4 rounded-xl bg-rose-50 text-rose-700 text-xs font-bold border border-rose-100 italic">
+                  {decisionError}
+                </div>
+              )}
+
+              <div className="mt-10 flex gap-4">
+                 <button
+                    onClick={() => setCreateModalOpen(false)}
+                    className="flex-1 py-5 rounded-3xl bg-slate-50 text-slate-400 text-[10px] font-black uppercase tracking-widest hover:bg-slate-100 transition-all font-['Space_Grotesk']"
+                  >
+                    Fermer
+                  </button>
+                  <button
+                    onClick={handleCreateAccount}
+                    disabled={isProcessingDecision}
+                    className="flex-1 py-5 rounded-3xl bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 transition-all shadow-2xl shadow-slate-900/20 font-['Space_Grotesk'] disabled:opacity-50"
+                  >
+                    Générer les Accès
+                  </button>
+              </div>
+           </div>
+        </div>
+      )}
+    </>
   );
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[#f0f9ff] font-sans text-slate-900">
-      {/* Fond Médical Pur Bleu ... */}
-      <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
-        {/* Image de fond avec une teinte de bleu médical pur */}
-        <div 
-          className="absolute inset-0 opacity-[0.08]"
-          style={{
-            backgroundImage: 'url("/assets/images/doctor1.jpg")',
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
-            filter: 'blur(50px) saturate(0.8) sepia(1) hue-rotate(160deg) saturate(3)' 
-          }}
-        />
-        
-        {/* Overlay Bleu Clair Médical (Cyan-Blue) */}
-        <div className="absolute inset-0 bg-gradient-to-br from-white via-[#f0f9ff]/80 to-sky-100/40" />
-      </div>
+    <div className="flex min-h-screen bg-[#f8fafc] text-slate-900 overflow-hidden relative" style={{ fontFamily: "'Noto Sans', system-ui, sans-serif" }}>
+      {renderModals()}
       
-      {/* Halos de Lumière Bleue (Code Couleur Médical #0ea5e9 / #38bdf8) */}
-      <div className="pointer-events-none absolute left-[-10%] top-[-10%] z-0 h-[600px] w-[600px] rounded-full bg-sky-400/15 blur-[120px]" />
-      <div className="pointer-events-none absolute bottom-[-15%] right-[-5%] z-0 h-[500px] w-[500px] rounded-full bg-blue-300/10 blur-[100px]" />
-
-      {/* Icônes médicales en bleu ciel / bleu clinique */}
-      <div className="pointer-events-none absolute right-[10%] top-[10%] z-0 opacity-[0.12]">
-        <Activity size={240} strokeWidth={0.2} className="text-sky-500" />
-      </div>
-      <div className="pointer-events-none absolute left-[12%] bottom-[12%] z-0 opacity-[0.1]">
-        <Search size={190} strokeWidth={0.2} className="text-sky-400" />
-      </div>
-      <div className="pointer-events-none absolute right-[35%] bottom-[25%] z-0 opacity-[0.06]">
-        <Bell size={150} strokeWidth={0.2} className="text-sky-300" />
-      </div>
-
       {activationNotice && (
-        <div className="fixed right-4 top-4 z-[90] w-[92vw] max-w-md rounded-2xl border border-blue-200 bg-white/95 p-4 shadow-[0_18px_40px_rgba(30,64,175,0.18)] backdrop-blur-sm">
-          <div className="flex items-start gap-3">
-            <div className="mt-0.5 rounded-xl bg-blue-100 p-2 text-blue-700">
-              <Bell className="h-4 w-4" />
+        <div className="fixed right-8 top-8 z-[100] w-[92vw] max-w-md rounded-[2rem] border border-blue-100 bg-white/95 p-6 shadow-[0_32px_64px_rgba(30,64,175,0.15)] backdrop-blur-xl animate-in slide-in-from-right-8 duration-500">
+          <div className="flex items-start gap-4">
+            <div className="rounded-2xl bg-blue-500 p-3 text-white shadow-lg shadow-blue-500/20">
+              <Bell className="h-5 w-5" />
             </div>
             <div className="flex-1">
-              <p className="text-sm font-bold text-blue-900">Activation envoyée</p>
-              <p className="mt-0.5 text-sm font-medium text-blue-700">{activationNotice}</p>
+              <p className="text-sm font-black text-slate-900 uppercase tracking-widest" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Habilitation Envoyée</p>
+              <p className="mt-1 text-sm font-medium text-slate-500 leading-relaxed">{activationNotice}</p>
             </div>
             <button
               type="button"
               onClick={() => setActivationNotice('')}
-              className="rounded-lg px-2 py-1 text-sm font-bold text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
-              aria-label="Fermer la notification"
+              className="h-8 w-8 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-100 transition-colors"
             >
-              ×
+              <X className="h-4 w-4" />
             </button>
           </div>
         </div>
       )}
 
-      <div className="flex relative z-10">
       <AdminSidebar user={user} onLogout={onLogout} />
-      <main className="relative z-10 flex-1 xl:ml-64">
-        <div className="sticky top-0 z-10 border-b border-slate-200/90 bg-white px-4 py-2.5 md:px-6 md:py-2.5">
-          <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-                {isHome ? 'Tableau de bord' : isAccounts ? 'Comptes' : isHistory ? 'Historique' : isReclamations ? 'Réclamations' : isTestimonials ? 'Témoignages' : 'Paramètres'}
-              </h1>
-              <p className="text-sm text-slate-500">{isHome ? "Bienvenue sur le portail administrateur NeuroScan" : 'Gestion et supervision'}</p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="relative flex min-w-[220px] flex-1 items-center gap-2 rounded-xl border border-blue-100 bg-slate-50 px-3 py-1.5 transition-all focus-within:border-blue-400 focus-within:bg-white focus-within:shadow-sm md:min-w-[320px]">
-                <Search className="h-4 w-4 text-blue-500" />
-                <input 
-                  type="text"
-                  placeholder="Rechercher un patient, un rapport ou un compte..."
-                  className="w-full bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-                {searchQuery && (
-                   <button 
-                     onClick={() => setSearchQuery('')}
-                     className="text-slate-400 hover:text-slate-600"
-                   >
-                     ×
-                   </button>
-                )}
-              </div>
-
-              <div className="relative">
-                <button 
-                  onClick={() => setShowNotifications(!showNotifications)}
-                  className={`relative inline-flex h-9 w-9 items-center justify-center rounded-full border border-blue-100 transition-all hover:bg-blue-50 ${showNotifications ? 'bg-blue-50 text-blue-600' : 'bg-white text-slate-500'}`}
-                >
-                  <Bell className="h-4 w-4" />
-                  {unreadCount > 0 && !showNotifications && (
-                    <span className="absolute -right-0.5 -top-0.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white ring-2 ring-white">
-                      {unreadCount}
-                    </span>
-                  )}
-                </button>
-
-                {/* Dropdown de notifications */}
-                {showNotifications && (
-                  <div className="absolute right-0 mt-3 w-80 origin-top-right rounded-2xl border border-slate-200 bg-white p-2 shadow-xl ring-1 ring-black ring-opacity-5 focus:outline-none z-50 animate-in fade-in zoom-in duration-200">
-                    <div className="px-3 py-2 border-b border-slate-100 flex justify-between items-center">
-                      <span className="text-sm font-bold text-slate-900">Notifications</span>
-                      <button className="text-[11px] text-blue-600 font-semibold hover:underline">Tout marquer comme lu</button>
-                    </div>
-                    <div className="max-h-[300px] overflow-y-auto py-1">
-                      {[
-                        { title: 'Comptes en attente', desc: `${pendingAccounts.length} médecin(s) attendent une validation admin.`, time: 'Maintenant' },
-                        { title: 'Témoignages en attente', desc: `${pendingTestimonials.length} témoignage(s) à modérer.`, time: 'Maintenant' },
-                        { title: 'Réclamation urgente', desc: 'Incident signalé sur l\'analyse #042.', time: 'Il y a 15 min' },
-                        { title: 'Rapport généré', desc: "L'analyse IRM de 'Patient X' est prête.", time: 'Il y a 1h' },
-                      ].map((n, i) => (
-                        <div key={i} className="px-3 py-2.5 hover:bg-slate-50 rounded-xl cursor-pointer transition-colors border-b border-slate-50 last:border-0 text-left">
-                          <p className="text-[13px] font-semibold text-slate-900 leading-tight">{n.title}</p>
-                          <p className="mt-0.5 text-[12px] text-slate-500 line-clamp-1">{n.desc}</p>
-                          <p className="mt-1 text-[10px] text-slate-400 font-medium">{n.time}</p>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="px-3 py-2 text-center border-t border-slate-100">
-                      <button className="text-[12px] text-slate-500 font-semibold hover:text-blue-600 transition-colors">Voir tout l'historique</button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-2 flex items-center gap-2 overflow-x-auto pb-1 xl:hidden">
-            <NavLink to="/admin" end className={({ isActive }) => `whitespace-nowrap rounded-xl px-3 py-2 text-sm font-semibold ${isActive ? 'bg-cyan-500 text-white' : 'bg-slate-100 text-slate-600'}`}>Vue globale</NavLink>
-            <NavLink to="/admin/comptes" className={({ isActive }) => `whitespace-nowrap rounded-xl px-3 py-2 text-sm font-semibold ${isActive ? 'bg-cyan-500 text-white' : 'bg-slate-100 text-slate-600'}`}>Comptes</NavLink>
-            <NavLink to="/admin/temoignages" className={({ isActive }) => `whitespace-nowrap rounded-xl px-3 py-2 text-sm font-semibold ${isActive ? 'bg-cyan-500 text-white' : 'bg-slate-100 text-slate-600'}`}>Témoignages</NavLink>
-            <NavLink to="/admin/historique" className={({ isActive }) => `whitespace-nowrap rounded-xl px-3 py-2 text-sm font-semibold ${isActive ? 'bg-cyan-500 text-white' : 'bg-slate-100 text-slate-600'}`}>Historique</NavLink>
-            <NavLink to="/admin/parametres" className={({ isActive }) => `whitespace-nowrap rounded-xl px-3 py-2 text-sm font-semibold ${isActive ? 'bg-cyan-500 text-white' : 'bg-slate-100 text-slate-600'}`}>Paramètres</NavLink>
-          </div>
+      
+      <div className="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto relative no-scrollbar xl:ml-60">
+        
+        {/* Background Hero Section */}
+        <div className="absolute top-0 left-0 right-0 h-[260px] z-0 overflow-hidden">
+          <img 
+            src="/images/dashbord.jpeg" 
+            alt="Hero Background" 
+            className="w-full h-full object-cover opacity-30 group-hover:scale-105 transition-transform duration-1000 grayscale-[20%] blur-[1px]"
+          />
+          <div className="absolute inset-0 bg-gradient-to-b from-slate-900 via-slate-900/40 to-[#f8fafc]" />
         </div>
 
-        <div className="mx-auto w-full max-w-[1500px] p-3 md:p-4">
-          <div className="rounded-2xl border border-slate-200 bg-transparent p-0 shadow-none md:p-0">
+        <main className="relative z-10 flex-1 p-4 md:p-6 lg:p-8 pt-10">
+          {/* Header Content */}
+          <div className="mb-6 px-2">
+            <div className="flex flex-col md:flex-row md:items-start justify-between gap-8">
+              <div className="max-w-2xl">
+                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/20 border border-blue-400/30 backdrop-blur-md mb-6 shadow-xl shadow-blue-500/10">
+                  <Shield className="h-3.5 w-3.5 text-blue-300" />
+                  <span className="text-[10px] font-black text-blue-100 uppercase tracking-[0.2em]" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Console Administrateur</span>
+                </div>
+                <h1 className="text-2xl md:text-3xl font-bold text-white mb-3" style={{ fontFamily: "'Playfair Display', serif", letterSpacing: '-0.01em' }}>
+                  Tableau de <span className="text-blue-400">Bord</span>
+                </h1>
+                <p className="text-slate-300 text-sm md:text-base font-medium leading-relaxed opacity-90">
+                  Supervision globale de la plateforme BrainCore. Gérez les habilitations, les retours d'expérience et maintenez l'excellence opérationnelle.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                 <div className="relative group">
+                    <button 
+                      onClick={() => setShowNotifications(!showNotifications)}
+                      className={`relative flex h-14 w-14 items-center justify-center rounded-2xl border transition-all duration-300 backdrop-blur-xl shadow-2xl ${showNotifications ? 'bg-white border-white scale-95' : 'bg-white/10 border-white/20 text-white hover:bg-white/20'}`}
+                    >
+                      <Bell className="h-6 w-6" />
+                      {unreadCount > 0 && (
+                        <span className="absolute -top-2 -right-2 flex h-6 w-6 items-center justify-center rounded-full bg-rose-500 text-[10px] font-black text-white ring-4 ring-slate-900/10 shadow-lg shadow-rose-500/40">
+                          {unreadCount}
+                        </span>
+                      )}
+                    </button>
+
+                    {/* Notification Dropdown */}
+                    {showNotifications && (
+                      <div className="absolute right-0 mt-6 w-96 origin-top-right rounded-[2.5rem] border border-slate-200/60 bg-white/95 backdrop-blur-2xl p-3 shadow-[0_32px_64px_-16px_rgba(0,0,0,0.2)] ring-1 ring-black/5 z-50 animate-in fade-in zoom-in slide-in-from-top-4 duration-300">
+                        <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center">
+                          <span className="text-sm font-black text-slate-900 uppercase tracking-widest" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Notifications</span>
+                          <button className="text-[10px] bg-slate-100 px-3 py-1.5 rounded-full text-slate-500 font-bold hover:bg-blue-600 hover:text-white transition-all uppercase tracking-wider">Tout effacer</button>
+                        </div>
+                        <div className="max-h-[400px] overflow-y-auto py-2 pr-1 no-scrollbar">
+                           {[
+                              { title: 'Comptes en attente', desc: `${pendingAccounts.length} médecin(s) attendent une validation immédiate.`, time: 'Maintenant', icon: UserPlus, color: 'text-blue-600 bg-blue-50', priority: 'High' },
+                              { title: 'Témoignages récents', desc: `${pendingTestimonials.length} nouveaux messages à modérer dans le flux public.`, time: '12 min', icon: MessageSquare, color: 'text-emerald-600 bg-emerald-50', priority: 'Medium' },
+                              { title: 'Alerte Système', desc: 'Maintenance hebdomadaire prévue ce dimanche à 02:00.', time: '2h', icon: Shield, color: 'text-purple-600 bg-purple-50', priority: 'Low' },
+                           ].map((n, i) => (
+                             <div key={i} className="px-5 py-4 hover:bg-slate-50/80 rounded-[1.8rem] cursor-pointer transition-all group/item border-b border-slate-50 last:border-0 flex gap-4 items-start">
+                               <div className={`h-11 w-11 rounded-2xl flex items-center justify-center flex-shrink-0 transition-transform group-hover/item:scale-110 ${n.color}`}>
+                                 <n.icon className="h-5 w-5" />
+                               </div>
+                               <div className="flex-1 min-w-0">
+                                 <div className="flex items-center justify-between mb-0.5">
+                                   <p className="text-[13px] font-bold text-slate-900">{n.title}</p>
+                                   <span className="text-[9px] font-black uppercase text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md tracking-tighter">{n.priority}</span>
+                                 </div>
+                                 <p className="text-xs text-slate-500 leading-relaxed line-clamp-2 pr-2">{n.desc}</p>
+                                 <p className="mt-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5"><Clock3 className="h-3 w-3" /> {n.time}</p>
+                               </div>
+                             </div>
+                           ))}
+                        </div>
+                        <div className="p-3">
+                          <button className="w-full py-4 rounded-[1.5rem] bg-slate-900 text-white text-xs font-black uppercase tracking-[0.2em] hover:bg-blue-600 transition-all shadow-xl shadow-slate-900/20 active:scale-[0.98]">
+                            Accéder au centre historique
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                 </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Navigation & Search Sub-Header */}
+          <div className="mb-10 rounded-[2.5rem] bg-white/70 backdrop-blur-2xl border border-white/50 p-3 shadow-2xl shadow-slate-200/50 flex flex-col xl:flex-row items-center justify-between gap-6 transition-all hover:bg-white/90">
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar w-full xl:w-auto px-2">
+              {[
+                { to: '/admin', icon: Database, label: 'Général', end: true },
+                { to: '/admin/comptes', icon: Users, label: 'Comptes' },
+                { to: '/admin/temoignages', icon: MessageSquare, label: 'Témoignages' },
+                { to: '/admin/reclamations', icon: MessageSquareWarning, label: 'Réclamations' },
+                { to: '/admin/historique', icon: Clock3, label: 'Audit Log' },
+                { to: '/admin/parametres', icon: Lock, label: 'Sécurité' },
+              ].map((link) => (
+                <NavLink 
+                  key={link.to}
+                  to={link.to} 
+                  end={link.end}
+                  className={({ isActive }) => `flex items-center gap-3 px-6 py-4 rounded-[1.8rem] text-sm font-bold transition-all duration-300 relative group shrink-0 ${isActive ? 'bg-slate-900 text-white shadow-2xl shadow-slate-900/30' : 'text-slate-500 hover:text-slate-900 hover:bg-white'}`}
+                  style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+                >
+                  <link.icon className={`h-4.5 w-4.5 transition-transform group-hover:scale-110`} />
+                  <span className="tracking-tight">{link.label}</span>
+                </NavLink>
+              ))}
+            </div>
+
+            <div className="w-full xl:w-96 px-2">
+              <div className="relative group">
+                <Search className="absolute left-6 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-slate-400 transition-colors group-focus-within:text-blue-500" />
+                <input
+                  type="text"
+                  placeholder="Rechercher..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-14 pr-6 py-4 bg-white/50 border border-slate-200/60 rounded-[1.8rem] text-sm focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500/30 transition-all font-medium placeholder:text-slate-400"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Dynamic Content Area */}
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
             {isHome && renderOverview()}
             {isAccounts && renderAccounts()}
             {isTestimonials && renderTestimonials()}
@@ -1800,8 +1932,19 @@ export default function Dashboard({ user, onLogout }) {
             {isReclamations && renderReclamations()}
             {isSettings && renderSettings()}
           </div>
-        </div>
-      </main>
+        </main>
+
+        {/* Footer info */}
+        <footer className="px-10 py-8 mt-12 border-t border-slate-200/60 flex flex-col md:flex-row justify-between items-center gap-4 relative z-10">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+            BrainCore Management System v4.2.0 • 2026
+          </p>
+          <div className="flex items-center gap-6">
+            <span className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full uppercase tracking-widest">
+              <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" /> Système Opérationnel
+            </span>
+          </div>
+        </footer>
       </div>
     </div>
   );

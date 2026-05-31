@@ -265,7 +265,7 @@ export default function Parametres() {
                 <option value="utc">UTC</option>
               </SelectControl>
             </SettingRow>
-            <SettingRow label="Format de date" description="Format applique a toutes les dates dans NeuroScan.">
+            <SettingRow label="Format de date" description="Format applique a toutes les dates dans BrainCore.">
               <SelectControl value={settings.formatDate} onChange={(e) => updateSetting('formatDate', e.target.value)}>
                 <option value="ddmmyyyy">JJ/MM/AAAA</option>
                 <option value="mmddyyyy">MM/DD/YYYY</option>

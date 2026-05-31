@@ -3143,8 +3143,9 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
           setIsInitializingRegistration(false);
         }
       } else {
-        // 2D images
-        const src = file.file_url;
+        // 2D images — use preview_url (relative API path, no media mount needed)
+        // file_url is an absolute URL depending on Host header; preview_url is always relative
+        const src = file.preview_url || file.file_url;
         let hasRef = !!referenceImage.src;
         let hasPat = !!patientImage.src;
 
@@ -4649,6 +4650,33 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                             <FileText className="h-3.5 w-3.5" /> Voir dossier
                           </button>
                         )}
+                      </>
+                    )}
+                    {/* ── Export PNG 2D — toujours visible en mode 2D dès que les images sont disponibles ── */}
+                    {registrationDimension === '2d' && (resultImages?.ref || resultImages?.pat) && (
+                      <>
+                        <div className="w-px h-6 bg-gray-200 shrink-0" />
+                        <button
+                          onClick={() => {
+                            const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-');
+                            if (resultImages?.ref) {
+                              const a = document.createElement('a');
+                              a.href = resultImages.ref;
+                              a.download = `reference_${stamp}.png`;
+                              document.body.appendChild(a); a.click(); a.remove();
+                            }
+                            if (resultImages?.pat) {
+                              const a = document.createElement('a');
+                              a.href = resultImages.pat;
+                              a.download = `recalee_${stamp}.png`;
+                              document.body.appendChild(a); a.click(); a.remove();
+                            }
+                          }}
+                          className="flex items-center gap-1.5 rounded-lg border border-blue-400 bg-blue-50 px-3 py-1.5 text-[10px] font-bold text-blue-700 hover:bg-blue-100 transition shrink-0"
+                          title="Télécharger les 2 images recalées (.png)"
+                        >
+                          <Download className="h-3.5 w-3.5" /> Exporter les images
+                        </button>
                       </>
                     )}
                   </div>

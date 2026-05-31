@@ -51,6 +51,7 @@ import EmergencyDashboard from './pages/EmergencyDashboard'
 import './index.css'
 import { checkSession, logout } from './api'
 import { clearAdminDashboardSession } from './adminSession'
+import { APP_MODE, AUTH_DISABLED, isSegMode, isRecalageMode } from './appConfig'
 
 /** Reprise utilisateur après F5 ou ouverture directe /segmentation/… avant check_session */
 function readStoredUser() {
@@ -75,12 +76,16 @@ function isPortalAdminUser(user) {
 }
 
 function Protected({ user, children }) {
+  // CTIAMA mode : auth désactivée → accès direct sans login
+  if (AUTH_DISABLED) return <>{children}</>
   if (!user) return <Navigate to="/login" replace />
   if (isPortalAdminUser(user)) return <Navigate to="/admin" replace />
   return children
 }
 
 function ProtectedLayout({ user }) {
+  // CTIAMA : auth désactivée → accès direct au layout
+  if (AUTH_DISABLED) return <AppLayout><Outlet /></AppLayout>
   if (!user) return <Navigate to="/login" replace />
   if (isPortalAdminUser(user)) return <Navigate to="/admin" replace />
   if (user.is_emergency_session) return <Navigate to="/urgence" replace />
@@ -116,11 +121,16 @@ function ThemeToggle() {
   )
 }
 
+// Utilisateur mock utilisé en mode CTIAMA (auth désactivée)
+const CTIAMA_USER = { username: 'ctiama', fullName: 'CTIAMA Service', is_staff: false, is_emergency_session: false }
+
 export default function App() {
   const navigate = useNavigate()
   const location = useLocation()
-  const [user, setUser] = useState(readStoredUser)
-  const [checking, setChecking] = useState(true)
+  // En CTIAMA : user mock prêt immédiatement — sinon lecture localStorage
+  const [user, setUser] = useState(() => AUTH_DISABLED ? CTIAMA_USER : readStoredUser())
+  // En CTIAMA : pas de vérification de session → checking=false tout de suite
+  const [checking, setChecking] = useState(!AUTH_DISABLED)
   const [routeNormalized, setRouteNormalized] = useState(false)
   const devBypassAdmin = import.meta.env.DEV && new URLSearchParams(window.location.search).has('adminBypass')
   const [isDarkMode, setIsDarkMode] = useState(() => {
@@ -131,6 +141,9 @@ export default function App() {
   })
 
   useEffect(() => {
+    // CTIAMA : pas de vérification de session — on sort immédiatement
+    if (AUTH_DISABLED) return
+
     const guard = window.setTimeout(() => {
       setChecking(false)
     }, 15000)
@@ -303,7 +316,13 @@ export default function App() {
       <Routes>
         <Route
           path="/"
-          element={isPortalAdminUser(user) ? <Navigate to="/admin" replace /> : <HomePage user={user} onNavigate={handleNavigate} onLogout={handleLogout} />}
+          element={
+            AUTH_DISABLED
+              ? <Navigate to="/dashboard" replace />
+              : isPortalAdminUser(user)
+                ? <Navigate to="/admin" replace />
+                : <HomePage user={user} onNavigate={handleNavigate} onLogout={handleLogout} />
+          }
         />
         <Route
           path="/landing"
@@ -311,16 +330,30 @@ export default function App() {
         />
         <Route
           path="/login"
-          element={isPortalAdminUser(user) ? <Navigate to="/admin" replace /> : user ? <Navigate to="/" replace /> : <Login onLogin={persistUserAndSet} />}
+          element={
+            // CTIAMA : pas de login → Dashboard directement
+            AUTH_DISABLED
+              ? <Navigate to="/dashboard" replace />
+              : isPortalAdminUser(user)
+                ? <Navigate to="/admin" replace />
+                : user
+                  ? <Navigate to="/" replace />
+                  : <Login onLogin={persistUserAndSet} />
+          }
         />
-        <Route
-          path="/forgot-password"
-          element={isPortalAdminUser(user) ? <Navigate to="/admin" replace /> : <ForgotPasswordPage onNavigate={handleAuthNavigate} />}
-        />
-        <Route
-          path="/reset-password"
-          element={isPortalAdminUser(user) ? <Navigate to="/admin" replace /> : <ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} />}
-        />
+        {/* Pages auth : uniquement en mode full (local) */}
+        {!AUTH_DISABLED && (
+          <Route
+            path="/forgot-password"
+            element={isPortalAdminUser(user) ? <Navigate to="/admin" replace /> : <ForgotPasswordPage onNavigate={handleAuthNavigate} />}
+          />
+        )}
+        {!AUTH_DISABLED && (
+          <Route
+            path="/reset-password"
+            element={isPortalAdminUser(user) ? <Navigate to="/admin" replace /> : <ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} />}
+          />
+        )}
         <Route
           path="/reset-password/"
           element={isPortalAdminUser(user) ? <Navigate to="/admin" replace /> : <ResetPasswordPage onNavigate={handleAuthNavigate} token={new URLSearchParams(window.location.search).get('token')} />}
@@ -393,9 +426,12 @@ export default function App() {
 
         {/* ── Full-screen tools (no sidebar) ── */}
         <Route path="/exploration" element={<Protected user={user}><ExplorationErrorBoundary><ExplorationPage /></ExplorationErrorBoundary></Protected>} />
-        <Route path="/segmentation/nouvelle" element={<Protected user={user}><NouvelleSegmentation user={user} /></Protected>} />
-        <Route path="/segmentation/modelisation" element={<Protected user={user}><Modelisation3D user={user} /></Protected>} />
-        <Route path="/registration" element={<Protected user={user}><ExplorationErrorBoundary><RegistrationPage user={user} accessToken={null} onNavigate={handleNavigate} /></ExplorationErrorBoundary></Protected>} />
+        {/* ── Segmentation : visible en mode 'full' et 'segmentation' ── */}
+        {isSegMode && <Route path="/segmentation/nouvelle" element={<Protected user={user}><NouvelleSegmentation user={user} /></Protected>} />}
+        {isSegMode && <Route path="/segmentation/modelisation" element={<Protected user={user}><Modelisation3D user={user} /></Protected>} />}
+
+        {/* ── Recalage : visible en mode 'full' et 'recalage' ── */}
+        {isRecalageMode && <Route path="/registration" element={<Protected user={user}><ExplorationErrorBoundary><RegistrationPage user={user} accessToken={null} onNavigate={handleNavigate} /></ExplorationErrorBoundary></Protected>} />}
 
         {/* ── Catch-all ── */}
         <Route path="*" element={<Navigate to="/" replace />} />

@@ -1,0 +1,77 @@
+services:
+
+  # ── Base de données PostgreSQL ─────────────────────────────
+  db:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-braincore_rec}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pg_data_rec:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Backend Django ─────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend_django
+      args:
+        USE_GPU: "true"
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_HOST: db
+      MEDIA_ROOT: /app/media
+      CTIAMA_MODE: "true"
+      CTIAMA_SERVICE_USER: "ctiama"
+      APP_MODE: recalage
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      REFERENCE_SUBJECTS_DIR: /app/sujet_reference
+      REFERENCE_DEVICE: cuda
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8002:8000"
+    volumes:
+      - media_rec:/app/media
+      - ./backend_django/models:/app/models
+      - C:/Users/yassm/sujet_reference:/app/sujet_reference:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py create_ctiama_user &&
+             python manage.py shell -c \"from api.models import ReferenceIntensity; import sys; sys.exit(0 if ReferenceIntensity.objects.exists() else 1)\" ||
+             python manage.py runscript setup_reference_intensity &&
+             daphne -b 0.0.0.0 -p 8000 backend_django.asgi:application"
+
+  # ── Frontend React — build en mode Recalage ───────────────
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        APP_MODE: recalage
+        AUTH_DISABLED: "true"
+        API_BASE_URL: /api
+    ports:
+      - "3002:80"
+    volumes:
+      - media_rec:/app/media:ro
+    depends_on:
+      - backend
+
+volumes:
+  pg_data_rec:
+  media_rec:

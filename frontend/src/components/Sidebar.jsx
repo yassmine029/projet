@@ -8,42 +8,61 @@ import {
   HelpCircle,
   User,
   Settings,
+  GitMerge,
   LogOut,
   Moon,
   Sun,
 } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { logout } from '../api';
+import { AUTH_DISABLED, isSegMode, isRecalageMode, isFull } from '../appConfig';
 
-const NAV_SECTIONS = [
-  {
-    label: 'Principal',
-    items: [
-      { to: '/',          icon: House,          label: 'Accueil',        exact: true },
-      { to: '/dashboard', icon: LayoutDashboard, label: 'Tableau de bord', exact: true },
-    ],
-  },
-  {
+// Sections de navigation construites dynamiquement selon le mode
+const buildNavSections = () => {
+  const sections = [];
+
+  // ── Principal ────────────────────────────────────
+  const principalItems = [];
+  // "Accueil" (HomePage) : uniquement en mode full (local)
+  // En CTIAMA il n'y a pas de homepage publique
+  if (isFull) principalItems.push({ to: '/', icon: House, label: 'Accueil', exact: true });
+  principalItems.push({ to: '/dashboard', icon: LayoutDashboard, label: 'Tableau de bord', exact: true });
+  sections.push({ label: 'Principal', items: principalItems });
+
+  // ── Clinique ─────────────────────────────────────
+  sections.push({
     label: 'Clinique',
     items: [
-      { to: '/dashboard/patients',    icon: Users,     label: 'Mes Patients'  },
-      { to: '/dashboard/analysesMRI', icon: FileImage,  label: 'Analyses MRI'  },
+      { to: '/dashboard/patients',    icon: Users,      label: 'Mes Patients' },
+      { to: '/dashboard/analysesMRI', icon: FileImage,  label: 'Analyses MRI' },
     ],
-  },
-  {
+  });
+
+  // ── Outils ───────────────────────────────────────
+  // Segmentation : visible en mode 'full' et 'segmentation'
+  // Recalage     : visible en mode 'full' et 'recalage'
+  const outilsItems = [];
+  if (isSegMode)      outilsItems.push({ to: '/segmentation/nouvelle', icon: Brain,     label: 'Segmentation' });
+  if (isRecalageMode) outilsItems.push({ to: '/registration',          icon: GitMerge,  label: 'Recalage'      });
+  if (outilsItems.length > 0) sections.push({ label: 'Outils', items: outilsItems });
+
+  // ── Aide & Support ───────────────────────────────
+  sections.push({
     label: 'Aide & Support',
-    items: [
-      { to: '/dashboard/reclamations', icon: HelpCircle, label: 'Réclamations' },
-    ],
-  },
-  {
+    items: [{ to: '/dashboard/reclamations', icon: HelpCircle, label: 'Réclamations' }],
+  });
+
+  // ── Compte ───────────────────────────────────────
+  sections.push({
     label: 'Compte',
     items: [
       { to: '/dashboard/profile',  icon: User,     label: 'Mon Profil'  },
       { to: '/dashboard/settings', icon: Settings, label: 'Paramètres'  },
     ],
-  },
-];
+  });
+
+  return sections;
+};
 
 export default function Sidebar() {
   const navigate = useNavigate();
@@ -87,7 +106,7 @@ export default function Sidebar() {
 
       {/* Nav */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px 12px' }}>
-        {NAV_SECTIONS.map((section) => (
+        {buildNavSections().map((section) => (
           <div key={section.label} style={{ marginBottom: 22 }}>
             <p style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 9, fontWeight: 700, color: '#cbd5e1', letterSpacing: '0.2em', textTransform: 'uppercase', padding: '0 8px', marginBottom: 6 }}>
               {section.label}

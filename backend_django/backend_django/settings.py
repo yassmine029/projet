@@ -60,6 +60,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'api.ctiama_middleware.CtiamaModeMiddleware',  # no-op en local, auto-login en CTIAMA
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -179,6 +180,9 @@ CORS_EXPOSE_HEADERS = [
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
+        # En mode CTIAMA : retourne le user service directement (pas de session)
+        # En local (CTIAMA_MODE non défini) : retourne None, DRF passe à SessionAuthentication
+        'api.ctiama_middleware.CtiamaDRFAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (),

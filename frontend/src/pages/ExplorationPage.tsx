@@ -838,28 +838,28 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
                   )}
                 </div>
 
-                {/* ── Intensité SUVR par zone ── */}
+                {/* ── Intensité SUV par zone ── */}
                 <div className="rounded-2xl border border-blue-100 bg-blue-50/40 p-3.5 shadow-sm">
                   <div className="flex items-center justify-between mb-0.5">
                     <p className="text-[8px] font-black uppercase tracking-widest text-blue-500">Intensité moyenne dans la zone</p>
-                    <span className="text-[8px] font-bold text-blue-300 bg-blue-100 px-1.5 py-0.5 rounded">SUVR</span>
+                    <span className="text-[8px] font-bold text-blue-300 bg-blue-100 px-1.5 py-0.5 rounded">SUV</span>
                   </div>
                   <p className="text-[10px] text-slate-500 mb-2.5 leading-relaxed">
-                    Intensité normalisée par la moyenne du cerveau entier (SUVR). Valeur &gt; 1 = zone plus active que la moyenne, &lt; 1 = moins active. Patient et référence sont directement comparables.
+                    Intensité normalisée par la moyenne du cerveau entier (SUV). Valeur &gt; 1 = zone plus active que la moyenne, &lt; 1 = moins active. Patient et référence sont directement comparables.
                   </p>
                   <div className="grid grid-cols-2 gap-2">
                     <div className="rounded-xl bg-blue-600 p-2.5 shadow-sm">
                       <p className="text-[8px] text-blue-200 font-semibold">Patient</p>
                       <p className="text-[15px] font-black text-white font-mono mt-0.5">
                         {fmt(s.patient_zone_mean)}
-                        <span className="ml-1 text-[9px] font-normal text-blue-200">SUVR</span>
+                        <span className="ml-1 text-[9px] font-normal text-blue-200">SUV</span>
                       </p>
                     </div>
                     <div className="rounded-xl bg-white border border-blue-100 p-2.5">
                       <p className="text-[8px] text-slate-400 font-semibold">Référence ({s.reference_nom ?? '—'})</p>
                       <p className="text-[15px] font-black text-blue-700 font-mono mt-0.5">
                         {fmt(s.reference_zone_mean)}
-                        <span className="ml-1 text-[9px] font-normal text-blue-400">SUVR</span>
+                        <span className="ml-1 text-[9px] font-normal text-blue-400">SUV</span>
                       </p>
                     </div>
                   </div>

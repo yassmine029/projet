@@ -378,6 +378,13 @@ class CsrfExemptSessionAuthentication(SessionAuthentication):
         return
 
     def authenticate(self, request):
+        # Mode CTIAMA : retourne le compte service directement sans vérifier la session
+        from api.ctiama_middleware import _CTIAMA_MODE, _get_service_user
+        if _CTIAMA_MODE:
+            user = _get_service_user()
+            if user is not None:
+                return (user, None)
+
         # Fall back to Django's raw user to support inactive (emergency) accounts
         # that use AllowAllUsersModelBackend in their session.
         from django.contrib.auth import get_user as django_get_user
@@ -415,6 +422,40 @@ def send_email_async(subject, message, from_email, recipient_list, html_message=
     print(f"Nadine Yassmine - [ASYNC EMAIL] Thread started for {recipient_list}", flush=True)
     sys.stdout.flush()
 
+
+
+def _save_upload_as_png(uploaded_file, dest_path):
+    """Convert any uploaded image (JPG, TIF, BMP, PNG…) to 8-bit grayscale PNG.
+    Handles JPEG EXIF orientation and 16-bit TIFF variants."""
+    content = b''.join(uploaded_file.chunks())
+    try:
+        img = Image.open(io.BytesIO(content))
+        img = ImageOps.exif_transpose(img)
+        img = img.convert('L')
+        img.save(dest_path, format='PNG')
+    except Exception:
+        arr = np.frombuffer(content, dtype=np.uint8)
+        gray = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
+        if gray is not None:
+            cv2.imwrite(dest_path, gray)
+        else:
+            with open(dest_path, 'wb') as f:
+                f.write(content)
+
+
+def _convert_file_to_png(src_path, dest_path):
+    """Convert an existing file (JPG, TIF, BMP…) on disk to 8-bit grayscale PNG."""
+    try:
+        img = Image.open(src_path)
+        img = ImageOps.exif_transpose(img)
+        img = img.convert('L')
+        img.save(dest_path, format='PNG')
+    except Exception:
+        img = cv2.imread(src_path, cv2.IMREAD_GRAYSCALE)
+        if img is not None:
+            cv2.imwrite(dest_path, img)
+        else:
+            shutil.copy2(src_path, dest_path)
 
 
 def make_preview(path, size=(512, 512)):
@@ -1282,12 +1323,8 @@ def upload(request):
     os.makedirs(job_dir, exist_ok=True)
     ref_path = os.path.join(job_dir, 'ref.png')
     pat_path = os.path.join(job_dir, 'patient.png')
-    with open(ref_path, 'wb') as f:
-        for chunk in ref.chunks():
-            f.write(chunk)
-    with open(pat_path, 'wb') as f:
-        for chunk in pat.chunks():
-            f.write(chunk)
+    _save_upload_as_png(ref, ref_path)
+    _save_upload_as_png(pat, pat_path)
     ref_rel = os.path.relpath(ref_path, UPLOAD_DIR).replace('\\', '/')
     pat_rel = os.path.relpath(pat_path, UPLOAD_DIR).replace('\\', '/')
     JOBS[job_id] = {'patient_id': patient_id, 'ref': ref_path, 'patient': pat_path, 'user': request.user.username}
@@ -1374,14 +1411,11 @@ def initialize_registration_from_patient_files(request):
             job_dir = os.path.join(UPLOAD_DIR, job_id)
             os.makedirs(job_dir, exist_ok=True)
 
-            ref_ext = os.path.splitext(ref_file.original_filename)[1] or '.png'
-            pat_ext = os.path.splitext(pat_file.original_filename)[1] or '.png'
+            ref_dest = os.path.join(job_dir, 'ref.png')
+            pat_dest = os.path.join(job_dir, 'patient.png')
 
-            ref_dest = os.path.join(job_dir, 'ref' + ref_ext)
-            pat_dest = os.path.join(job_dir, 'patient' + pat_ext)
-
-            shutil.copy2(ref_file.file.path, ref_dest)
-            shutil.copy2(pat_file.file.path, pat_dest)
+            _convert_file_to_png(ref_file.file.path, ref_dest)
+            _convert_file_to_png(pat_file.file.path, pat_dest)
 
             ref_rel = os.path.relpath(ref_dest, UPLOAD_DIR).replace('\\', '/')
             pat_rel = os.path.relpath(pat_dest, UPLOAD_DIR).replace('\\', '/')
@@ -1464,8 +1498,8 @@ def align(request):
         print(f"Yassmine now the align FAILED - invalid points shape for job_id: {job_id}")
         return JsonResponse({'error': 'invalid points'}, status=400)
 
-    ref = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
-    pat = cv2.imread(pat_path, cv2.IMREAD_GRAYSCALE)
+    ref = read_gray_image(ref_path)
+    pat = read_gray_image(pat_path)
     if ref is None or pat is None:
         print(f"Yassmine now the align FAILED - cannot read images for job_id: {job_id}")
         return JsonResponse({'error': 'cannot read images'}, status=500)
@@ -1534,8 +1568,8 @@ def align(request):
             print(f"Yassmine now the align FAILED - invalid points shape for job_id: {job_id}")
             return JsonResponse({'error': 'invalid points'}, status=400)
 
-        ref = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
-        pat = cv2.imread(pat_path, cv2.IMREAD_GRAYSCALE)
+        ref = read_gray_image(ref_path)
+        pat = read_gray_image(pat_path)
         if ref is None or pat is None:
             print(f"Yassmine now the align FAILED - cannot read images for job_id: {job_id}")
             return JsonResponse({'error': 'cannot read images'}, status=500)

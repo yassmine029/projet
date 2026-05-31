@@ -497,7 +497,7 @@ def run_mine_3d_nifti(
     for itr in range(n_iters):
         optimizer.zero_grad(set_to_none=True)
 
-        with torch.cuda.amp.autocast(enabled=(device.type == 'cuda')):
+        with torch.amp.autocast('cuda', enabled=(device.type == 'cuda')):
             loss = multi_resolution_loss_3d(
                 affine_net, mine_net,
                 I_lst, J_lst, xyz_lst, ind_lst,

@@ -24,6 +24,7 @@ urlpatterns = [
     path('profile/change-password/', views.change_password_view, name='change_password'),
 
     # Upload routes
+    path('upload_preview', views.upload_preview, name='upload_preview'),
     path('upload', views.upload, name='upload'),
     path('upload_series', views.upload_series, name='upload_series'),
     path('viewer/orientation/save/', views.save_orientation, name='orientation_save'),

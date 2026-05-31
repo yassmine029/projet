@@ -23,6 +23,7 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.db import IntegrityError, transaction
 from django.http import JsonResponse, HttpResponse, FileResponse
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.contrib.auth.decorators import login_required
@@ -169,93 +170,144 @@ def is_valid_tunisian_phone(value):
     return bool(PHONE_NUMBER_PATTERN.fullmatch(value or ''))
 
 
-def send_pending_registration_email(email, nom, prenom):
-        display_name = f"{(nom or '').strip()} {(prenom or '').strip()}".strip()
-        if not display_name:
-                display_name = email
+PLATFORM_NAME = 'BrainCore'
+SUPPORT_EMAIL = 'support@braincore.com'
 
-        subject = "Demande d'inscription reçue — NeuroScan"
-        plain_message = f"""
-Bonjour Dr. {display_name},
 
-    Votre demande d'inscription est bien reçue et en cours d'examen. Vous recevrez une réponse sous 24 à 48 heures.
+def _email_case_reference(prefix='BC'):
+        return f"{prefix}-{timezone.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6].upper()}"
 
-    Mode Urgence disponible dès maintenant
-    En attendant, vous pouvez accéder au Mode Urgence via votre email professionnel + numéro d'ordre CNOM. Vous disposez de 2 utilisations pendant cette période.
 
-    Vous serez notifié par email dès qu'une décision est prise sur votre dossier.
+def _render_email_shell(*, title, subtitle, tone, display_name, body_html, metadata_rows, case_ref, security_note=None):
+        """Minimalist medical email template for BrainCore — modern SaaS style with light gray background."""
+        PRIMARY_COLOR = '#0F6E56'
+        PLATFORM_NAME = 'BrainCore'
+        SUPPORT_EMAIL = 'support@braincore.med'
 
-Des questions ? support@neuroscan.com
+        rows_html = ''.join(
+                f'<tr style="border-bottom:1px solid #e5e7eb;">'
+                f'<td style="padding:10px 0;width:35%;color:#6b7280;font-size:12px;font-weight:500;">{escape(str(label))}</td>'
+                f'<td style="padding:10px 0;color:#1f2937;font-size:13px;">{escape(str(value))}</td>'
+                '</tr>'
+                for label, value in metadata_rows
+        )
 
-    L'équipe NeuroScan
-""".strip()
+        return f"""
+        <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body style="margin:0;padding:0;background:#f9fafb;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;color:#1f2937;">
+            <div style="max-width:600px;margin:0 auto;padding:16px;">
+                <!-- Main Content White Card -->
+                <div style="background:#ffffff;padding:32px 24px;border-radius:8px;">
+                    <!-- Header Minimal -->
+                    <div style="text-align:center;margin-bottom:32px;padding-bottom:24px;border-bottom:1px solid #f3f4f6;">
+                        <h1 style="margin:0;font-size:28px;font-weight:700;color:{PRIMARY_COLOR};letter-spacing:-0.5px;">{PLATFORM_NAME}</h1>
+                    </div>
 
-        safe_display_name = escape(display_name)
-        html_message = f"""
-        <html><body style=\"font-family: Arial, sans-serif; color: #0f172a;\">
-            <div style=\"max-width: 680px; margin: 0 auto; padding: 20px;\">
-                <h2 style=\"margin: 0 0 16px; color: #1d4ed8;\">NeuroScan</h2>
-                <p>Bonjour Dr. <strong>{safe_display_name}</strong>,</p>
-                <p>Votre demande d'inscription est bien reçue et en cours d'examen. Vous recevrez une réponse sous <strong>24 à 48 heures</strong>.</p>
+                    <!-- Title -->
+                    <h2 style="margin:0 0 8px;font-size:18px;font-weight:700;color:#1f2937;">{escape(title)}</h2>
+                    <p style="margin:0 0 24px;font-size:13px;color:#6b7280;line-height:1.5;">{escape(subtitle)}</p>
 
-                <h3 style="margin-top: 22px;">Mode Urgence disponible dès maintenant</h3>
-                <p>En attendant, vous pouvez accéder au Mode Urgence via votre email professionnel + numéro d'ordre CNOM. Vous disposez de <strong>2 utilisations</strong> pendant cette période.</p>
+                    <!-- Greeting -->
+                    <p style="margin:0 0 16px;font-size:14px;color:#1f2937;line-height:1.6;">Bonjour Dr. <strong>{escape(display_name)}</strong>,</p>
 
-                <p>Vous serez notifié par email dès qu'une décision est prise sur votre dossier.</p>
-                <p>Des questions ? <a href=\"mailto:support@neuroscan.com\">support@neuroscan.com</a></p>
-                <p>L'équipe NeuroScan</p>
+                    <!-- Body -->
+                    <div style="margin:24px 0;line-height:1.65;color:#374151;font-size:14px;">
+                        {body_html}
+                    </div>
+
+                    <!-- Info Table Minimal -->
+                    {f'<table style="width:100%;border-collapse:collapse;margin:24px 0;font-size:13px;"><tbody>{rows_html}</tbody></table>' if rows_html else ''}
+
+                    <!-- Security & Ref -->
+                    <p style="margin:24px 0 0;font-size:12px;color:#9ca3af;line-height:1.5;">Lien valide 48h · Chiffrement TLS · Conforme RGPD · Réf: {escape(case_ref)}</p>
+                </div>
+
+                <!-- Footer -->
+                <div style="padding:20px 24px;text-align:center;font-size:12px;color:#9ca3af;">
+                    <p style="margin:0 0 6px;">© BrainCore · Plateforme de diagnostic neurologique</p>
+                    <p style="margin:0 0 6px;"><a href="mailto:{SUPPORT_EMAIL}" style="color:{PRIMARY_COLOR};text-decoration:none;font-weight:500;">{SUPPORT_EMAIL}</a></p>
+                    <p style="margin:0;font-size:11px;">Usage médical professionnel uniquement.</p>
+                </div>
             </div>
         </body></html>
         """
 
-        sender_email = settings.EMAIL_HOST_USER or settings.DEFAULT_FROM_EMAIL
-        send_email_async(
-                subject=subject,
-                message=plain_message,
-                from_email=sender_email,
-                recipient_list=[email],
-                html_message=html_message,
-        )
+
+def send_pending_registration_email(email, nom, prenom):
+    display_name = f"{(nom or '').strip()} {(prenom or '').strip()}".strip() or email
+    case_ref = _email_case_reference('BC-REG')
+    subject = "Demande d'inscription reçue — BrainCore"
+    plain_message = (
+        f"Bonjour Dr. {display_name},\n\n"
+        "Votre demande d'inscription est bien reçue et en cours d'examen (24 à 48 heures).\n"
+        "Mode Urgence disponible: 2 utilisations pendant l'attente.\n\n"
+        f"Référence dossier: {case_ref}\n"
+        f"Support: {SUPPORT_EMAIL}\n\n"
+        "L'équipe BrainCore"
+    )
+
+    body_html = (
+        "<p>Nous avons bien reçu votre demande d'accès. Notre équipe examine votre dossier sous <strong>24 à 48 heures ouvrées</strong>.</p>"
+        "<p>En attendant, vous pouvez utiliser le <strong>Mode Urgence</strong> avec votre email professionnel et numéro d'ordre CNOM."
+        " Vous disposez de <strong>2 utilisations</strong> pendant cette période.</p>"
+    )
+    html_message = _render_email_shell(
+        title='Demande reçue',
+        subtitle='Votre dossier est en cours d\'examen',
+        tone='info',
+        display_name=display_name,
+        body_html=body_html,
+        metadata_rows=[
+            ('Nom complet', f'Dr. {display_name}'),
+            ('Email professionnel', email),
+            ('Statut', 'En attente de validation'),
+        ],
+        case_ref=case_ref,
+    )
+
+    sender_email = settings.DEFAULT_FROM_EMAIL or settings.EMAIL_HOST_USER
+    send_email_async(
+        subject=subject,
+        message=plain_message,
+        from_email=sender_email,
+        recipient_list=[email],
+        html_message=html_message,
+    )
 
 
 def send_account_approved_email(email, nom, prenom):
-    display_name = f"{(nom or '').strip()} {(prenom or '').strip()}".strip()
-    if not display_name:
-        display_name = email
-
+    display_name = f"{(nom or '').strip()} {(prenom or '').strip()}".strip() or email
+    case_ref = _email_case_reference('BC-APP')
     login_url = f"{get_frontend_origin()}/login"
-    subject = "Compte activé — NeuroScan"
-    plain_message = f"""
-Bonjour Dr. {display_name},
+    subject = "Compte activé — BrainCore"
+    plain_message = (
+        f"Bonjour Dr. {display_name},\n\n"
+        "Votre compte BrainCore est activé. Vous pouvez accéder à toutes les fonctionnalités.\n"
+        f"Connexion: {login_url}\n\n"
+        f"Référence dossier: {case_ref}\n"
+        f"Support: {SUPPORT_EMAIL}\n\n"
+        "L'équipe BrainCore"
+    )
 
-Votre compte NeuroScan est activé. Vous pouvez dès maintenant accéder à toutes les fonctionnalités de la plateforme.
+    body_html = (
+        "<p>Excellente nouvelle: votre compte est désormais <strong>activé</strong>.</p>"
+        f"<p style=\"margin:18px 0;\"><a href=\"{login_url}\" style=\"display:inline-block;padding:11px 18px;background:#15803d;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:700;\">"
+        "Se connecter à BrainCore</a></p>"
+    )
+    html_message = _render_email_shell(
+        title='Compte activé',
+        subtitle='Accès complet à la plateforme',
+        tone='success',
+        display_name=display_name,
+        body_html=body_html,
+        metadata_rows=[
+            ('Nom complet', f'Dr. {display_name}'),
+            ('Email professionnel', email),
+            ('Statut', 'Compte actif'),
+        ],
+        case_ref=case_ref,
+    )
 
-👉 Se connecter à NeuroScan: {login_url}
-
-Des questions ? support@neuroscan.com
-
-L'équipe NeuroScan
-""".strip()
-
-    safe_display_name = escape(display_name)
-    html_message = f"""
-    <html><body style=\"font-family: Arial, sans-serif; color: #0f172a;\">
-        <div style=\"max-width: 680px; margin: 0 auto; padding: 20px;\">
-            <h2 style=\"margin: 0 0 16px; color: #1d4ed8;\">NeuroScan</h2>
-            <p>Bonjour Dr. <strong>{safe_display_name}</strong>,</p>
-            <p>Votre compte NeuroScan est activé. Vous pouvez dès maintenant accéder à toutes les fonctionnalités de la plateforme.</p>
-
-            <p style=\"margin: 26px 0;\">
-                <a href=\"{login_url}\" style=\"display: inline-block; background: #1d4ed8; color: #ffffff; text-decoration: none; padding: 10px 16px; border-radius: 8px; font-weight: 600;\">Se connecter à NeuroScan</a>
-            </p>
-
-            <p>Des questions ? <a href=\"mailto:support@neuroscan.com\">support@neuroscan.com</a></p>
-            <p>L'équipe NeuroScan</p>
-        </div>
-    </body></html>
-    """
-
-    sender_email = settings.EMAIL_HOST_USER or settings.DEFAULT_FROM_EMAIL
+    sender_email = settings.DEFAULT_FROM_EMAIL or settings.EMAIL_HOST_USER
     send_email_async(
         subject=subject,
         message=plain_message,
@@ -266,52 +318,43 @@ L'équipe NeuroScan
 
 
 def send_account_rejected_email(email, nom, prenom, reason):
-    display_name = f"{(nom or '').strip()} {(prenom or '').strip()}".strip()
-    if not display_name:
-        display_name = email
-
+    display_name = f"{(nom or '').strip()} {(prenom or '').strip()}".strip() or email
+    case_ref = _email_case_reference('BC-REJ')
     safe_reason = (reason or '').strip()
     signup_url = f"{get_frontend_origin()}/login?mode=signup"
-    subject = "Demande d'inscription — NeuroScan"
-    plain_message = f"""
-Bonjour Dr. {display_name},
+    subject = "Demande d'inscription — BrainCore"
+    plain_message = (
+        f"Bonjour Dr. {display_name},\n\n"
+        "Votre demande n'a pas pu etre validée pour le moment.\n"
+        f"Motif: {safe_reason}\n"
+        f"Nouvelle demande: {signup_url}\n\n"
+        f"Référence dossier: {case_ref}\n"
+        f"Support: {SUPPORT_EMAIL}\n\n"
+        "L'équipe BrainCore"
+    )
 
-Nous avons examiné votre dossier et nous ne sommes pas en mesure d'activer votre compte pour la raison suivante :
+    body_html = (
+        "<p>Après vérification, nous ne pouvons pas activer votre compte dans son état actuel.</p>"
+        f"<div style=\"margin:12px 0;padding:12px 14px;background:#fff1f2;border:1px solid #fecdd3;border-radius:10px;color:#9f1239;\"><strong>Motif:</strong> {escape(safe_reason)}</div>"
+        "<p>Vous pouvez corriger les éléments indiqués puis soumettre une nouvelle demande.</p>"
+        f"<p style=\"margin:18px 0;\"><a href=\"{signup_url}\" style=\"display:inline-block;padding:11px 18px;background:#b91c1c;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:700;\">"
+        "Créer un nouveau compte</a></p>"
+    )
+    html_message = _render_email_shell(
+        title='Demande non validée',
+        subtitle='Action requise pour finaliser votre accès',
+        tone='danger',
+        display_name=display_name,
+        body_html=body_html,
+        metadata_rows=[
+            ('Nom complet', f'Dr. {display_name}'),
+            ('Email professionnel', email),
+            ('Statut', 'Refus temporaire'),
+        ],
+        case_ref=case_ref,
+    )
 
-{safe_reason}
-
-Vous pouvez corriger cette situation et soumettre une nouvelle demande directement via NeuroScan.
-
-👉 Créer un nouveau compte: {signup_url}
-
-Des questions ? support@neuroscan.com
-
-L'équipe NeuroScan
-""".strip()
-
-    html_message = f"""
-    <html><body style=\"font-family: Arial, sans-serif; color: #0f172a;\">
-        <div style=\"max-width: 680px; margin: 0 auto; padding: 20px;\">
-            <h2 style=\"margin: 0 0 16px; color: #1d4ed8;\">NeuroScan</h2>
-            <p>Bonjour Dr. <strong>{escape(display_name)}</strong>,</p>
-
-            <p>Nous avons examiné votre dossier et nous ne sommes pas en mesure d'activer votre compte pour la raison suivante :</p>
-
-            <blockquote style=\"margin: 16px 0; padding: 12px 14px; border-left: 4px solid #1d4ed8; background: #f8fafc; color: #1e293b;\">{escape(safe_reason)}</blockquote>
-
-            <p>Vous pouvez corriger cette situation et soumettre une nouvelle demande directement via NeuroScan.</p>
-
-            <p style=\"margin: 26px 0;\">
-                <a href=\"{signup_url}\" style=\"display: inline-block; background: #1d4ed8; color: #ffffff; text-decoration: none; padding: 10px 16px; border-radius: 8px; font-weight: 600;\">Créer un nouveau compte</a>
-            </p>
-
-            <p>Des questions ? <a href=\"mailto:support@neuroscan.com\">support@neuroscan.com</a></p>
-            <p>L'équipe NeuroScan</p>
-        </div>
-    </body></html>
-    """
-
-    sender_email = settings.EMAIL_HOST_USER or settings.DEFAULT_FROM_EMAIL
+    sender_email = settings.DEFAULT_FROM_EMAIL or settings.EMAIL_HOST_USER
     send_email_async(
         subject=subject,
         message=plain_message,
@@ -322,48 +365,42 @@ L'équipe NeuroScan
 
 
 def send_account_activation_email(email, nom, prenom, activation_token):
-    display_name = f"{(nom or '').strip()} {(prenom or '').strip()}".strip()
-    if not display_name:
-        display_name = email
-
+    display_name = f"{(nom or '').strip()} {(prenom or '').strip()}".strip() or email
+    case_ref = _email_case_reference('BC-ACT')
     activation_url = f"{get_frontend_origin()}/activate-account?token={activation_token.token}"
-    subject = "Activation de votre compte — NeuroScan"
-    plain_message = f"""
-Bonjour Dr. {display_name},
+    expires_text = activation_token.expires_at.strftime('%d/%m/%Y %H:%M')
+    subject = "Activation de votre compte — BrainCore"
+    plain_message = (
+        f"Bonjour Dr. {display_name},\n\n"
+        "Votre compte BrainCore a été créé par un administrateur.\n"
+        f"Activez-le ici: {activation_url}\n"
+        f"Validité du lien: jusqu'au {expires_text}.\n\n"
+        f"Référence dossier: {case_ref}\n"
+        f"Support: {SUPPORT_EMAIL}\n\n"
+        "L'équipe BrainCore"
+    )
 
-Votre compte NeuroScan a été créé par un administrateur.
+    body_html = (
+        "<p>Votre compte a été créé. Il reste une étape de sécurité: définir votre mot de passe.</p>"
+        f"<p style=\"margin:18px 0;\"><a href=\"{activation_url}\" style=\"display:inline-block;padding:11px 18px;background:#0f766e;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:700;\">"
+        "Activer mon compte</a></p>"
+        f"<p style=\"color:#334155;\">Ce lien est valide jusqu'au <strong>{expires_text}</strong>.</p>"
+    )
+    html_message = _render_email_shell(
+        title='Activation requise',
+        subtitle='Confirmez votre email et définissez votre mot de passe',
+        tone='action',
+        display_name=display_name,
+        body_html=body_html,
+        metadata_rows=[
+            ('Nom complet', f'Dr. {display_name}'),
+            ('Email professionnel', email),
+            ('Validité du lien', expires_text),
+        ],
+        case_ref=case_ref,
+    )
 
-Pour activer votre compte, veuillez choisir votre mot de passe via le lien sécurisé ci-dessous :
-
-{activation_url}
-
-Ce lien est valable jusqu'au {activation_token.expires_at.strftime('%d/%m/%Y %H:%M')}.
-
-Des questions ? support@neuroscan.com
-
-L'équipe NeuroScan
-""".strip()
-
-    html_message = f"""
-    <html><body style=\"font-family: Arial, sans-serif; color: #0f172a;\">
-        <div style=\"max-width: 680px; margin: 0 auto; padding: 20px;\">
-            <h2 style=\"margin: 0 0 16px; color: #1d4ed8;\">NeuroScan</h2>
-            <p>Bonjour Dr. <strong>{escape(display_name)}</strong>,</p>
-            <p>Votre compte NeuroScan a été créé par un administrateur.</p>
-            <p>Pour activer votre compte, veuillez choisir votre mot de passe via le lien sécurisé ci-dessous :</p>
-
-            <p style=\"margin: 26px 0;\">
-                <a href=\"{activation_url}\" style=\"display: inline-block; background: #1d4ed8; color: #ffffff; text-decoration: none; padding: 10px 16px; border-radius: 8px; font-weight: 600;\">Activer mon compte</a>
-            </p>
-
-            <p style=\"color: #475569;\">Ce lien est valable jusqu'au <strong>{activation_token.expires_at.strftime('%d/%m/%Y %H:%M')}</strong>.</p>
-            <p>Des questions ? <a href=\"mailto:support@neuroscan.com\">support@neuroscan.com</a></p>
-            <p>L'équipe NeuroScan</p>
-        </div>
-    </body></html>
-    """
-
-    sender_email = settings.EMAIL_HOST_USER or settings.DEFAULT_FROM_EMAIL
+    sender_email = settings.DEFAULT_FROM_EMAIL or settings.EMAIL_HOST_USER
     send_email_async(
         subject=subject,
         message=plain_message,
@@ -418,24 +455,131 @@ def send_email_async(subject, message, from_email, recipient_list, html_message=
 
 
 def make_preview(path, size=(512, 512)):
-    img = Image.open(path).convert('L').resize(size, Image.BILINEAR)
-    buf = io.BytesIO()
-    img.save(buf, format='PNG')
-    return base64.b64encode(buf.getvalue()).decode('ascii')
+    """
+    Generate a base64-encoded PNG preview from an image file.
+    IMPORTANT: Always closes the image to prevent file handle exhaustion on Windows.
+    """
+    img = None
+    try:
+        img = Image.open(path)
+        img = img.convert('L').resize(size, Image.BILINEAR)
+        buf = io.BytesIO()
+        img.save(buf, format='PNG')
+        preview_b64 = base64.b64encode(buf.getvalue()).decode('ascii')
+        return preview_b64
+    finally:
+        # CRITICAL: Always close image to release file handles (especially important on Windows for TIFF)
+        if img is not None:
+            try:
+                img.close()
+            except:
+                pass
+
+
+def convert_image_to_png(input_path, output_path):
+    """
+    Convert any image format (TIFF, BMP, JPG, PNG) to PNG.
+    CRITICAL FIX: Properly handles file resources to prevent Windows file handle exhaustion.
+    
+    Args:
+        input_path: Path to input image file
+        output_path: Path where PNG should be saved
+    
+    Returns:
+        output_path if successful, None if failed
+    """
+    import gc
+    
+    img = None
+    try:
+        print(f"[DEBUG] Converting {input_path} → {output_path}")
+        
+        # Open image and handle EXIF orientation
+        img = Image.open(input_path)
+        img.load()  # Force load image data into memory
+        
+        # Get image format for logging
+        img_format = img.format or 'UNKNOWN'
+        img_mode_orig = img.mode
+        img_size = img.size
+        print(f"[DEBUG] Opened image: format={img_format}, mode={img_mode_orig}, size={img_size}")
+        
+        # Handle EXIF orientation
+        try:
+            img = ImageOps.exif_transpose(img)
+            print(f"[DEBUG] EXIF transpose applied")
+        except Exception as exif_err:
+            print(f"[DEBUG] EXIF transpose failed (non-critical): {exif_err}")
+        
+        # Convert RGBA/LA/P to RGB (with white background for transparency)
+        if img.mode in ('RGBA', 'LA', 'P'):
+            print(f"[DEBUG] Converting from {img.mode} to RGB (with white background)")
+            background = Image.new('RGB', img.size, (255, 255, 255))
+            if img.mode == 'P':
+                img = img.convert('RGBA')
+            # Get alpha channel if available
+            if img.mode in ('RGBA', 'LA'):
+                mask = img.split()[-1]
+            else:
+                mask = None
+            background.paste(img, mask=mask)
+            img = background
+        elif img.mode != 'RGB':
+            print(f"[DEBUG] Converting from {img.mode} to RGB")
+            img = img.convert('RGB')
+        
+        print(f"[DEBUG] Final mode before save: {img.mode}")
+        
+        # Save as PNG
+        img.save(output_path, format='PNG', quality=95)
+        output_size = os.path.getsize(output_path)
+        print(f"[DEBUG] PNG saved successfully: {output_size} bytes")
+        
+        return output_path
+        
+    except FileNotFoundError as e:
+        print(f"[ERROR] Input file not found: {input_path} - {e}")
+        return None
+    except IOError as e:
+        print(f"[ERROR] IO error during image conversion: {e}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] Failed to convert image {input_path} to PNG: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+    finally:
+        # CRITICAL: Always close the image to release file handles
+        if img is not None:
+            try:
+                img.close()
+            except:
+                pass
+        # Force garbage collection to ensure file handles are released (especially on Windows)
+        gc.collect()
 
 
 def read_gray_image(path):
     """
     Read an image as grayscale while honoring EXIF orientation (browser-like).
     Falls back to OpenCV if PIL fails.
+    CRITICAL: Always closes image to prevent file handle exhaustion.
     """
+    im = None
     try:
         im = Image.open(path)
         im = ImageOps.exif_transpose(im)
         im = im.convert('L')
-        return np.array(im)
+        result = np.array(im)
+        return result
     except Exception:
         return cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+    finally:
+        if im is not None:
+            try:
+                im.close()
+            except:
+                pass
 
 
 def procrustes(X, Y, scaling=True, reflection='best'):
@@ -1161,6 +1305,7 @@ def _portal_dashboard_credentials():
 
 
 @require_http_methods(["POST"])
+@csrf_exempt
 def admin_portal_login(request):
     """
     Authentifie le portail admin du frontend : identifiants ADMIN_PORTAL_* ou VITE_ADMIN_DASHBOARD_*.
@@ -1264,35 +1409,152 @@ def check_session(request):
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def upload(request):
-    print(f"Yassmine now the upload endpoint REACHED - authenticated: {request.user.is_authenticated}, user: {request.user.username if request.user.is_authenticated else 'anonymous'}")
+def upload_preview(request):
     if not request.user or not request.user.is_authenticated:
-        print(f"Yassmine now the upload endpoint FAILED - not authenticated")
         return JsonResponse({'error': 'login required'}, status=401)
+
+    uploaded = request.FILES.get('image') or request.FILES.get('file')
+    if not uploaded:
+        return JsonResponse({'error': 'image required'}, status=400)
+
+    file_name = uploaded.name or 'preview'
+    _, ext = os.path.splitext(file_name)
+    ext = ext.lower() or '.png'
+
+    with tempfile.TemporaryDirectory(prefix='preview_', dir=UPLOAD_DIR) as temp_dir:
+        temp_path = os.path.join(temp_dir, f'preview{ext}')
+        try:
+            with open(temp_path, 'wb') as f:
+                for chunk in uploaded.chunks():
+                    f.write(chunk)
+
+            preview_b64 = make_preview(temp_path)
+            if not preview_b64:
+                return JsonResponse({'error': 'Failed to generate preview'}, status=400)
+
+            return JsonResponse({
+                'preview': preview_b64,
+                'filename': file_name,
+                'mimeType': getattr(uploaded, 'content_type', '') or '',
+            })
+        except Exception as e:
+            print(f"[UPLOAD_PREVIEW] Failed for {file_name}: {e}")
+            return JsonResponse({'error': f'Failed to generate preview: {str(e)}'}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def upload(request):
+    print(f"\n{'='*70}")
+    print(f"[UPLOAD] Endpoint reached - authenticated: {request.user.is_authenticated}")
+    if not request.user or not request.user.is_authenticated:
+        print(f"[UPLOAD] ✗ NOT AUTHENTICATED")
+        return JsonResponse({'error': 'login required'}, status=401)
+    
     ref = request.FILES.get('ref_image')
     pat = request.FILES.get('patient_image')
     patient_id = (request.POST.get('patient_id') or '').strip() or 'Unknown'
-    print(f"Yassmine now the upload endpoint works - patient_id: {patient_id}, user: {request.user.username}, has_ref: {ref is not None}, has_pat: {pat is not None}")
+    
+    print(f"[UPLOAD] patient_id={patient_id}, user={request.user.username}")
+    print(f"[UPLOAD] ref_image={ref.name if ref else 'MISSING'}, pat_image={pat.name if pat else 'MISSING'}")
+    
     if not ref or not pat:
-        print(f"Yassmine now the upload FAILED - missing files for patient_id: {patient_id}")
+        print(f"[UPLOAD] ✗ Missing files")
         return JsonResponse({'error': 'ref_image and patient_image required'}, status=400)
+    
+    print(f"[UPLOAD] ref: {ref.name} ({ref.size} bytes), pat: {pat.name} ({pat.size} bytes)")
+    
     job_id = str(uuid.uuid4())
     job_dir = os.path.join(UPLOAD_DIR, job_id)
     os.makedirs(job_dir, exist_ok=True)
+    print(f"[UPLOAD] Created job directory: {job_dir}")
+    
+    # Save temporary files with original extensions
+    ref_ext = os.path.splitext(ref.name)[1].lower()
+    pat_ext = os.path.splitext(pat.name)[1].lower()
+    temp_ref_path = os.path.join(job_dir, f'ref_temp{ref_ext}')
+    temp_pat_path = os.path.join(job_dir, f'patient_temp{pat_ext}')
+    
+    print(f"[UPLOAD] Saving temp files: {temp_ref_path}, {temp_pat_path}")
+    
+    # Write uploaded files to disk
+    try:
+        with open(temp_ref_path, 'wb') as f:
+            for chunk in ref.chunks():
+                f.write(chunk)
+        ref_temp_size = os.path.getsize(temp_ref_path)
+        print(f"[UPLOAD] ✓ Saved ref temp: {ref_temp_size} bytes")
+        
+        with open(temp_pat_path, 'wb') as f:
+            for chunk in pat.chunks():
+                f.write(chunk)
+        pat_temp_size = os.path.getsize(temp_pat_path)
+        print(f"[UPLOAD] ✓ Saved pat temp: {pat_temp_size} bytes")
+    except Exception as e:
+        print(f"[UPLOAD] ✗ Failed to save files: {e}")
+        return JsonResponse({'error': f'Failed to save uploaded files: {str(e)}'}, status=500)
+    
+    # Convert to PNG
     ref_path = os.path.join(job_dir, 'ref.png')
     pat_path = os.path.join(job_dir, 'patient.png')
-    with open(ref_path, 'wb') as f:
-        for chunk in ref.chunks():
-            f.write(chunk)
-    with open(pat_path, 'wb') as f:
-        for chunk in pat.chunks():
-            f.write(chunk)
+    
+    print(f"[UPLOAD] Starting image conversion...")
+    ref_convert_result = convert_image_to_png(temp_ref_path, ref_path)
+    pat_convert_result = convert_image_to_png(temp_pat_path, pat_path)
+    
+    # Clean up temporary files
+    try:
+        if os.path.exists(temp_ref_path):
+            os.remove(temp_ref_path)
+            print(f"[UPLOAD] Deleted temp ref")
+        if os.path.exists(temp_pat_path):
+            os.remove(temp_pat_path)
+            print(f"[UPLOAD] Deleted temp pat")
+    except Exception as e:
+        print(f"[UPLOAD] [WARNING] Failed to clean temp files: {e}")
+    
+    # Check conversion results
+    if not ref_convert_result or not pat_convert_result:
+        print(f"[UPLOAD] ✗ Image conversion FAILED - ref_ok={bool(ref_convert_result)}, pat_ok={bool(pat_convert_result)}")
+        return JsonResponse({
+            'error': 'Failed to process images. Supported formats: PNG, JPG, TIFF, BMP'
+        }, status=400)
+    
+    print(f"[UPLOAD] ✓ Image conversion SUCCESS")
+    
+    # Generate previews
+    print(f"[UPLOAD] Generating previews...")
+    try:
+        ref_preview = make_preview(ref_path)
+        pat_preview = make_preview(pat_path)
+        print(f"[UPLOAD] ✓ Previews generated (ref: {len(ref_preview)} chars, pat: {len(pat_preview)} chars)")
+    except Exception as e:
+        print(f"[UPLOAD] ✗ Preview generation FAILED: {e}")
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({
+            'error': f'Failed to generate previews: {str(e)}'
+        }, status=500)
+    
+    # Store job metadata
     ref_rel = os.path.relpath(ref_path, UPLOAD_DIR).replace('\\', '/')
     pat_rel = os.path.relpath(pat_path, UPLOAD_DIR).replace('\\', '/')
     JOBS[job_id] = {'patient_id': patient_id, 'ref': ref_path, 'patient': pat_path, 'user': request.user.username}
-    Series.objects.create(job_id=job_id, patient_id=patient_id, user=request.user, files=[ref_rel, pat_rel])
-    print(f"Yassmine now the upload SUCCESS - job_id: {job_id}")
-    return JsonResponse({'jobId': job_id, 'refPreview': make_preview(ref_path), 'patPreview': make_preview(pat_path)})
+    
+    try:
+        Series.objects.create(job_id=job_id, patient_id=patient_id, user=request.user, files=[ref_rel, pat_rel])
+        print(f"[UPLOAD] ✓ Database entry created")
+    except Exception as e:
+        print(f"[UPLOAD] [WARNING] Failed to create database entry: {e}")
+    
+    print(f"[UPLOAD] ✓ UPLOAD SUCCESS - job_id={job_id}")
+    print(f"{'='*70}\n")
+    
+    return JsonResponse({
+        'jobId': job_id,
+        'refPreview': ref_preview,
+        'patPreview': pat_preview
+    })
 
 
 @csrf_exempt
@@ -1731,11 +1993,15 @@ def auto_align(request):
         
         from .mine_registration import run_mine_registration
 
+        # 🌡️  Paramètres optimisés pour GPU:
+        # - n_iters: 200 au lieu de 300 (convergence rapide, moins de chaleur)
+        # - max_samples: 8192 au lieu de 32768 (4x moins de mémoire GPU)
         result = run_mine_registration(
             ref_path,
             pat_path,
             os.path.join(auto_dir, f"mine_{job_id}"),
-            n_iters=n_iters,
+            n_iters=200,  # Réduit pour éviter 90°C
+            max_samples=8192,  # Réduit: moins de données GPU par iteration
             device_name="auto",
             progress_callback=on_progress
         )
@@ -5452,27 +5718,40 @@ def forgot_password(request):
         )
 
         reset_link = f"{get_frontend_origin()}/reset-password?token={reset_token.token}"
+        case_ref = _email_case_reference('BC-RST')
+        expires_text = reset_token.expires_at.strftime('%d/%m/%Y %H:%M')
 
-        subject = "NeuroScan - Lien de réinitialisation de mot de passe"
-        html_message = f"""
-        <html><body style="font-family: Arial, sans-serif;">
-            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                <h1 style="color: #4f46e5;">NeuroScan</h1>
-                <h2>Réinitialisation de votre mot de passe</h2>
-                <p>Vous avez demandé la réinitialisation de votre mot de passe NeuroScan.</p>
-                <p style="margin: 30px 0;">
-                    <a href="{reset_link}" style="padding: 12px 30px; background-color: #4f46e5; color: white; text-decoration: none; border-radius: 6px;">
-                        Réinitialiser mon mot de passe
-                    </a>
-                </p>
-                <p style="color: #666; font-size: 12px;">Ce lien reste valide pendant 15 minutes.</p>
-            </div>
-        </body></html>
-        """
-        plain_message = f"Réinitialisez votre mot de passe NeuroScan:\n\n{reset_link}\n\nCe lien est valide 15 minutes."
+        subject = "BrainCore - Lien de réinitialisation de mot de passe"
+        body_html = (
+            "<p>Nous avons reçu une demande de réinitialisation de votre mot de passe.</p>"
+            f"<p style=\"margin:18px 0;\"><a href=\"{reset_link}\" style=\"display:inline-block;padding:11px 18px;background:#b45309;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:700;\">"
+            "Réinitialiser mon mot de passe</a></p>"
+            f"<p style=\"color:#334155;\">Ce lien est valide jusqu'au <strong>{expires_text}</strong>.</p>"
+        )
+        html_message = _render_email_shell(
+            title='Réinitialisation demandée',
+            subtitle='Lien temporaire à usage unique',
+            tone='warning',
+            display_name=email,
+            body_html=body_html,
+            metadata_rows=[
+                ('Email professionnel', email),
+                ('Type', 'Réinitialisation mot de passe'),
+                ('Validité du lien', expires_text),
+            ],
+            case_ref=case_ref,
+            security_note="Si vous n'êtes pas à l'origine de cette action, ignorez ce message. Votre mot de passe actuel restera inchangé.",
+        )
+        plain_message = (
+            f"Réinitialisation de votre mot de passe BrainCore\n\n"
+            f"Lien: {reset_link}\n"
+            f"Validité: jusqu'au {expires_text}\n"
+            f"Référence dossier: {case_ref}\n\n"
+            "Si vous n'êtes pas à l'origine de cette demande, ignorez ce message."
+        )
 
         using_smtp = settings.EMAIL_BACKEND == 'django.core.mail.backends.smtp.EmailBackend'
-        sender_email = settings.EMAIL_HOST_USER or settings.DEFAULT_FROM_EMAIL
+        sender_email = settings.DEFAULT_FROM_EMAIL or settings.EMAIL_HOST_USER
 
         if using_smtp and (not settings.EMAIL_HOST_USER or not settings.EMAIL_HOST_PASSWORD):
             return JsonResponse(

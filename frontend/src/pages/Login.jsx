@@ -65,10 +65,13 @@ export default function Login({ onLogin }) {
   const [isLoading, setIsLoading] = useState(false)
   const [emailError, setEmailError] = useState('')
   const [passwordError, setPasswordError] = useState('')
+  const [passwordConfirm, setPasswordConfirm] = useState('')
+  const [passwordConfirmError, setPasswordConfirmError] = useState('')
   const [signUpFieldErrors, setSignUpFieldErrors] = useState({})
   const [emailSuccess, setEmailSuccess] = useState('')
   const [passwordSuccess, setPasswordSuccess] = useState('')
   const [showPassword, setShowPassword] = useState(false)
+  const [showPasswordConfirm, setShowPasswordConfirm] = useState(false)
   const [passwordGeneratedNotification, setPasswordGeneratedNotification] = useState(false)
   const [allowSignUpEmailInput, setAllowSignUpEmailInput] = useState(false)
   const [allowSignUpPasswordInput, setAllowSignUpPasswordInput] = useState(false)
@@ -136,7 +139,7 @@ export default function Login({ onLogin }) {
   const onEmailChange = (v) => { setUsername(v); setEmailError(''); setEmailSuccess('') }
   const onPasswordChange = (v) => { setPassword(v); setPasswordError(''); setPasswordSuccess('') }
 
-  const BLOCK_SECONDS = 30 * 60 // 30 minutes
+  const BLOCK_SECONDS = 20 // 20 secondes
 
   // Block timer effect
   useEffect(() => {
@@ -271,6 +274,7 @@ export default function Login({ onLogin }) {
     setError('')
     setEmailError('')
     setPasswordError('')
+    setPasswordConfirmError('')
     setSignUpFieldErrors({})
 
     const normalizedAffiliation = affiliation === 'Autre' ? customAffiliation.trim() : affiliation.trim()
@@ -317,6 +321,15 @@ export default function Login({ onLogin }) {
       hasError = true
     }
 
+    if (!passwordConfirm.trim()) {
+      nextErrors.passwordConfirm = 'Veuillez confirmer votre mot de passe'
+      hasError = true
+    } else if (password !== passwordConfirm) {
+      nextErrors.passwordConfirm = 'Les mots de passe ne correspondent pas'
+      setPasswordConfirmError('Les mots de passe ne correspondent pas')
+      hasError = true
+    }
+
     if (!acceptTerms) {
       nextErrors.terms = 'Veuillez accepter les conditions d\'utilisation.'
       hasError = true
@@ -332,7 +345,7 @@ export default function Login({ onLogin }) {
     setSignUpFieldErrors(nextErrors)
 
     if (hasError) {
-      const order = ['nom', 'prenom', 'orderNumber', 'telephone', 'affiliation', 'customAffiliation', 'email', 'password', 'terms', 'privacy']
+      const order = ['nom', 'prenom', 'orderNumber', 'telephone', 'affiliation', 'customAffiliation', 'email', 'password', 'passwordConfirm', 'terms', 'privacy']
       const firstInvalid = order.find((key) => nextErrors[key])
       if (firstInvalid) focusSignUpField(firstInvalid)
     }
@@ -406,12 +419,25 @@ export default function Login({ onLogin }) {
           } catch { /* pas un compte portail admin — continuer vers l'erreur standard */ }
           setError('Identifiants invalides')
         } else if (errorType === 'invalid_password') {
+          try {
+            const pr = await adminPortalLogin(username.trim(), password)
+            if (pr.data?.ok) {
+              clearAdminDashboardSession()
+              setLoginAttempts(0)
+              localStorage.removeItem('login_attempts')
+              localStorage.removeItem('login_blocked_until')
+              setSuccessMessage('Connexion administrateur…')
+              onLogin(pr.data.user)
+              navigate('/admin', { replace: true })
+              return
+            }
+          } catch { /* pas un compte portail admin — continuer vers l'erreur standard */ }
+
           setPasswordError('Identifiants invalides')
           setLoginAttempts(prev => {
             const newCount = prev + 1
             localStorage.setItem('login_attempts', newCount.toString())
             if (newCount >= 3) {
-              const BLOCK_SECONDS = 30 * 60
               setIsBlocked(true)
               setBlockTimer(BLOCK_SECONDS)
               localStorage.setItem('login_blocked_until', (Date.now() + BLOCK_SECONDS * 1000).toString())
@@ -428,12 +454,25 @@ export default function Login({ onLogin }) {
       const srvMsg = err.response?.data?.error || ''
 
       if (errorType === 'invalid_password') {
+        try {
+          const pr = await adminPortalLogin(username.trim(), password)
+          if (pr.data?.ok) {
+            clearAdminDashboardSession()
+            setLoginAttempts(0)
+            localStorage.removeItem('login_attempts')
+            localStorage.removeItem('login_blocked_until')
+            setSuccessMessage('Connexion administrateur…')
+            onLogin(pr.data.user)
+            navigate('/admin', { replace: true })
+            return
+          }
+        } catch { /* pas un compte portail admin — continuer vers l'erreur standard */ }
+
         setPasswordError('Identifiants invalides')
         setLoginAttempts(prev => {
           const newCount = prev + 1
           localStorage.setItem('login_attempts', newCount.toString())
           if (newCount >= 3) {
-            const BLOCK_SECONDS = 30 * 60
             setIsBlocked(true)
             setBlockTimer(BLOCK_SECONDS)
             localStorage.setItem('login_blocked_until', (Date.now() + BLOCK_SECONDS * 1000).toString())
@@ -505,13 +544,27 @@ export default function Login({ onLogin }) {
 
           <div className="bg-[#dfe5f2] p-1 rounded-xl flex mb-6 border border-[#d4dced]">
             <button
-              onClick={() => setIsSignUp(false)}
+              onClick={() => {
+                setIsSignUp(false)
+                setPassword('')
+                setPasswordConfirm('')
+                setPasswordError('')
+                setPasswordConfirmError('')
+                setSignUpFieldErrors({})
+              }}
               className={`flex-1 py-2.5 text-xs font-semibold rounded-lg transition-all duration-300 ${!isSignUp ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
               Connexion
             </button>
             <button
-              onClick={() => setIsSignUp(true)}
+              onClick={() => {
+                setIsSignUp(true)
+                setPassword('')
+                setPasswordConfirm('')
+                setPasswordError('')
+                setPasswordConfirmError('')
+                setSignUpFieldErrors({})
+              }}
               className={`flex-1 py-2.5 text-xs font-semibold rounded-lg transition-all duration-300 ${isSignUp ? 'bg-white text-[#2457d6] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
               Inscription
@@ -764,6 +817,38 @@ export default function Login({ onLogin }) {
                   <p className="mt-1 text-xs text-slate-400">Min. 8 caractères • Maj • Chiffres • Symboles</p>
                   {(signUpFieldErrors.password || passwordError) && (
                     <p className="mt-1 text-xs font-semibold text-rose-700">{signUpFieldErrors.password || passwordError}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-600 mb-1.5">Confirmer mot de passe <span className="text-rose-600">*</span></label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Lock className="h-4 w-4 text-slate-400" />
+                    </div>
+                    <input
+                      id="signup-password-confirm"
+                      type={showPasswordConfirm ? 'text' : 'password'}
+                      name="signup_password_confirm"
+                      autoComplete="new-password"
+                      value={passwordConfirm}
+                      onChange={e => {
+                        setPasswordConfirm(e.target.value)
+                        if (e.target.value && password && e.target.value !== password) {
+                          setPasswordConfirmError('Les mots de passe ne correspondent pas')
+                        } else {
+                          setPasswordConfirmError('')
+                        }
+                      }}
+                      className={`block w-full pl-10 pr-10 py-3 border ${passwordConfirmError ? 'border-red-300' : 'border-slate-300'} rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300 transition-all outline-none text-sm`}
+                      placeholder="••••••••••"
+                    />
+                    <button type="button" onClick={() => setShowPasswordConfirm(!showPasswordConfirm)} className="absolute inset-y-0 right-2 flex items-center p-1.5 text-slate-400 hover:text-blue-600 transition-colors rounded-md hover:bg-blue-50">
+                      {showPasswordConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  {(signUpFieldErrors.passwordConfirm || passwordConfirmError) && (
+                    <p className="mt-1 text-xs font-semibold text-rose-700">{signUpFieldErrors.passwordConfirm || passwordConfirmError}</p>
                   )}
                 </div>
 

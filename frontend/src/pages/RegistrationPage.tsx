@@ -395,22 +395,49 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   }, [patientOrientation]);
 
   // ✅ Fonction manquante — handleImageUpload
-  const handleImageUpload = (file: File, type: 'reference' | 'patient') => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const src = e.target?.result as string;
-      if (type === 'reference') {
-        setReferenceImage({ src, points: [] });
-        setRefView(DEFAULT_VIEW);
-        setUploadedFiles(p => ({ ...p, ref: file }));
-      } else {
-        setPatientImage({ src, points: [] });
-        setPatView(DEFAULT_VIEW);
-        setUploadedFiles(p => ({ ...p, patient: file }));
+  const handleImageUpload = async (file: File, type: 'reference' | 'patient') => {
+    // New file selection should start a fresh upload session.
+    // This avoids reusing an old jobId and keeps previews independent per panel.
+    setJobId('');
+    sessionStorage.removeItem('jobId');
+    setResultImages(null);
+    setDisplayResultImages(null);
+    setOriginalImages(null);
+    setAutoAlignError('');
+    setAutoAlignStatus('idle');
+
+    if (type === 'reference') {
+      setReferenceImage({ src: '', points: [] });
+      setRefView(DEFAULT_VIEW);
+      setUploadedFiles(p => ({ ...p, ref: file }));
+    } else {
+      setPatientImage({ src: '', points: [] });
+      setPatView(DEFAULT_VIEW);
+      setUploadedFiles(p => ({ ...p, patient: file }));
+    }
+    setPhase(2);
+
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+      const response = await api.post('/upload_preview', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      const preview = response?.data?.preview;
+      if (!preview) {
+        throw new Error('preview missing');
       }
-      setPhase(2); // Auto-switch to phase 2 when images are coming
-    };
-    reader.readAsDataURL(file);
+      const previewSrc = `data:image/png;base64,${preview}`;
+      if (type === 'reference') {
+        setReferenceImage({ src: previewSrc, points: [] });
+      } else {
+        setPatientImage({ src: previewSrc, points: [] });
+      }
+    } catch (err) {
+      console.error('Preview generation failed:', err);
+      setAutoAlignError('Impossible de générer l’aperçu du fichier sélectionné.');
+      setAutoAlignStatus('error');
+    }
   };
 
   // Auto-load MNI152 atlas for advanced mode (reference is fixed)
@@ -2516,6 +2543,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const slicesVerified = sliceConfirmed && atlasSliceConfirmed;
   const is2D = registrationDimension === '2d';
   const is3D = registrationDimension === '3d' || registrationDimension === 'advanced';
+  const brodmannFlow = registrationDimension === 'advanced';
   const canRunManualAlign = canAlign && (is2D || slicesVerified);
   // Keep auto controls available even after a manual result so clinicians can refine with MINE.
   const showAutoButton       = referenceImage.src && patientImage.src && (registrationMode === 'mine' || is3D);
@@ -3127,7 +3155,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         }
       } else {
         // 2D images
-        const src = file.file_url;
+        const src = file.preview_url || file.file_url || '';
         let hasRef = !!referenceImage.src;
         let hasPat = !!patientImage.src;
 
@@ -3525,7 +3553,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         <div className="px-4 py-2.5 border-b border-slate-200 shrink-0">
           <p className="text-[9px] font-bold text-slate-700 uppercase tracking-widest mb-2">Progression</p>
           <div className="flex items-center gap-0">
-            {[{label:'Import',done:phase>=1,active:phase===1,color:'bg-blue-600'},{label:'Recalage',done:phase>=2,active:phase===2,color:'bg-blue-500'},{label:registrationDimension==='advanced' ? 'Brodmann' : 'Validation',done:phase>=3,active:phase===3,color:'bg-blue-700'}].map(({label,done,active,color},i,arr)=>(
+            {[{label:'Import',done:phase>=1,active:phase===1,color:'bg-blue-600'},{label:'Recalage',done:phase>=2,active:phase===2,color:'bg-blue-500'},{label:brodmannFlow ? 'Brodmann' : 'Validation',done:phase>=3,active:phase===3,color:'bg-blue-700'}].map(({label,done,active,color},i,arr)=>(
               <React.Fragment key={label}>
                 <div className="flex flex-col items-center gap-1">
                   <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-all duration-500 ${done?`${color} shadow-lg ${active?'ring-4 ring-blue-100':''}`:'bg-slate-100 border border-slate-300'}`}>
@@ -3544,10 +3572,10 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
           {phase === 3 ? (
             <div className="space-y-3">
               <p className="text-[9px] font-bold text-slate-700 uppercase tracking-widest">
-                {registrationDimension === 'advanced' ? 'Mode Brodmann' : is3D ? 'Phase validation 3D' : 'Mode Resultats'}
+                {brodmannFlow ? 'Mode Brodmann' : is3D ? 'Phase validation 3D' : 'Mode Resultats'}
               </p>
               <div className="rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2">
-                {registrationDimension === 'advanced' ? (
+                {brodmannFlow ? (
                   <>
                     <p className="text-[10px] font-bold text-emerald-700">Navigation centralisee</p>
                     <p className="mt-1 text-[9px] text-slate-600">
@@ -3592,7 +3620,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                 <RotateCcw className="w-3.5 h-3.5"/> Nouveau recalage
               </button>
 
-              {is3D && registrationDimension === 'advanced' && (
+              {brodmannFlow && (
               <div className="mt-2 rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-slate-50 p-3 shadow-[0_10px_22px_rgba(37,99,235,0.12)]">
                 <div className="mb-2 flex items-center justify-between">
                   <p className="text-[11px] font-black text-blue-800 uppercase tracking-[0.12em]">Zones corticales</p>
@@ -3769,6 +3797,22 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                     >
                       <Lightbulb className="w-3.5 h-3.5" />
                       Aide au choix de mode
+                    </button>
+                  )}
+
+                  {is3D && phase === 2 && !showResult && resultImages && autoAlignStatus !== 'processing' && (
+                    <button
+                      onClick={() => {
+                        setShowResult(true);
+                        setShowValidationModal(false);
+                        setVisMode('overlay');
+                        setTimeout(() => drawResultImages(), 60);
+                        setTimeout(() => drawResultImages(), 240);
+                      }}
+                      className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100 hover:border-emerald-400 transition-all"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      Voir resultat / valider
                     </button>
                   )}
 
@@ -4121,7 +4165,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                         </span>
                       </div>
                     )}
-                    {type === 'reference' && registrationDimension === 'advanced' && img.src && (
+                    {type === 'reference' && brodmannFlow && img.src && (
                       <div className="absolute top-3 right-3 z-20">
                         <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600/90 text-white text-[10px] font-bold shadow-lg backdrop-blur-sm border border-indigo-400/40">
                           Atlas MNI152 — Fixe
@@ -4225,7 +4269,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                     </div>
 
 
-                    {is3D && img.src && (jobId || referenceJobId || registrationDimension === 'advanced') && (
+                    {is3D && img.src && (jobId || referenceJobId || brodmannFlow) && (
                       <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3 pt-0 pb-3 space-y-2">
                         <div className="rounded-b-xl bg-gradient-to-r from-emerald-600 to-teal-500 px-3 py-2.5 flex items-center gap-2.5 shadow-sm">
                           <div className="shrink-0 w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
@@ -4312,8 +4356,8 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
             </div>
           )}
 
-          {/* Identification Brodmann + intensités (mode avancé uniquement) */}
-           {phase === 3 && registrationDimension === 'advanced' && (
+          {/* Identification Brodmann + intensités (mode 3D/avancé) */}
+           {phase === 3 && brodmannFlow && (
             <div className="flex-1 min-h-0 flex gap-6 animate-in slide-in-from-right-12 duration-700">
               <div className="flex-[2] min-h-0 flex flex-col gap-4">
                 <div className="flex-1 min-h-0 grid grid-cols-2 gap-4">
@@ -4483,7 +4527,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
 
                 {/* ══ HEADER ══ */}
                 {/* paddingRight: 115px réserve l'espace du bouton "Sombre" (fixed right:16px) */}
-                <div className="shrink-0 flex items-center justify-between bg-white border-b border-gray-200 pl-5 py-3 shadow-sm" style={{ minHeight: 52, paddingRight: 115 }}>
+                <div className="shrink-0 flex items-center justify-between bg-white border-b border-gray-200 pl-5 py-3 shadow-sm" style={{ minHeight: 52, paddingRight: 240 }}>
                   {/* Left */}
                   <div className="flex items-center gap-4 min-w-0">
                     <button
@@ -4838,7 +4882,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                             const warningLine = alreadyReg
                               ? `⚠️ Ce patient a déjà ${regCount} recalage${regCount > 1 ? 's' : ''} enregistré${regCount > 1 ? 's' : ''}${lastDate ? ` (dernier : ${lastDate})` : ''}. Un nouveau résultat sera ajouté à son historique.`
                               : null;
-                            const baseDetail = registrationDimension === 'advanced'
+                            const baseDetail = brodmannFlow
                               ? 'Le volume recalé sera sauvegardé automatiquement dans le dossier patient, puis vous accéderez à l\'exploration des zones corticales de Brodmann.'
                               : 'Le volume recalé sera enregistré dans le dossier patient.';
                             setConfirmDialog({
@@ -4846,7 +4890,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                               message: 'Êtes-vous satisfait du résultat du recalage ?',
                               detail: warningLine ? `${warningLine}\n\n${baseDetail}` : baseDetail,
                               confirmLabel: 'Oui, valider',
-                              onConfirm: registrationDimension === 'advanced' ? handleValidateAndExplore : handleSaveToPatient,
+                              onConfirm: brodmannFlow ? handleValidateAndExplore : handleSaveToPatient,
                             });
                           }}
                           disabled={autoAlignStatus === 'processing' || savingToPatient}
@@ -4939,7 +4983,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                         </div>
 
                         {/* Option 2 — avancé : Explorer zones / sinon : Exporter */}
-                        {registrationDimension === 'advanced' ? (
+                        {brodmannFlow ? (
                           <div className="flex flex-col gap-3 p-5 bg-indigo-50/40">
                             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-indigo-100 border border-indigo-200">
                               <ScanSearch className="h-5 w-5 text-indigo-600" />
@@ -4978,7 +5022,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                       </div>
 
                       {/* En mode avancé : Exporter aussi disponible */}
-                      {registrationDimension === 'advanced' && (
+                      {brodmannFlow && (
                         <div className="border-t border-slate-100 px-5 py-3 flex items-center justify-between gap-3">
                           <p className="text-[10px] text-slate-400 font-medium">Autres actions</p>
                           <button

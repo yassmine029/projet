@@ -2725,7 +2725,7 @@ def mine_register_nifti_for_reference_pipeline(
     n_iters: int = 60,
     strict_atlas_grid: bool = True,
     use_hybrid: bool = False,
-    device_name: str = 'cuda',
+    device_name: str = 'auto',  # Changed from 'cuda' to 'auto' for compatibility
 ) -> Tuple[np.ndarray, dict]:
     """
     Recalage 3D identique à `auto_align_volume` (prépa atlas, MINE ou Hybrid,
@@ -3000,7 +3000,8 @@ def auto_align_volume(request):
                 n_iters=n_iters,
                 max_levels=3, levels_used=2,
                 max_samples=8192 if use_hybrid else 16384,
-                device_name='cuda', save_extended_outputs=False,
+                device_name='auto',  # AUTO: choose CUDA if available, else CPU
+                save_extended_outputs=False,
                 early_stop_patience=30 if use_hybrid else 22,
                 early_stop_min_iters=80 if use_hybrid else 35,
                 early_stop_min_delta=5e-4,
@@ -3242,7 +3243,7 @@ def auto_align_volume(request):
             max_levels=3,
             levels_used=2,
             max_samples=4096 if use_hybrid else 16384,
-            device_name='cuda',
+            device_name='auto',  # AUTO: choose CUDA if available, else CPU
             save_extended_outputs=False,
             early_stop_patience=10 if use_hybrid else 22,
             early_stop_min_iters=15 if use_hybrid else 35,

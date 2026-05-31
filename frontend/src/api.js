@@ -40,6 +40,12 @@ export const validateActivationToken = (token) => api.post("/validate_activation
 export const activateAccount = (token, newPassword) => api.post("/activate_account", { token, new_password: newPassword });
 
 // Uploads
+export const uploadPreview = (file) => {
+  const fd = new FormData();
+  fd.append("image", file);
+  return api.post("/upload_preview", fd, { headers: { "Content-Type": "multipart/form-data" } });
+};
+
 export const uploadTwo = (patientId, refFile, patFile) => {
   const fd = new FormData();
   fd.append("patient_id", patientId);

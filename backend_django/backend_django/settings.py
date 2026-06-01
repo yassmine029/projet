@@ -130,10 +130,11 @@ CORS_ALLOW_ALL_ORIGINS = False
 
 
 def _local_frontend_origins():
-    """Vite prend 5174, 5175… si 5173 est pris ; preview souvent 4173."""
+    """Vite prend 5174, 5175… si 5173 est pris ; preview souvent 4173.
+    3001/3002 = containers Docker seg/rec."""
     out = []
     for host in ('localhost', '127.0.0.1'):
-        for port in (3000, 4173, 4174, 5173, 5174, 5175, 5176, 5177, 5178, 5179, 5180):
+        for port in (3000, 3001, 3002, 4173, 4174, 5173, 5174, 5175, 5176, 5177, 5178, 5179, 5180):
             out.append(f'http://{host}:{port}')
     return out
 

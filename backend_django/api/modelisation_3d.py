@@ -323,45 +323,67 @@ def _stack_source_mri_volume(rows) -> Tuple[Optional[np.ndarray], Optional[str]]
 
 
 def _brain_shell_mask_from_mri(vol: np.ndarray) -> Optional[np.ndarray]:
-    """Binaire grossier du parenchyme / tete a partir du volume IRM empile."""
+    """Segmentation coupe par coupe du parenchyme cerebral.
+    Traite chaque slice independamment pour eviter le remplissage volumique
+    qui produit un bloc rectangulaire (artefact 3D fill_holes global).
+    """
     vn = vol.astype(np.float32)
-    lo, hi = np.percentile(vn, 2.0), np.percentile(vn, 99.5)
+    lo, hi = np.percentile(vn, 1.0), np.percentile(vn, 99.5)
     if hi <= lo:
         return None
     vn = np.clip((vn - lo) / (hi - lo), 0.0, 1.0).astype(np.float32)
-    vn = ndimage.gaussian_filter(vn, sigma=1.1).astype(np.float32)
 
-    mid = int(vn.shape[0]) // 2
-    sl_u8 = np.clip(vn[mid] * 255.0, 0, 255).astype(np.uint8)
-    if threshold_otsu is not None:
-        try:
-            thr = float(threshold_otsu(sl_u8)) / 255.0
-        except Exception:
-            thr = float(np.percentile(vn, 42.0))
-    else:
-        thr = float(np.percentile(vn, 42.0))
+    n_slices = vn.shape[0]
+    result = np.zeros_like(vn, dtype=np.uint8)
 
-    binary = (vn > max(thr, 0.08)).astype(np.uint8)
-    binary = ndimage.binary_closing(binary, iterations=2).astype(np.uint8)
-    binary = ndimage.binary_fill_holes(binary).astype(np.uint8)
+    for i in range(n_slices):
+        sl = vn[i]
+        sl_u8 = np.clip(sl * 255.0, 0, 255).astype(np.uint8)
 
-    # Effacement minimal des bords (évite les parois de scan sans couper le cerveau)
-    B = 2
-    binary[:B, :, :] = 0
-    binary[-B:, :, :] = 0
-    binary[:, :B, :] = 0
-    binary[:, -B:, :] = 0
-    binary[:, :, :B] = 0
-    binary[:, :, -B:] = 0
+        # Flou pour reduire le bruit avant seuillage
+        sl_blur = cv2.GaussianBlur(sl_u8, (7, 7), 2.0)
 
-    # Conserver uniquement le plus grand composant connexe (cerveau)
-    labeled, num = ndimage.label(binary)
-    if num <= 0:
+        # Seuillage Otsu sur la coupe (separera fond noir / tissu)
+        _, binary_2d = cv2.threshold(sl_blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        binary_2d = (binary_2d > 0).astype(np.uint8)
+
+        # Effacer les bords (parois du scanner)
+        B = 3
+        binary_2d[:B, :] = 0
+        binary_2d[-B:, :] = 0
+        binary_2d[:, :B] = 0
+        binary_2d[:, -B:] = 0
+
+        # Garder uniquement le plus grand composant connexe (cerveau)
+        n_comp, labels, stats, _ = cv2.connectedComponentsWithStats(binary_2d)
+        if n_comp <= 1:
+            continue
+        areas = stats[1:, cv2.CC_STAT_AREA]
+        if len(areas) == 0:
+            continue
+        largest_label = int(np.argmax(areas)) + 1
+        mask_2d = (labels == largest_label).astype(np.uint8)
+
+        # Fermeture morphologique 2D pour combler les petits trous
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        mask_2d = cv2.morphologyEx(mask_2d, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+        # Remplir les trous internes dans la coupe
+        mask_2d = ndimage.binary_fill_holes(mask_2d).astype(np.uint8)
+
+        result[i] = mask_2d
+
+    if not np.any(result):
         return None
-    sizes = ndimage.sum(binary, labeled, index=np.arange(1, num + 1))
-    keep = int(np.argmax(sizes)) + 1
-    shell = (labeled == keep).astype(np.uint8)
-    return shell
+
+    # Connexite 3D : eliminer les composants parasites inter-coupes
+    labeled3d, num3d = ndimage.label(result)
+    if num3d > 1:
+        sizes3d = ndimage.sum(result, labeled3d, index=np.arange(1, num3d + 1))
+        keep = int(np.argmax(sizes3d)) + 1
+        result = (labeled3d == keep).astype(np.uint8)
+
+    return result
 
 
 def _save_brain_context_mesh(run: SegmentationRun, mesh: trimesh.Trimesh) -> Dict[str, str]:
@@ -452,7 +474,7 @@ def _try_build_brain_context_mesh(
         pass
 
     try:
-        trimesh.smoothing.filter_laplacian(mesh, lamb=0.35, iterations=3)
+        trimesh.smoothing.filter_laplacian(mesh, lamb=0.4, iterations=8)
     except Exception:
         pass
 

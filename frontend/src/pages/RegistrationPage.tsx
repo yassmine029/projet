@@ -5,7 +5,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import {
-  ArrowLeft, ArrowDown, Upload, X, Eye, Download, Trash2, Check,
+  ArrowLeft, ArrowRight, ArrowDown, Upload, X, Eye, Download, Trash2, Check,
   MousePointer2, ZoomIn, ZoomOut, RotateCcw, Keyboard, BrainCircuit, Brain, Undo2,
   Box, Loader2, FileText, Users, ChevronRight, Search, ScanSearch, Zap, ChevronLeft, Columns2,
   Lightbulb, Microscope, Map as MapIcon, Target, Lock, ShieldCheck
@@ -75,6 +75,12 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const isEmergencySession = Boolean((user as any)?.is_emergency_session);
+  // directJobId: passed from PatientDetail when loading a saved registered volume
+  const directJobIdFromNav = React.useMemo(() => {
+    const s = location.state as { directJobId?: string } | null | undefined;
+    return typeof s?.directJobId === 'string' && s.directJobId ? s.directJobId : null;
+  }, [location.state]);
+
   const brodmannAnalyseIdFromNav = React.useMemo(() => {
     const q = searchParams.get('brodmannAnalyseId');
     if (q != null && q !== '') {
@@ -103,6 +109,9 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   }, [user]);
 
   const [registrationDimension, setRegistrationDimension] = useState<RegistrationDimension | null>(null);
+  const [directAccessMode, setDirectAccessMode] = useState(false);
+  const [directAccessUploading, setDirectAccessUploading] = useState(false);
+  const [directAccessError, setDirectAccessError] = useState('');
   const [referenceImage, setReferenceImage] = useState<ImageState>({ src: '', points: [] });
   const [patientImage, setPatientImage]     = useState<ImageState>({ src: '', points: [] });
   const [uploadedFiles, setUploadedFiles]   = useState<{ ref?: File; patient?: File }>({});
@@ -416,6 +425,8 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   // Auto-load MNI152 atlas for advanced mode (reference is fixed)
   useEffect(() => {
     if (registrationDimension !== 'advanced') return;
+    // In direct access mode the user uploads their own registered volume — skip auto-advance to phase 2
+    if (directAccessMode) return;
     let alive = true;
     const bootstrapAtlas = async () => {
       if (referenceImage.src) return;
@@ -438,7 +449,43 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     };
     bootstrapAtlas();
     return () => { alive = false; };
-  }, [registrationDimension]);
+  }, [registrationDimension, directAccessMode]);
+
+  // Activate upload panel when ?directAccess=true (manual NIfTI upload mode)
+  useEffect(() => {
+    if (searchParams.get('directAccess') !== 'true') return;
+    setDirectAccessMode(true);
+    setRegistrationDimension('advanced');
+    setPhase(1);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleDirectAccessUpload = async (file: File) => {
+    if (!file) return;
+    setDirectAccessUploading(true);
+    setDirectAccessError('');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/volume/upload-preregistered', {
+        method: 'POST',
+        credentials: 'include',
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok || !data.jobId) {
+        throw new Error(data.error || 'Échec du chargement du volume');
+      }
+      const newJobId = data.jobId;
+      sessionStorage.setItem('volumeJobId', newJobId);
+      // Navigate directly to ExplorationPage (same as from PatientDetail)
+      navigate('/exploration');
+    } catch (err: any) {
+      setDirectAccessError(err?.message || 'Erreur lors du chargement du volume recalé');
+    } finally {
+      setDirectAccessUploading(false);
+    }
+  };
 
   // Upload
   useEffect(() => {
@@ -1574,6 +1621,8 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
   const startNewRegistration = () => {
     sessionStorage.removeItem('volumeJobId');
     setRegistrationDimension(null);
+    setDirectAccessMode(false);
+    setDirectAccessError('');
     setUploadedFiles({});
     setReferenceImage({ src: '', points: [] });
     setPatientImage({ src: '', points: [] });
@@ -2743,6 +2792,8 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
     setSelectionPendingMode(mode);
     sessionStorage.removeItem('volumeJobId');
     setRegistrationDimension(mode);
+    // Reset direct access mode unless it's being set concurrently (handled by caller)
+    if (mode !== 'advanced') setDirectAccessMode(false);
     setUploadedFiles({});
     setReferenceImage({ src: '', points: [] });
     setPatientImage({ src: '', points: [] });
@@ -3481,6 +3532,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                   <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-violet-500 mt-1 transition-colors shrink-0" />
                 </div>
               </button>
+
             </div>
           </div>
         )}
@@ -3567,7 +3619,10 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         <div className="px-4 py-2.5 border-b border-slate-200 shrink-0">
           <p className="text-[9px] font-bold text-slate-700 uppercase tracking-widest mb-2">Progression</p>
           <div className="flex items-center gap-0">
-            {[{label:'Import',done:phase>=1,active:phase===1,color:'bg-blue-600'},{label:'Recalage',done:phase>=2,active:phase===2,color:'bg-blue-500'},{label:registrationDimension==='advanced' ? 'Brodmann' : 'Validation',done:phase>=3,active:phase===3,color:'bg-blue-700'}].map(({label,done,active,color},i,arr)=>(
+            {(directAccessMode
+              ? [{label:'Volume recalé',done:true,active:phase!==3,color:'bg-emerald-600'},{label:'Chargement',done:true,active:phase!==3,color:'bg-emerald-500'},{label:'Brodmann',done:phase===3,active:phase===3,color:'bg-emerald-700'}]
+              : [{label:'Import',done:phase>=1,active:phase===1,color:'bg-blue-600'},{label:'Recalage',done:phase>=2,active:phase===2,color:'bg-blue-500'},{label:registrationDimension==='advanced' ? 'Brodmann' : 'Validation',done:phase>=3,active:phase===3,color:'bg-blue-700'}]
+            ).map(({label,done,active,color},i,arr)=>(
               <React.Fragment key={label}>
                 <div className="flex flex-col items-center gap-1">
                   <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-all duration-500 ${done?`${color} shadow-lg ${active?'ring-4 ring-blue-100':''}`:'bg-slate-100 border border-slate-300'}`}>
@@ -4100,8 +4155,95 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
         </div>
 
         <div className="flex-1 p-4 flex gap-4 overflow-hidden relative">
+
+          {/* ── Panneau accès direct (volume déjà recalé) ── */}
+          {directAccessMode && phase !== 3 && registrationDimension === 'advanced' && (
+            <div className="absolute inset-0 z-[70] flex items-center justify-center bg-gradient-to-br from-slate-50 to-emerald-50/30 p-8">
+              <div className="w-full max-w-lg">
+                {/* Header */}
+                <div className="flex items-center gap-4 mb-6">
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg">
+                    <Zap className="w-6 h-6 text-white" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">Accès direct</p>
+                    <h2 className="text-lg font-black text-slate-900">Volume déjà recalé</h2>
+                    <p className="text-[11px] text-slate-500 mt-0.5">Chargez votre volume NIfTI en espace MNI pour identifier les zones de Brodmann directement</p>
+                  </div>
+                </div>
+
+                {/* Upload zone */}
+                <label
+                  className={`flex flex-col items-center gap-4 p-8 rounded-2xl border-2 border-dashed cursor-pointer transition-all duration-200 ${
+                    directAccessUploading
+                      ? 'border-emerald-300 bg-emerald-50/60 cursor-wait'
+                      : 'border-emerald-300 bg-white hover:border-emerald-500 hover:bg-emerald-50/50 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-emerald-100'
+                  }`}
+                  onDragOver={e => e.preventDefault()}
+                  onDrop={e => {
+                    e.preventDefault();
+                    const file = e.dataTransfer.files?.[0];
+                    if (file) void handleDirectAccessUpload(file);
+                  }}
+                >
+                  <input
+                    type="file"
+                    accept=".nii,.nii.gz"
+                    className="hidden"
+                    disabled={directAccessUploading}
+                    onChange={e => {
+                      const file = e.target.files?.[0];
+                      if (file) void handleDirectAccessUpload(file);
+                      e.target.value = '';
+                    }}
+                  />
+                  <div className={`w-16 h-16 rounded-2xl flex items-center justify-center transition-all ${directAccessUploading ? 'bg-emerald-100' : 'bg-emerald-50 group-hover:bg-emerald-100'}`}>
+                    {directAccessUploading
+                      ? <Loader2 className="w-8 h-8 text-emerald-600 animate-spin" />
+                      : <Upload className="w-8 h-8 text-emerald-600" />
+                    }
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-black text-slate-900">
+                      {directAccessUploading ? 'Chargement en cours…' : 'Déposer le volume recalé ici'}
+                    </p>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      {directAccessUploading ? 'Veuillez patienter' : 'ou cliquer pour sélectionner · .nii / .nii.gz uniquement'}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap justify-center gap-2 mt-1">
+                    {['Volume en espace MNI152', 'Recalage affine ou déformable', 'Intensités calculées automatiquement'].map(t => (
+                      <span key={t} className="rounded-full px-2.5 py-1 text-[9px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">{t}</span>
+                    ))}
+                  </div>
+                </label>
+
+                {directAccessError && (
+                  <div className="mt-4 flex items-center gap-2.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+                    <X className="w-4 h-4 text-red-500 shrink-0" />
+                    <p className="text-[12px] font-semibold text-red-700">{directAccessError}</p>
+                  </div>
+                )}
+
+                <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                  <ShieldCheck className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-amber-700 leading-relaxed">
+                    <span className="font-black">Requis :</span> Le volume doit être déjà recalé dans l'espace MNI152 (même grille que l'atlas). Si ce n'est pas le cas, utilisez le mode "Recalage 3D + zones de Brodmann".
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => { setDirectAccessMode(false); setRegistrationDimension(null); }}
+                  className="mt-4 flex items-center gap-2 text-[11px] font-bold text-slate-500 hover:text-slate-700 transition-colors mx-auto"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" /> Retour au choix du mode
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Workflow Guide Banner */}
-          {(isInitializingRegistration || phase === 1) && (
+          {(isInitializingRegistration || phase === 1) && !directAccessMode && (
             <div className="absolute top-4 inset-x-4 z-[60] flex justify-center pointer-events-none">
               <div className="bg-white/90 backdrop-blur-md border-2 border-blue-500/30 px-8 py-3 rounded-[24px] shadow-[0_20px_50px_rgba(37,99,235,0.2)] flex items-center gap-4 animate-in slide-in-from-top-4 duration-500 pointer-events-auto">
                 <div className="h-10 w-10 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-lg">
@@ -4530,10 +4672,19 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                   <div className="flex items-center gap-4 min-w-0">
                     <button
                       onClick={handleBackToImagesPanel}
-                      className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-300 bg-slate-100 text-[10px] font-bold text-slate-700 hover:bg-slate-200 transition-colors shrink-0"
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-300 bg-slate-100 text-[9px] font-bold text-slate-700 hover:bg-slate-200 transition-colors shrink-0"
                     >
-                      <ArrowLeft className="h-3.5 w-3.5" /> Retour
+                      <ArrowLeft className="h-3 w-3" /> Retour
                     </button>
+                    {registrationDimension === 'advanced' && (
+                      <button
+                        onClick={() => { setShowExploration(true); }}
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-violet-300 bg-violet-50 text-[9px] font-bold text-violet-700 hover:bg-violet-100 transition-colors shrink-0"
+                        title="Aller à l'identification des zones de Brodmann"
+                      >
+                        Zones de Brodmann <ArrowRight className="h-3 w-3" />
+                      </button>
+                    )}
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="h-4 w-1 rounded-full bg-blue-600 shrink-0" />
                       <div className="min-w-0">
@@ -4569,18 +4720,18 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                           <p style={{ color: '#475569', fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.14em', marginBottom: 2 }}>
                             Information Mutuelle
                           </p>
-                          <p style={{ color: miColor, fontSize: 20, fontWeight: 900, lineHeight: 1 }}>{mi.toFixed(3)}</p>
+                          <p style={{ color: miColor, fontSize: 15, fontWeight: 900, lineHeight: 1 }}>{mi.toFixed(3)}</p>
                         </div>
                         <span
                           style={{
                             background: miColor,
                             color: '#fff',
-                            borderRadius: 8,
-                            padding: '3px 10px',
-                            fontSize: 10,
+                            borderRadius: 6,
+                            padding: '2px 7px',
+                            fontSize: 9,
                             fontWeight: 900,
                             textTransform: 'uppercase',
-                            letterSpacing: '0.1em',
+                            letterSpacing: '0.08em',
                           }}
                         >
                           {miQuality}
@@ -4589,11 +4740,11 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                     )}
                     {autoAlignMetrics?.processing_time_ms > 0 && (
                       <div
-                        className="flex flex-col items-end rounded-xl px-4 py-2"
+                        className="flex flex-col items-end rounded-lg px-3 py-1.5"
                         style={{ background: '#f1f5f9', border: '1.5px solid #cbd5e1' }}
                       >
-                        <p style={{ color: '#64748b', fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.14em', marginBottom: 2 }}>Durée</p>
-                        <p style={{ color: '#0f172a', fontSize: 16, fontWeight: 900, lineHeight: 1 }}>{(autoAlignMetrics.processing_time_ms / 1000).toFixed(1)} s</p>
+                        <p style={{ color: '#64748b', fontSize: 8, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 1 }}>Durée</p>
+                        <p style={{ color: '#0f172a', fontSize: 13, fontWeight: 900, lineHeight: 1 }}>{(autoAlignMetrics.processing_time_ms / 1000).toFixed(1)} s</p>
                       </div>
                     )}
                     {/* ── Statut sauvegarde + exports (tous modes) ── */}
@@ -4601,39 +4752,39 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                       <>
                         <div className="w-px h-6 bg-gray-200 shrink-0" />
                         {/* Badge statut sauvegarde */}
-                        <div className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-bold shrink-0 ${
+                        <div className={`flex items-center gap-1 rounded-lg px-2 py-1 text-[9px] font-bold shrink-0 ${
                           saveToPatientResult.ok
                             ? 'bg-emerald-50 border border-emerald-200 text-emerald-700'
                             : 'bg-amber-50 border border-amber-200 text-amber-700'
                         }`}>
                           {saveToPatientResult.ok
-                            ? <><Check className="h-3.5 w-3.5" /> Enregistré dans le dossier patient</>
-                            : <><X className="h-3.5 w-3.5" /> {saveToPatientResult.error || 'Sauvegarde non effectuée'}</>}
+                            ? <><Check className="h-3 w-3" /> Enregistré</>
+                            : <><X className="h-3 w-3" /> {saveToPatientResult.error || 'Échec sauvegarde'}</>}
                         </div>
                         {/* Exports NIfTI uniquement pour les volumes 3D/advanced */}
                         {registrationDimension !== '2d' && (
                           <>
-                            <div className="w-px h-6 bg-gray-200 shrink-0" />
+                            <div className="w-px h-5 bg-gray-200 shrink-0" />
                             <button
                               onClick={() => handleDownloadVolume('patient')}
-                              className="flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100 transition shrink-0"
+                              className="flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1 text-[9px] font-bold text-emerald-700 hover:bg-emerald-100 transition shrink-0"
                               title="Télécharger le volume patient recalé (.nii.gz)"
                             >
-                              <Download className="h-3.5 w-3.5" /> Vol. recalé
+                              <Download className="h-3 w-3" /> Vol. recalé
                             </button>
                             <button
                               onClick={() => handleDownloadVolume('reference')}
-                              className="flex items-center gap-1.5 rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-[10px] font-bold text-blue-700 hover:bg-blue-100 transition shrink-0"
+                              className="flex items-center gap-1 rounded-lg border border-blue-300 bg-blue-50 px-2 py-1 text-[9px] font-bold text-blue-700 hover:bg-blue-100 transition shrink-0"
                               title="Télécharger le volume de référence / atlas (.nii.gz)"
                             >
-                              <Download className="h-3.5 w-3.5" /> Vol. référence
+                              <Download className="h-3 w-3" /> Vol. référence
                             </button>
                             <button
                               onClick={() => handleDownloadVolume('all')}
-                              className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-100 px-3 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-200 transition shrink-0"
+                              className="flex items-center gap-1 rounded-lg border border-slate-300 bg-slate-100 px-2 py-1 text-[9px] font-bold text-slate-700 hover:bg-slate-200 transition shrink-0"
                               title="Télécharger les deux volumes en ZIP (.zip)"
                             >
-                              <Download className="h-3.5 w-3.5" /> Tout exporter
+                              <Download className="h-3 w-3" /> Tout exporter
                             </button>
                           </>
                         )}
@@ -4644,10 +4795,10 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                               const pat = confirmedPanelPatients.patient ?? confirmedPanelPatients.reference;
                               navigate(`/dashboard/patients/${pat.id}`);
                             }}
-                            className="flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-[10px] font-bold text-violet-700 hover:bg-violet-100 transition shrink-0"
+                            className="flex items-center gap-1 rounded-lg border border-violet-300 bg-violet-50 px-2 py-1 text-[9px] font-bold text-violet-700 hover:bg-violet-100 transition shrink-0"
                             title="Ouvrir le dossier patient"
                           >
-                            <FileText className="h-3.5 w-3.5" /> Voir dossier
+                            <FileText className="h-3 w-3" /> Voir dossier
                           </button>
                         )}
                       </>
@@ -6001,20 +6152,21 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
       {/* ── Overlay Exploration Corticale (advanced mode, sans navigation) ── */}
       {showExploration && (
         <div className="fixed inset-0 z-[250] flex flex-col">
-          {/* Bandeau sauvegarde automatique */}
+          {/* Bandeau sauvegarde / accès direct */}
           {saveToPatientResult && (
             <div className={`shrink-0 flex items-center justify-between gap-3 px-5 py-2.5 text-[11px] font-bold z-10 ${
-              saveToPatientResult.ok
-                ? 'bg-emerald-600 text-white'
-                : 'bg-amber-500 text-white'
+              saveToPatientResult.ok ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-white'
             }`} style={{ paddingRight: 130 }}>
               <div className="flex items-center gap-2">
                 {saveToPatientResult.ok ? (
                   <>
                     <Check className="h-4 w-4 shrink-0" />
                     <span>
-                      Résultat sauvegardé automatiquement dans le dossier patient
-                      {saveToPatientResult.filename && (
+                      {directAccessMode
+                        ? 'Accès direct — Volume recalé chargé depuis le dossier patient'
+                        : 'Résultat sauvegardé automatiquement dans le dossier patient'
+                      }
+                      {!directAccessMode && saveToPatientResult.filename && (
                         <span className="ml-2 font-mono text-[10px] opacity-80">— {saveToPatientResult.filename}</span>
                       )}
                     </span>
@@ -6026,7 +6178,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                   </>
                 )}
               </div>
-              {saveToPatientResult.ok && (confirmedPanelPatients.patient || confirmedPanelPatients.reference) && (
+              {saveToPatientResult.ok && !directAccessMode && (confirmedPanelPatients.patient || confirmedPanelPatients.reference) && (
                 <button
                   onClick={() => {
                     const pat = confirmedPanelPatients.patient ?? confirmedPanelPatients.reference;
@@ -6037,10 +6189,18 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                   Voir le dossier patient →
                 </button>
               )}
+              {saveToPatientResult.ok && directAccessMode && (
+                <button
+                  onClick={() => navigate(-1)}
+                  className="shrink-0 rounded-lg border border-white/30 bg-white/15 hover:bg-white/25 px-3 py-1 text-[10px] font-black tracking-wide transition"
+                >
+                  ← Retour au dossier patient
+                </button>
+              )}
             </div>
           )}
           <div className="flex-1 min-h-0">
-            <ExplorationPage onBack={() => setShowExploration(false)} dashboardPatientId={brodmannPatientIdForIntensity} />
+            <ExplorationPage onBack={() => directAccessMode ? navigate(-1) : setShowExploration(false)} dashboardPatientId={brodmannPatientIdForIntensity} />
           </div>
         </div>
       )}

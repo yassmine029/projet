@@ -119,89 +119,68 @@ function AIGauge({ value, interpretation, leftVol, rightVol }) {
 
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className={`h-1.5 w-full bg-gradient-to-r ${sc.strip}`} />
-      <div className="p-6">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-3">
+      <div className={`h-1 w-full bg-gradient-to-r ${sc.strip}`} />
+      <div className="p-4">
+        {/* Header compact */}
+        <div className="flex items-center justify-between gap-2 mb-3">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">IA — Indice d'asymétrie</p>
-            <h5 className="mt-0.5 text-base font-black text-slate-900">Asymétrie hippocampique</h5>
-            <p className="text-[11px] text-slate-400">Marqueur MTLE · Épilepsie du lobe temporal</p>
+            <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400">IA — Indice d'asymétrie</p>
+            <h5 className="text-sm font-black text-slate-900">Asymétrie hippocampique</h5>
           </div>
-          <span className={`shrink-0 rounded-xl border px-3 py-1 text-xs font-black ${sc.bg} ${sc.border} ${sc.text}`}>{status.label}</span>
-        </div>
-
-        {/* Description clinique + bouton info */}
-        <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-3.5 py-2.5">
-          <div className="flex items-start justify-between gap-2">
-            <p className="text-[11px] leading-relaxed text-slate-600">
-              L'IA quantifie la <span className="font-semibold text-slate-800">réduction unilatérale du volume hippocampique</span>.
-              Un IA &gt; 10 % indique une atrophie significative du côté dont le volume est inférieur
-              (Cendes et al., 1993 · Free et al., 1995).
-            </p>
+          <div className="flex items-center gap-1.5">
+            <span className={`shrink-0 rounded-lg border px-2.5 py-1 text-[11px] font-black ${sc.bg} ${sc.border} ${sc.text}`}>{status.label}</span>
             <InfoPopover
               title="Indice d'Asymétrie (IA) — MTLE"
               formula="IA = |R − L| / ((R + L) / 2) × 100"
-              variables="R : volume hippocampe droit (mm³) · L : volume hippocampe gauche (mm³). Résultat exprimé en pourcentage."
-              threshold="Seuil clinique : 10 %. Au-delà, l'asymétrie est considérée significative — atrophie du côté au volume inférieur (Cendes et al. 1993, Free et al. 1995)."
-              clinicalContext="Classification simplifiée en 2 catégories : normale (≤ 10 %) et atrophie significative (> 10 %). Le côté atrophié est déterminé par comparaison directe des volumes gauche et droit."
+              variables="R : volume hippocampe droit (mm³) · L : volume hippocampe gauche (mm³)."
+              threshold="Seuil clinique : 10 %. Au-delà, atrophie du côté au volume inférieur (Cendes et al. 1993)."
+              clinicalContext="Classification : normale (≤ 10 %) et atrophie significative (> 10 %)."
             />
           </div>
         </div>
 
-        {/* Valeur + jauge 2 couleurs */}
-        <div className="mt-5 flex items-center gap-5">
-          <div className={`flex h-20 w-20 shrink-0 flex-col items-center justify-center rounded-2xl border-2 ${sc.border} ${sc.bg} ring-4 ${sc.ring}`}>
-            <span className={`text-2xl font-black tabular-nums leading-none ${sc.text}`}>{v.toFixed(2)}</span>
-            <span className={`mt-0.5 text-[11px] font-bold ${sc.text}`}>%</span>
+        {/* Valeur + jauge */}
+        <div className="flex items-center gap-4">
+          <div className={`flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-xl border-2 ${sc.border} ${sc.bg}`}>
+            <span className={`text-xl font-black tabular-nums leading-none ${sc.text}`}>{v.toFixed(2)}</span>
+            <span className={`text-[10px] font-bold ${sc.text}`}>%</span>
           </div>
           <div className="flex-1 min-w-0">
-            <p className={`text-sm font-bold ${sc.text}`}>
-              {isNormal ? 'Asymétrie non significative' : atrophySide ? `Atrophie hippocampique ${atrophySide}` : 'Atrophie hippocampique'}
+            <p className={`text-[11px] font-bold ${sc.text}`}>
+              {isNormal ? 'Asymétrie non significative' : atrophySide ? `Atrophie ${atrophySide}` : 'Atrophie hippocampique'}
             </p>
-            <p className="text-[10px] text-slate-400 mt-0.5">Seuil de significativité : 10 %</p>
-            <div className="mt-3">
-              <div className="relative h-4 w-full overflow-hidden rounded-full shadow-inner">
-                {/* 2 zones : vert 0-10%, rouge 10-30% */}
+            <div className="mt-2">
+              <div className="relative h-3 w-full overflow-hidden rounded-full shadow-inner">
                 <div className="flex h-full w-full rounded-full">
                   <div className="h-full bg-emerald-400" style={{ width: `${thresholdPct}%` }} />
                   <div className="h-full flex-1 bg-red-500" />
                 </div>
-                {/* Marqueur valeur */}
-                <div
-                  className="absolute top-1/2 z-10 h-6 w-1.5 -translate-y-1/2 rounded-sm border-2 border-white bg-slate-900 shadow-lg transition-[left] duration-500 ease-out"
-                  style={{ left: `clamp(0px, calc(${percent * 100}% - 3px), calc(100% - 6px))` }}
-                  aria-hidden
-                />
+                <div className="absolute top-1/2 z-10 h-5 w-1 -translate-y-1/2 rounded-sm border border-white bg-slate-900 shadow"
+                  style={{ left: `clamp(0px, calc(${percent * 100}% - 2px), calc(100% - 4px))` }} aria-hidden />
               </div>
-              <div className="mt-1 flex justify-between px-0.5 text-[9px] font-medium text-slate-400">
+              <div className="mt-0.5 flex justify-between text-[8px] text-slate-400">
                 <span>0%</span><span>10%</span><span>20%</span><span>30%</span>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Légende 2 lignes */}
-        <div className="mt-5 space-y-1.5">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Classification clinique (d'après la littérature)</p>
+        {/* Légende compacte */}
+        <div className="mt-3 space-y-1">
           {legend.map((item) => (
-            <div key={item.range} className={`flex items-center gap-2.5 rounded-xl px-3 py-2 transition-all ${
-              item.active ? `${sc.bg} border ${sc.border}` : 'bg-slate-50'
-            }`}>
-              <span className={`h-2 w-2 shrink-0 rounded-full ${item.dot}`} />
-              <span className={`w-20 shrink-0 text-[11px] font-bold tabular-nums ${item.active ? sc.text : 'text-slate-600'}`}>{item.range}</span>
-              <span className={`text-[11px] font-semibold ${item.active ? sc.text : 'text-slate-500'}`}>{item.label}</span>
-              <span className="ml-auto shrink-0 font-mono text-[10px] text-slate-400">{item.ref}</span>
-              {item.active && <span className={`ml-1 shrink-0 text-[10px] font-black ${sc.text}`}>▲</span>}
+            <div key={item.range} className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 ${item.active ? `${sc.bg} border ${sc.border}` : 'bg-slate-50'}`}>
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${item.dot}`} />
+              <span className={`w-16 shrink-0 text-[10px] font-bold ${item.active ? sc.text : 'text-slate-500'}`}>{item.range}</span>
+              <span className={`text-[10px] ${item.active ? `font-bold ${sc.text}` : 'text-slate-400'}`}>{item.label}</span>
+              {item.active && <span className={`ml-auto text-[9px] font-black ${sc.text}`}>▲</span>}
             </div>
           ))}
         </div>
 
-        {/* Interprétation clinique */}
-        <div className={`mt-4 rounded-xl border ${sc.border} ${sc.bg} px-4 py-3`}>
-          <p className={`text-[10px] font-black uppercase tracking-widest ${sc.text}`}>Interprétation — Épilepsie (MTLE)</p>
-          <p className="mt-1.5 text-xs leading-relaxed text-slate-700">{interpretation || `IA = ${v.toFixed(2)} %`}</p>
-        </div>
+        {/* Interprétation */}
+        {interpretation && (
+          <p className={`mt-2.5 text-[10px] leading-relaxed rounded-lg border ${sc.border} ${sc.bg} px-2.5 py-1.5 ${sc.text}`}>{interpretation}</p>
+        )}
       </div>
     </div>
   );
@@ -210,13 +189,13 @@ function AIGauge({ value, interpretation, leftVol, rightVol }) {
 function NIGauge({ value, interpretation }) {
   const v = Number(value || 0);
   const status = getNiStatus(v);
-  const percent = clamp(v / 150, 0, 1);
+  const percent = clamp(v / 100, 0, 1);
 
-  const w60   = (60 / 150) * 100;
-  const w80   = ((80 - 60) / 150) * 100;
-  const w90   = ((90 - 80) / 150) * 100;
-  const w110  = ((110 - 90) / 150) * 100;
-  const wRest = 100 - w60 - w80 - w90 - w110;
+  // Barre 0→100 % : 4 segments proportionnels aux intervalles cliniques
+  const w60   = 60;   // 0–60 % → rouge
+  const w80   = 20;   // 60–80 % → orange
+  const w90   = 10;   // 80–90 % → jaune
+  const wRest = 10;   // ≥ 90 % → vert (jusqu'au bout)
 
   const sc = status.tone === 'ok'
     ? { text: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-200', strip: 'from-emerald-400 to-emerald-500', ring: 'ring-emerald-200' }
@@ -226,101 +205,82 @@ function NIGauge({ value, interpretation }) {
         ? { text: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-200', strip: 'from-amber-400 to-orange-400', ring: 'ring-amber-200' }
         : { text: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200', strip: 'from-red-500 to-rose-600', ring: 'ring-red-200' };
 
-  const valLabel = v < 60 ? 'Réduction sévère (Asev)' : v < 80 ? 'Réduction modérée (Amod)' : v < 90 ? 'Réduction légère (Am)' : v <= 110 ? 'Volume normal (N)' : 'Supérieur à la moyenne';
+  const valLabel = v < 60 ? 'Réduction sévère (Asev)' : v < 80 ? 'Réduction modérée (Amod)' : v < 90 ? 'Réduction légère (Am)' : 'Volume normal (N)';
 
   const legend = [
     { range: '< 60 %',     code: 'Asev', label: 'Réduction sévère',        mmRef: '< 3 000 mm³',        dot: 'bg-red-500',     active: v < 60 },
-    { range: '60 – 80 %',  code: 'Amod', label: 'Réduction modérée',       mmRef: '3 200 – 3 700 mm³',  dot: 'bg-orange-500',  active: v >= 60 && v < 80 },
-    { range: '80 – 90 %',  code: 'Am',   label: 'Réduction légère',        mmRef: '3 700 – 4 500 mm³',  dot: 'bg-amber-400',   active: v >= 80 && v < 90 },
-    { range: '≥ 90 %',     code: 'N',    label: 'Volume normal',           mmRef: '4 500 – 5 300 mm³',  dot: 'bg-emerald-500', active: v >= 90 && v <= 110 },
-    { range: '> 110 %',    code: '—',    label: 'Supérieur à la moyenne',  mmRef: '> 5 300 mm³',         dot: 'bg-blue-500',    active: v > 110 },
+    { range: '60 – 80 %',  code: 'Amod', label: 'Réduction modérée',       mmRef: '3 200 – 3 700 mm³',  dot: 'bg-orange-400',  active: v >= 60 && v < 80 },
+    { range: '80 – 90 %',  code: 'Am',   label: 'Réduction légère',        mmRef: '3 700 – 4 500 mm³',  dot: 'bg-yellow-400',  active: v >= 80 && v < 90 },
+    { range: '≥ 90 %',     code: 'N',    label: 'Volume normal',           mmRef: '4 500 – 5 300 mm³',  dot: 'bg-green-500',   active: v >= 90 },
   ];
 
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className={`h-1.5 w-full bg-gradient-to-r ${sc.strip}`} />
-      <div className="p-6">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-3">
+      <div className={`h-1 w-full bg-gradient-to-r ${sc.strip}`} />
+      <div className="p-4">
+        {/* Header compact */}
+        <div className="flex items-center justify-between gap-2 mb-3">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">IN — Indice de normalisation</p>
-            <h5 className="mt-0.5 text-base font-black text-slate-900">Normalisation volumétrique</h5>
-            <p className="text-[11px] text-slate-400">Quantification de l'atrophie · Maladie d'Alzheimer (MA)</p>
+            <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400">IN — Indice de normalisation</p>
+            <h5 className="text-sm font-black text-slate-900">Normalisation volumétrique</h5>
           </div>
-          <span className={`shrink-0 rounded-xl border px-3 py-1 text-xs font-black ${sc.bg} ${sc.border} ${sc.text}`}>{status.label}</span>
-        </div>
-
-        {/* Description clinique + bouton info */}
-        <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-3.5 py-2.5">
-          <div className="flex items-start justify-between gap-2">
-            <p className="text-[11px] leading-relaxed text-slate-600">
-              L'IN compare le volume hippocampique total du patient aux
-              <span className="font-semibold text-slate-800"> valeurs normatives de sujets sains appariés en âge</span> (IRM 1,5 T, âge &gt; 50 ans).
-              Les patients MA présentent une réduction claire de l'IN, avec la plupart des valeurs sous 80 %.
-              Les sujets normaux maintiennent un IN au-dessus de 90 %, cohérent avec un volume hippocampique préservé.
-            </p>
+          <div className="flex items-center gap-1.5">
+            <span className={`shrink-0 rounded-lg border px-2.5 py-1 text-[11px] font-black ${sc.bg} ${sc.border} ${sc.text}`}>{status.label}</span>
             <InfoPopover
-              title="Indice de Normalisation (IN) — Alzheimer (MA)"
-              formula="IN = (V_patient / V_moyenne sujets sains) × 100"
-              variables="V_patient : volume hippocampique total du patient (mm³). V_moyenne : moyenne normative des sujets sains, configurable dans les paramètres de reconstruction."
-              threshold="≥ 90 % : Volume normal (N) · 80–90 % : Réduction légère (Am) · 60–80 % : Réduction modérée (Amod) · < 60 % : Réduction sévère (Asev)"
-              clinicalContext="Basé sur des données acquises par IRM 1,5 T sur des sujets sains (âge > 50 ans). La classification selon l'IN démontre la capacité de DPR-Net à approcher la vérité terrain (GT). Volumes totaux de référence : Normal 4 500–5 300 mm³ · MA légère-modérée 3 200–3 700 mm³ · MA avancée < 3 000 mm³."
+              title="Indice de Normalisation (IN) — Alzheimer"
+              formula="IN = (V_patient / V_normale) × 100"
+              variables="V_patient : volume hippocampique total (mm³). V_normale : valeurs normatives sujets sains."
+              threshold="≥ 90 % : Normal · 80–90 % : Légère · 60–80 % : Modérée · < 60 % : Sévère"
+              clinicalContext="Référence IRM 1,5T, âge > 50 ans. Volume normal : 4 500–5 300 mm³."
             />
           </div>
         </div>
 
         {/* Valeur + jauge */}
-        <div className="mt-5 flex items-center gap-5">
-          <div className={`flex h-20 w-20 shrink-0 flex-col items-center justify-center rounded-2xl border-2 ${sc.border} ${sc.bg} ring-4 ${sc.ring}`}>
-            <span className={`text-2xl font-black tabular-nums leading-none ${sc.text}`}>{v.toFixed(2)}</span>
-            <span className={`mt-0.5 text-[11px] font-bold ${sc.text}`}>%</span>
+        <div className="flex items-center gap-4">
+          <div className={`flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-xl border-2 ${sc.border} ${sc.bg}`}>
+            <span className={`text-xl font-black tabular-nums leading-none ${sc.text}`}>{v.toFixed(2)}</span>
+            <span className={`text-[10px] font-bold ${sc.text}`}>%</span>
           </div>
           <div className="flex-1 min-w-0">
-            <p className={`text-sm font-bold ${sc.text}`}>{valLabel}</p>
-            <p className="text-[10px] text-slate-400 mt-0.5">Référence (N) : ≥ 90 % · Volume total normal : 4 500–5 300 mm³</p>
-            <div className="mt-3">
-              <div className="relative h-4 w-full overflow-hidden rounded-full shadow-inner">
+            <p className={`text-[11px] font-bold ${sc.text}`}>{valLabel}</p>
+            <div className="mt-2">
+              <div className="relative h-3 w-full overflow-hidden rounded-full shadow-inner">
                 <div className="flex h-full w-full">
-                  <div className="h-full bg-red-500"     style={{ width: `${w60}%` }} />
-                  <div className="h-full bg-orange-500"  style={{ width: `${w80}%` }} />
-                  <div className="h-full bg-amber-400"   style={{ width: `${w90}%` }} />
-                  <div className="h-full bg-emerald-500" style={{ width: `${w110}%` }} />
-                  <div className="h-full bg-blue-500"    style={{ width: `${wRest}%` }} />
+                  <div className="h-full" style={{ width: `${w60}%`, background: '#ef4444' }} />
+                  <div className="h-full" style={{ width: `${w80}%`, background: '#fb923c' }} />
+                  <div className="h-full" style={{ width: `${w90}%`, background: '#fbbf24' }} />
+                  <div className="h-full" style={{ width: `${wRest}%`, background: '#22c55e' }} />
                 </div>
-                <div
-                  className="absolute top-1/2 z-10 h-6 w-1.5 -translate-y-1/2 rounded-sm border-2 border-white bg-slate-900 shadow-lg transition-[left] duration-500 ease-out"
-                  style={{ left: `clamp(0px, calc(${percent * 100}% - 3px), calc(100% - 6px))` }}
-                  aria-hidden
-                />
+                <div className="absolute top-1/2 z-10 h-5 w-1 -translate-y-1/2 rounded-sm border border-white bg-slate-900 shadow"
+                  style={{ left: `clamp(0px, calc(${percent * 100}% - 2px), calc(100% - 4px))` }} aria-hidden />
               </div>
-              <div className="mt-1 flex justify-between px-0.5 text-[9px] font-medium text-slate-400">
-                <span>0%</span><span>60%</span><span>80%</span><span>90%</span><span>110%</span><span>150%</span>
+              <div className="relative mt-0.5 h-3 text-[8px] text-slate-400">
+                {[{v:0,label:'0%'},{v:60,label:'60%'},{v:80,label:'80%'},{v:90,label:'90%'},{v:100,label:'100%'}].map(({v:pct,label})=>(
+                  <span key={pct} className="absolute -translate-x-1/2" style={{left:`${pct}%`}}>{label}</span>
+                ))}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Légende enrichie avec volumes de référence */}
-        <div className="mt-5 space-y-1.5">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Classification clinique (d'après la littérature)</p>
+        {/* Légende compacte */}
+        <div className="mt-3 space-y-1">
           {legend.map((item) => (
-            <div key={item.range} className={`flex items-center gap-2.5 rounded-xl px-3 py-2 transition-all ${
-              item.active ? `${sc.bg} border ${sc.border}` : 'bg-slate-50'
-            }`}>
-              <span className={`h-2 w-2 shrink-0 rounded-full ${item.dot}`} />
-              <span className={`w-20 shrink-0 text-[11px] font-bold tabular-nums ${item.active ? sc.text : 'text-slate-600'}`}>{item.range}</span>
-              <span className={`text-[11px] font-semibold ${item.active ? sc.text : 'text-slate-500'}`}>{item.label}</span>
-              <span className="ml-auto shrink-0 font-mono text-[10px] text-slate-400">{item.mmRef}</span>
-              {item.active && <span className={`ml-1 shrink-0 text-[10px] font-black ${sc.text}`}>▲</span>}
+            <div key={item.range} className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 ${item.active ? `${sc.bg} border ${sc.border}` : 'bg-slate-50'}`}>
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${item.dot}`} />
+              <span className={`w-16 shrink-0 text-[10px] font-bold ${item.active ? sc.text : 'text-slate-500'}`}>{item.range}</span>
+              <span className={`text-[10px] ${item.active ? `font-bold ${sc.text}` : 'text-slate-400'}`}>{item.label}</span>
+              <span className="ml-auto text-[9px] font-mono text-slate-300">{item.mmRef}</span>
+              {item.active && <span className={`text-[9px] font-black ${sc.text}`}>▲</span>}
             </div>
           ))}
         </div>
 
-        {/* Interprétation clinique */}
-        <div className={`mt-4 rounded-xl border ${sc.border} ${sc.bg} px-4 py-3`}>
-          <p className={`text-[10px] font-black uppercase tracking-widest ${sc.text}`}>Interprétation — Alzheimer (MA)</p>
-          <p className="mt-1.5 text-xs leading-relaxed text-slate-700">{interpretation || `IN = ${v.toFixed(2)} %`}</p>
-        </div>
+        {/* Interprétation */}
+        {interpretation && (
+          <p className={`mt-2.5 text-[10px] leading-relaxed rounded-lg border ${sc.border} ${sc.bg} px-2.5 py-1.5 ${sc.text}`}>{interpretation}</p>
+        )}
       </div>
     </div>
   );
@@ -605,13 +565,12 @@ function ReportPreviewModal({
             {/* En-tête */}
             <div className="flex items-start justify-between border-b-2 border-blue-600 pb-5">
               <div>
-                <p className="text-3xl font-black tracking-tight text-slate-900">Neuro<span className="text-blue-600">Scan</span></p>
+                <p className="text-3xl font-black tracking-tight text-slate-900">Brain<span className="text-blue-600">Core</span></p>
                 <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Rapport de volumétrie hippocampique — Analyse assistée par IA</p>
               </div>
               <div className="text-right space-y-1">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Date du rapport</p>
                 <p className="text-xl font-black text-blue-600">{examDate}</p>
-                {runInfo?.id && <p className="text-[10px] font-mono text-slate-400">Run #{runInfo.id}</p>}
               </div>
             </div>
 
@@ -1303,14 +1262,14 @@ export default function Modelisation3D({ user = null }) {
   const niStatus = getNiStatus(niValue).label;
   const conciseConclusion =
     niStatus === 'Severe'
-      ? 'Atrophie hippocampique probable. Correlation clinique recommandee.'
+      ? 'Atrophie hippocampique significative — corrélation clinique indispensable.'
       : niStatus === 'Alerte'
-        ? 'Profil borderline. Surveillance clinique et comparaison evolutive conseillees.'
+        ? 'Légère réduction volumique hippocampique — surveillance et comparaison évolutive recommandées.'
         : niStatus === 'Haut'
-          ? 'Profil d\'hyperplasie. A interpreter avec le contexte clinique.'
+          ? 'Volume hippocampique supérieur à la norme — à interpréter selon le contexte clinique.'
           : aiStatus === 'Normal'
-            ? 'Profil volumetrique dans la norme, sans lateralisation nette.'
-            : 'Profil global stable avec asymetrie a surveiller.';
+            ? 'Profil volumétrique dans les normes, sans latéralisation significative.'
+            : 'Asymétrie hippocampique modérée — suivi clinique conseillé.';
 
   const fieldClass =
     'w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm transition-colors focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-400/20';
@@ -1397,72 +1356,45 @@ export default function Modelisation3D({ user = null }) {
                 </div>
               </div>
 
-              {/* ── Corps scrollable ── */}
-              <div className="overflow-y-auto px-6 py-5 space-y-5">
-                {/* Chips résumé run */}
-                <div className="grid grid-cols-3 gap-3">
-                  {[
-                    { label: 'Run ID', value: `#${runInfo.id}`, accent: 'text-blue-700' },
-                    { label: 'Modèle IA', value: runInfo.model_key || 'unetpp', accent: 'text-slate-800' },
-                    { label: 'Coupes traitées', value: `${runInfo.processed_count || 0} / ${runInfo.selected_count || 0}`, accent: 'text-emerald-700' },
-                  ].map((item) => (
-                    <div key={item.label} className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{item.label}</p>
-                      <p className={`mt-0.5 truncate text-sm font-black tabular-nums ${item.accent}`}>{item.value}</p>
-                    </div>
-                  ))}
+              {/* ── Corps ── */}
+              <div className="px-6 py-5 space-y-5">
+
+                {/* Résumé de l'analyse */}
+                <div className="flex items-center gap-4 rounded-xl bg-slate-50 border border-slate-100 px-4 py-3">
+                  <div className="flex-1">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Modèle utilisé</p>
+                    <p className="text-sm font-black text-slate-800 mt-0.5">{runInfo.model_key?.toUpperCase() || 'UNETPP'}</p>
+                  </div>
+                  <div className="w-px h-8 bg-slate-200" />
+                  <div className="flex-1">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Coupes analysées</p>
+                    <p className="text-sm font-black text-emerald-700 mt-0.5">{runInfo.selected_count || runInfo.processed_count || 0} coupes</p>
+                  </div>
                 </div>
 
-                {/* Paramètres médicaux */}
+                {/* Structure */}
                 <div>
-                  <p className="mb-3 text-[11px] font-bold uppercase tracking-widest text-slate-400">Paramètres de reconstruction</p>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                    <div>
-                      <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
-                        Structure à reconstruire
-                      </label>
-                      <select name="structure" value={standardMode.structure} onChange={handleChange}
-                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/20">
-                        <option value="both">Hippocampe gauche + droit</option>
-                        <option value="left">Hippocampe gauche uniquement</option>
-                        <option value="right">Hippocampe droit uniquement</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
-                        Qualité du maillage
-                      </label>
-                      <select name="quality" value={standardMode.quality} onChange={handleChange}
-                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/20">
-                        <option value="fast">Rapide — aperçu rapide</option>
-                        <option value="standard">Standard — usage clinique courant</option>
-                        <option value="high">Haute — export et publication</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
-                        Lissage de surface
-                      </label>
-                      <select name="smoothing" value={standardMode.smoothing} onChange={handleChange}
-                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/20">
-                        <option value="none">Aucun — contours bruts</option>
-                        <option value="low">Faible — recommandé</option>
-                        <option value="medium">Moyen — surface lissée</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-slate-400">
-                        Seuil de segmentation
-                      </label>
-                      <input
-                        name="threshold"
-                        value={standardMode.threshold}
-                        onChange={handleChange}
-                        placeholder="0.75"
-                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/20"
-                      />
-                      <p className="mt-1 text-[10px] text-slate-400">Valeur recommandée : 0.75 (entre 0.5 et 0.95)</p>
-                    </div>
+                  <p className="mb-2 text-[11px] font-bold uppercase tracking-widest text-slate-400">Structure à reconstruire</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { value: 'both',  label: 'Gauche + Droit', icon: '⚕️' },
+                      { value: 'left',  label: 'Gauche',         icon: '◀' },
+                      { value: 'right', label: 'Droit',          icon: '▶' },
+                    ].map(({ value, label, icon }) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => handleChange({ target: { name: 'structure', value } })}
+                        className={`flex flex-col items-center gap-1.5 rounded-xl border-2 px-3 py-3 text-sm font-bold transition-all ${
+                          standardMode.structure === value
+                            ? 'border-blue-500 bg-blue-50 text-blue-700'
+                            : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                        }`}
+                      >
+                        <span className="text-base">{icon}</span>
+                        {label}
+                      </button>
+                    ))}
                   </div>
                 </div>
 
@@ -1474,13 +1406,7 @@ export default function Modelisation3D({ user = null }) {
                       <p className="text-[11px] text-slate-400 mt-0.5">Précisez les dimensions spatiales des voxels en mm</p>
                     </div>
                     <label className="relative inline-flex cursor-pointer items-center">
-                      <input
-                        type="checkbox"
-                        name="knowsSpacing"
-                        checked={standardMode.knowsSpacing}
-                        onChange={handleChange}
-                        className="sr-only peer"
-                      />
+                      <input type="checkbox" name="knowsSpacing" checked={standardMode.knowsSpacing} onChange={handleChange} className="sr-only peer" />
                       <div className="h-5 w-9 rounded-full bg-slate-300 peer-checked:bg-blue-600 transition-colors after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow after:transition-all peer-checked:after:translate-x-4" />
                     </label>
                   </div>
@@ -1562,11 +1488,6 @@ export default function Modelisation3D({ user = null }) {
                           <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Reconstruction volumétrique</p>
                           <p className="text-sm font-bold text-slate-800 leading-tight">Modèle 3D — Hippocampe</p>
                         </div>
-                        {runInfo?.id && (
-                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[10px] font-semibold text-slate-500">
-                            Run #{runInfo.id}
-                          </span>
-                        )}
                       </div>
                       <button
                         type="button"
@@ -1743,47 +1664,48 @@ export default function Modelisation3D({ user = null }) {
                           : { strip: 'from-red-500 to-rose-600', bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-700', label: 'Alerte clinique', badge: 'bg-red-100 border-red-200 text-red-700' };
                       return (
                         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                          <div className={`h-1.5 w-full bg-gradient-to-r ${sev.strip}`} />
-                          <div className="p-6">
-                            <div className="flex flex-wrap items-start justify-between gap-4">
+                          <div className={`h-1 w-full bg-gradient-to-r ${sev.strip}`} />
+                          <div className="px-4 py-3">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              {/* Gauche : label + texte + badges */}
                               <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-3 mb-3">
-                                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Remarques et constatations</p>
-                                  <span className={`rounded-xl border px-2.5 py-0.5 text-[11px] font-black ${sev.badge}`}>{sev.label}</span>
+                                <div className="flex items-center gap-2 mb-1.5">
+                                  <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Synthèse clinique</p>
+                                  <span className={`rounded-lg border px-2 py-0.5 text-[10px] font-black ${sev.badge}`}>{sev.label}</span>
                                 </div>
-                                <h3 className="text-xl font-black text-slate-900 leading-snug">{conciseConclusion}</h3>
-                                <div className="mt-4 flex flex-wrap gap-2">
+                                <p className="text-sm font-black text-slate-900 leading-snug">{conciseConclusion}</p>
+                                <div className="mt-2 flex flex-wrap gap-1.5">
                                   {aiValue > 20 ? (
-                                    <span className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700"><Activity className="h-3.5 w-3.5" /> Asymétrie sévère (MTLE)</span>
+                                    <span className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-bold text-red-700"><Activity className="h-3 w-3" /> Asymétrie sévère (MTLE)</span>
                                   ) : aiValue > 10 ? (
-                                    <span className="inline-flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-700"><Activity className="h-3.5 w-3.5" /> Asymétrie à surveiller</span>
+                                    <span className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-700"><Activity className="h-3 w-3" /> Asymétrie à surveiller</span>
                                   ) : (
-                                    <span className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700"><Brain className="h-3.5 w-3.5" /> Asymétrie normale</span>
+                                    <span className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700"><Brain className="h-3 w-3" /> Asymétrie normale</span>
                                   )}
                                   {niValue < 80 ? (
-                                    <span className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700"><Activity className="h-3.5 w-3.5" /> Atrophie marquée</span>
+                                    <span className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-bold text-red-700"><Activity className="h-3 w-3" /> Atrophie marquée</span>
                                   ) : niValue < 90 ? (
-                                    <span className="inline-flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-700"><Activity className="h-3.5 w-3.5" /> Réduction focale</span>
+                                    <span className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-700"><Activity className="h-3 w-3" /> Légère réduction volumique</span>
                                   ) : (
-                                    <span className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700"><Brain className="h-3.5 w-3.5" /> Volume total normal</span>
+                                    <span className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700"><Brain className="h-3 w-3" /> Volume normal</span>
                                   )}
-                                  <span className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-600">
-                                    <CalendarDays className="h-3.5 w-3.5" />
-                                    {(aiValue > 10 || niValue < 90 || niValue > 110) ? 'Suivi recommandé' : 'Suivi de routine'}
+                                  <span className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-bold text-slate-600">
+                                    <CalendarDays className="h-3 w-3" />
+                                    {(aiValue > 10 || niValue < 90) ? 'Suivi recommandé' : 'Suivi de routine'}
                                   </span>
                                 </div>
                               </div>
-                              {/* Résumé indices */}
-                              <div className="flex shrink-0 items-stretch gap-3">
-                                <div className={`flex flex-col items-center justify-center rounded-2xl border px-5 py-4 ${aiValue <= 10 ? 'border-emerald-200 bg-emerald-50' : aiValue <= 20 ? 'border-amber-200 bg-amber-50' : 'border-red-200 bg-red-50'}`}>
-                                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Indice IA</p>
-                                  <p className={`mt-1 text-2xl font-black tabular-nums ${aiValue <= 10 ? 'text-emerald-600' : aiValue <= 20 ? 'text-amber-600' : 'text-red-600'}`}>{aiValue.toFixed(2)}</p>
-                                  <p className={`text-[11px] font-bold ${aiValue <= 10 ? 'text-emerald-500' : aiValue <= 20 ? 'text-amber-500' : 'text-red-500'}`}>%</p>
+                              {/* Droite : indices compacts */}
+                              <div className="flex shrink-0 items-stretch gap-2">
+                                <div className={`flex flex-col items-center justify-center rounded-xl border px-3 py-2 ${aiValue <= 10 ? 'border-emerald-200 bg-emerald-50' : aiValue <= 20 ? 'border-amber-200 bg-amber-50' : 'border-red-200 bg-red-50'}`}>
+                                  <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Indice IA</p>
+                                  <p className={`text-lg font-black tabular-nums ${aiValue <= 10 ? 'text-emerald-600' : aiValue <= 20 ? 'text-amber-600' : 'text-red-600'}`}>{aiValue.toFixed(2)}</p>
+                                  <p className={`text-[10px] font-bold ${aiValue <= 10 ? 'text-emerald-500' : aiValue <= 20 ? 'text-amber-500' : 'text-red-500'}`}>%</p>
                                 </div>
-                                <div className={`flex flex-col items-center justify-center rounded-2xl border px-5 py-4 ${niValue >= 90 && niValue <= 110 ? 'border-emerald-200 bg-emerald-50' : niValue < 80 ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>
-                                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Indice IN</p>
-                                  <p className={`mt-1 text-2xl font-black tabular-nums ${niValue >= 90 && niValue <= 110 ? 'text-emerald-600' : niValue < 80 ? 'text-red-600' : 'text-amber-600'}`}>{niValue.toFixed(2)}</p>
-                                  <p className={`text-[11px] font-bold ${niValue >= 90 && niValue <= 110 ? 'text-emerald-500' : niValue < 80 ? 'text-red-500' : 'text-amber-500'}`}>%</p>
+                                <div className={`flex flex-col items-center justify-center rounded-xl border px-3 py-2 ${niValue >= 90 ? 'border-emerald-200 bg-emerald-50' : niValue < 80 ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>
+                                  <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Indice IN</p>
+                                  <p className={`text-lg font-black tabular-nums ${niValue >= 90 ? 'text-emerald-600' : niValue < 80 ? 'text-red-600' : 'text-amber-600'}`}>{niValue.toFixed(2)}</p>
+                                  <p className={`text-[10px] font-bold ${niValue >= 90 ? 'text-emerald-500' : niValue < 80 ? 'text-red-500' : 'text-amber-500'}`}>%</p>
                                 </div>
                               </div>
                             </div>
@@ -1793,265 +1715,208 @@ export default function Modelisation3D({ user = null }) {
                     })()}
                   </div>
 
-                  {/* ══════════════════════════════════════════════════
-                      CONCLUSION DU MÉDECIN  (masqué en mode urgence)
-                  ══════════════════════════════════════════════════ */}
+                  {/* ══ CONCLUSION DU MÉDECIN ══ */}
+                  {!isEmergencySession && (
+                    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+
+                      {/* Header compact */}
+                      <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-4 py-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-600">
+                            <UserRound className="h-3.5 w-3.5 text-white" />
+                          </div>
+                          <div>
+                            <p className="text-[11px] font-black text-slate-800">Conclusion du médecin</p>
+                            <p className="text-[10px] text-slate-400">{runInfo?.doctor_name || 'Médecin responsable'} · {new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
+                          </div>
+                        </div>
+                        <div className="flex gap-1.5">
+                          {[
+                            { label: 'IA', val: `${aiValue.toFixed(1)}%`, ok: aiValue <= 10 },
+                            { label: 'IN', val: `${niValue.toFixed(1)}%`, ok: niValue >= 90 },
+                          ].map(idx => (
+                            <span key={idx.label} className={`rounded-md border px-2 py-0.5 text-[9px] font-black ${idx.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                              {idx.label} {idx.val}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="p-4 space-y-4">
+                        {/* Textarea conclusion */}
+                        <div>
+                          <div className="mb-1.5 flex items-center justify-between">
+                            <label className="text-[11px] font-bold text-slate-700" htmlFor="doctor-conclusion">
+                              Conclusion clinique
+                            </label>
+                            <span className="text-[10px] text-slate-400">{doctorConclusion.length}/2000</span>
+                          </div>
+                          <textarea
+                            id="doctor-conclusion"
+                            rows={3}
+                            maxLength={2000}
+                            value={doctorConclusion}
+                            onChange={(e) => setDoctorConclusion(e.target.value)}
+                            placeholder="Interprétation clinique, observations morphologiques, recommandations…"
+                            className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 placeholder-slate-400 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/20 leading-relaxed"
+                          />
+                          {doctorConclusion.length > 0 && (
+                            <p className="mt-1 flex items-center gap-1 text-[10px] text-emerald-600">
+                              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                              Sera incluse dans le rapport PDF
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Recommandations compactes */}
+                        <div>
+                          <p className="mb-2 text-[11px] font-bold text-slate-700">
+                            Recommandations <span className="font-normal text-slate-400">(optionnel)</span>
+                          </p>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            {RECOMMENDATIONS.map((rec) => {
+                              const checked = doctorRecommendations.has(rec.id);
+                              return (
+                                <label
+                                  key={rec.id}
+                                  className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-[11px] font-medium transition-all ${
+                                    checked
+                                      ? 'border-blue-200 bg-blue-50 text-blue-800'
+                                      : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-blue-200 hover:bg-blue-50/40'
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => toggleRecommendation(rec.id)}
+                                    className="h-3.5 w-3.5 shrink-0 rounded accent-blue-600"
+                                  />
+                                  {rec.label}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {!isEmergencySession && <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+
                     {/* Header */}
-                    <div className="relative overflow-hidden bg-gradient-to-r from-[#0f1f4b] via-[#0e2d82] to-[#1a3a8f] px-6 py-5">
-                      <span className="absolute -right-8 -top-8 h-28 w-28 rounded-full bg-white/5 pointer-events-none" />
-                      <div className="relative flex flex-wrap items-center justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/15">
-                            <FileText className="h-5 w-5 text-white" />
-                          </div>
-                          <div>
-                            <p className="text-[10px] font-bold uppercase tracking-widest text-blue-200">Rôle du clinicien</p>
-                            <p className="text-sm font-black text-white">Conclusion et synthèse médicale</p>
-                          </div>
-                        </div>
-                        <div className="rounded-xl border border-amber-400/40 bg-amber-400/15 px-3 py-1.5">
-                          <p className="text-[11px] font-bold text-amber-200">
-                            L'IA assiste — le médecin conclut
-                          </p>
-                        </div>
-                      </div>
+                    <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50 px-4 py-2.5">
+                      <Download className="h-3.5 w-3.5 text-slate-400" />
+                      <p className="text-[11px] font-black uppercase tracking-widest text-slate-500">Exports &amp; Dossier</p>
                     </div>
 
-                    <div className="p-6 space-y-6">
-                      {/* Rappel des indices pour contexte */}
-                      <div className="flex flex-wrap gap-3 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
-                        <p className="w-full text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">
-                          Résumé de l'analyse automatique (pour référence)
-                        </p>
-                        {[
-                          { label: 'IA', val: `${aiValue.toFixed(2)} %`, status: aiValue <= 10 ? 'Normal' : aiValue <= 20 ? 'Modéré' : 'Élevé', color: aiValue <= 10 ? 'text-emerald-600 bg-emerald-50 border-emerald-200' : aiValue <= 20 ? 'text-amber-600 bg-amber-50 border-amber-200' : 'text-red-600 bg-red-50 border-red-200' },
-                          { label: 'IN', val: `${niValue.toFixed(2)} %`, status: niValue >= 90 && niValue <= 110 ? 'Normal' : niValue < 60 ? 'Sévère' : niValue < 80 ? 'Modéré' : 'Légère réduction', color: niValue >= 90 && niValue <= 110 ? 'text-emerald-600 bg-emerald-50 border-emerald-200' : niValue < 80 ? 'text-red-600 bg-red-50 border-red-200' : 'text-amber-600 bg-amber-50 border-amber-200' },
-                        ].map((idx) => (
-                          <div key={idx.label} className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-bold ${idx.color}`}>
-                            <span>{idx.label} · {idx.val}</span>
-                            <span className="opacity-70">— {idx.status}</span>
-                          </div>
-                        ))}
-                        <p className="w-full text-[10px] italic text-slate-400">
-                          Ces indices sont générés automatiquement et doivent être interprétés par un clinicien qualifié.
-                        </p>
-                      </div>
+                    <div className="p-4 space-y-3">
 
-                      {/* Zone de conclusion libre */}
-                      <div>
-                        <div className="mb-2 flex items-center justify-between">
-                          <label className="text-sm font-bold text-slate-800" htmlFor="doctor-conclusion">
-                            Votre conclusion clinique <span className="text-red-400">*</span>
-                          </label>
-                          <span className="text-[11px] font-medium text-slate-400">
-                            {doctorConclusion.length} / 2000 caractères
-                          </span>
-                        </div>
-                        <textarea
-                          id="doctor-conclusion"
-                          rows={6}
-                          maxLength={2000}
-                          value={doctorConclusion}
-                          onChange={(e) => setDoctorConclusion(e.target.value)}
-                          placeholder="Rédigez votre interprétation clinique, vos observations sur la morphologie hippocampique, les corrélations avec le tableau clinique du patient, et vos recommandations personnalisées…"
-                          className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 placeholder-slate-400 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/20 leading-relaxed"
-                        />
-                        {doctorConclusion.length > 0 && (
-                          <div className="mt-2 flex items-center gap-1.5 text-[11px] text-emerald-600">
-                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                            Conclusion enregistrée — elle apparaîtra dans le rapport PDF
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Recommandations rapides */}
-                      <div>
-                        <p className="mb-3 text-sm font-bold text-slate-800">
-                          Recommandations cliniques <span className="text-[11px] font-normal text-slate-400">(optionnel)</span>
-                        </p>
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          {RECOMMENDATIONS.map((rec) => {
-                            const checked = doctorRecommendations.has(rec.id);
-                            return (
-                              <label
-                                key={rec.id}
-                                className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 transition-all ${
-                                  checked
-                                    ? 'border-blue-200 bg-blue-50 text-blue-800'
-                                    : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-blue-200 hover:bg-blue-50/40'
-                                }`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={() => toggleRecommendation(rec.id)}
-                                  className="h-4 w-4 shrink-0 rounded accent-blue-600"
-                                />
-                                <span className="text-sm font-medium">{rec.label}</span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Signature */}
-                      <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white">
-                            <UserRound className="h-4 w-4 text-slate-500" />
-                          </div>
-                          <div>
-                            <p className="text-xs font-bold text-slate-700">
-                              {runInfo?.doctor_name || runInfo?.created_by || 'Médecin responsable'}
-                            </p>
-                            <p className="text-[11px] text-slate-400">
-                              {new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-[10px] text-slate-400">
-                            Cette conclusion sera intégrée au rapport clinique PDF.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>}
-
-                  {!isEmergencySession && <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <div className="mb-4 flex items-center justify-between gap-2">
-                      <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Actions &amp; exports</p>
-                    </div>
-
-                    {/* Boutons export 3D */}
-                    <div className="flex flex-wrap items-center gap-3">
+                    {/* Ligne exports */}
+                    <div className="flex flex-wrap items-center gap-2">
                       <a href={toAbsoluteMediaUrl(modelingResult.obj_url)} target="_blank" rel="noreferrer" download
-                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all">
-                        <Download className="h-4 w-4" /> OBJ
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all">
+                        <Download className="h-3 w-3" /> OBJ
                       </a>
                       <a href={toAbsoluteMediaUrl(modelingResult.stl_url)} target="_blank" rel="noreferrer" download
-                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all">
-                        <Download className="h-4 w-4" /> STL
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all">
+                        <Download className="h-3 w-3" /> STL
                       </a>
+                      <div className="w-px h-4 bg-slate-200" />
                       <button type="button" onClick={handleOpenReportPreview}
                         disabled={reportLoading || !modelingResult}
-                        className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 px-5 py-2.5 text-sm font-bold text-white hover:from-blue-700 hover:to-blue-800 disabled:opacity-60 disabled:cursor-not-allowed shadow-lg shadow-blue-600/20 transition-all">
-                        <FileText className="h-4 w-4" /> Aperçu du rapport
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-60 transition-all">
+                        <FileText className="h-3 w-3" /> Aperçu rapport
                       </button>
-                    </div>
 
                     {/* ── Bouton export PDF direct ── */}
-                    <button type="button" onClick={handleDownloadReportPdf}
+                    <button type="button" onClick={async () => {
+                        if (!modelingResult) return;
+                        setReportLoading(true);
+                        try {
+                          let patientDetail = reportPatientDetail;
+                          if (!patientDetail && runInfo?.patient) {
+                            try {
+                              const r = await api.get(`/patients/${runInfo.patient}/`);
+                              patientDetail = r?.data?.patient || r?.data || null;
+                            } catch { patientDetail = null; }
+                          }
+                          const blob = buildArchivePdfBlob(patientDetail);
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `rapport_run_${runId}.pdf`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        } catch (err) {
+                          setReportError(`Echec export PDF : ${err.message}`);
+                        } finally {
+                          setReportLoading(false);
+                        }
+                      }}
                       disabled={reportLoading || !modelingResult}
-                      className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 disabled:opacity-50 disabled:cursor-not-allowed transition-all">
-                      {reportLoading
-                        ? <Loader2 className="h-4 w-4 animate-spin" />
-                        : <Download className="h-4 w-4" />}
-                      Exporter PDF
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 disabled:opacity-50 transition-all">
+                      {reportLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+                      PDF
                     </button>
+                    </div>
 
-                    {reportError && <p className="mt-3 text-xs font-medium text-red-600">{reportError}</p>}
+                    {reportError && <p className="text-[11px] font-medium text-red-600">{reportError}</p>}
 
-                    {/* ── Enregistrement dossier patient ── */}
-                    <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-                        <div className="flex items-center gap-2">
-                          <FolderOpen className="h-4 w-4 text-slate-500" />
-                          <p className="text-sm font-bold text-slate-800">Enregistrer dans le dossier patient</p>
+                    {/* ── Dossier patient ── */}
+                    <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <div className="flex items-center gap-1.5">
+                          <FolderOpen className="h-3.5 w-3.5 text-slate-400" />
+                          <p className="text-[11px] font-bold text-slate-700">Dossier patient</p>
                         </div>
                         {existingReport && !existingReport.same_mri && (
-                          <span className="inline-flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-bold text-amber-700">
-                            <CheckCircle2 className="h-3.5 w-3.5" /> Rapport déjà archivé
+                          <span className="text-[9px] font-bold text-amber-600 border border-amber-200 bg-amber-50 rounded-md px-1.5 py-0.5">Déjà archivé</span>
+                        )}
+                        {archiveSuccess && (
+                          <span className="text-[9px] font-bold text-emerald-600 border border-emerald-200 bg-emerald-50 rounded-md px-1.5 py-0.5 flex items-center gap-1">
+                            <CheckCircle2 className="h-2.5 w-2.5" /> Enregistré
                           </span>
                         )}
                       </div>
 
-                      {/* Rapport déjà enregistré pour ce run */}
-                      {existingReport && !existingReport.same_mri && (
-                        <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-                          <p className="font-bold">Un rapport existe déjà pour ce run.</p>
-                          <p className="text-[11px] text-emerald-600 mt-0.5">
-                            Archivé le {existingReport.created_at ? new Date(existingReport.created_at).toLocaleDateString('fr-FR') : '—'}
-                            {existingReport.doctor_name ? ` · par ${existingReport.doctor_name}` : ''}
-                          </p>
-                          <p className="text-[11px] text-emerald-600 mt-1">Vous pouvez archiver à nouveau pour mettre à jour la conclusion.</p>
-                        </div>
-                      )}
-
-                      {/* Même IRM déjà enregistrée dans le dossier patient (409) */}
-                      {existingReport?.same_mri && (
-                        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                          <p className="font-bold">Cette IRM est déjà enregistrée dans le dossier patient.</p>
-                          <p className="text-[11px] text-amber-600 mt-0.5">
-                            Enregistré le {existingReport.created_at ? new Date(existingReport.created_at).toLocaleDateString('fr-FR') : '—'}
-                            {existingReport.doctor_name ? ` · par ${existingReport.doctor_name}` : ''}.
-                            Aucun doublon ne sera créé.
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Succès d'archivage */}
-                      {archiveSuccess && (
-                        <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 flex items-center gap-3">
-                          <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
-                          <div>
-                            <p className="text-sm font-bold text-emerald-800">Rapport enregistré avec succès.</p>
-                            <p className="text-[11px] text-emerald-600">
-                              Rapport #{archiveSuccess.id} · {archiveSuccess.date ? new Date(archiveSuccess.date).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR')}
-                            </p>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Erreur d'archivage (hors 409) */}
                       {archiveError && !existingReport?.same_mri && (
-                        <p className="mb-3 text-xs font-medium text-red-600">{archiveError}</p>
+                        <p className="mb-2 text-[10px] font-medium text-red-600">{archiveError}</p>
                       )}
 
-                      <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
                         <button
                           type="button"
                           onClick={handleArchiveReport}
                           disabled={archiving || !modelingResult || !runInfo?.patient}
-                          className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-slate-700 to-slate-800 px-5 py-2.5 text-sm font-bold text-white hover:from-slate-800 hover:to-slate-900 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm transition-all"
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-900 disabled:opacity-50 transition-all"
                         >
-                          {archiving
-                            ? <Loader2 className="h-4 w-4 animate-spin" />
-                            : <FolderOpen className="h-4 w-4" />}
-                          {archiving ? 'Enregistrement…' : existingReport && !existingReport.same_mri ? 'Ré-archiver le rapport' : 'Enregistrer dans le dossier'}
+                          {archiving ? <Loader2 className="h-3 w-3 animate-spin" /> : <FolderOpen className="h-3 w-3" />}
+                          {archiving ? 'Enregistrement…' : existingReport && !existingReport.same_mri ? 'Ré-archiver' : 'Enregistrer'}
                         </button>
-
                         {runInfo?.patient && (
                           <button
                             onClick={() => navigate(`/dashboard/patients/${runInfo.patient}`)}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-600 hover:bg-blue-100 hover:border-blue-300 transition-all"
+                            className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-blue-600 hover:bg-blue-50 transition-all"
                           >
-                            Dossier patient
-                            <ArrowRight className="h-3.5 w-3.5" />
+                            Voir dossier <ArrowRight className="h-3 w-3" />
                           </button>
                         )}
                       </div>
 
-                      {/* Autres rapports du même patient */}
                       {otherPatientReports.length > 0 && (
-                        <div className="mt-4 border-t border-slate-200 pt-4">
-                          <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">Autres rapports du patient</p>
-                          <div className="space-y-1.5">
-                            {otherPatientReports.slice(0, 3).map((r) => (
-                              <div key={r.id} className="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-3 py-2">
-                                <span className="text-[11px] text-slate-600">Run #{r.run_id || '—'}</span>
-                                <span className="text-[11px] text-slate-400">{r.created_at ? new Date(r.created_at).toLocaleDateString('fr-FR') : '—'}</span>
-                              </div>
-                            ))}
-                          </div>
+                        <div className="mt-2.5 border-t border-slate-200 pt-2.5 space-y-1">
+                          <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Rapports précédents</p>
+                          {otherPatientReports.slice(0, 3).map((r) => (
+                            <div key={r.id} className="flex items-center justify-between rounded-md bg-white border border-slate-100 px-2.5 py-1.5">
+                              <span className="text-[11px] font-medium text-slate-600">Rapport #{r.run_id || '—'}</span>
+                              <span className="text-[10px] text-slate-400">{r.created_at ? new Date(r.created_at).toLocaleDateString('fr-FR') : '—'}</span>
+                            </div>
+                          ))}
                         </div>
                       )}
                     </div>
 
-                    <p className="mt-3 text-[11px] text-slate-400 font-medium">
-                      Les fichiers OBJ/STL sont compatibles avec Blender, MeshLab et 3D Slicer.
-                    </p>
+                    </div>
                   </div>}
                 </div>
         ) : null}

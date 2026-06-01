@@ -17,7 +17,6 @@ import {
   MessageSquare,
   MessageSquareWarning,
   Save,
-  Search,
   Shield,
   ShieldAlert,
   TrendingUp,
@@ -88,8 +87,7 @@ export default function Dashboard({ user, onLogout }) {
   const [reclamationsLoading, setReclamationsLoading] = useState(false);
   const [reclamationsError, setReclamationsError] = useState('');
   
-  // États pour la recherche et les notifications
-  const [searchQuery, setSearchQuery] = useState('');
+  // États pour les notifications
   const [showNotifications, setShowNotifications] = useState(false);
   const [decisionMessage, setDecisionMessage] = useState('');
   const [decisionError, setDecisionError] = useState('');
@@ -134,9 +132,10 @@ export default function Dashboard({ user, onLogout }) {
     orderNumber: '',
     email: '',
     affiliation: '',
-    specialty: '',
-    grade: '',
+    specialty: 'neuroradiologie',
+    grade: 'praticien',
     telephone: '',
+    password: '',
   });
 
   const focusCreateField = (field) => {
@@ -474,9 +473,10 @@ export default function Dashboard({ user, onLogout }) {
       orderNumber: '',
       email: '',
       affiliation: '',
-      specialty: '',
-      grade: '',
+      specialty: 'neuroradiologie',
+      grade: 'praticien',
       telephone: '',
+      password: '',
     });
     setCreateModalOpen(true);
   };
@@ -529,6 +529,7 @@ export default function Dashboard({ user, onLogout }) {
         specialty: createForm.specialty,
         grade: createForm.grade,
         telephone: normalizedTelephone,
+        password: createForm.password,
       });
       setDecisionMessage(res?.data?.message || 'Compte médecin créé avec succès.');
       setCreatedPassword(res?.data?.generated_password || '');
@@ -783,99 +784,97 @@ export default function Dashboard({ user, onLogout }) {
   const renderOverview = () => (
     <div className="space-y-10 animate-in fade-in slide-in-from-bottom-6 duration-1000">
       {/* 1. Header Overview Metrics */}
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
-        {stats.map((s, idx) => {
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        {stats.map((s) => {
           const Icon = s.icon;
+          const accent = s.iconClass.includes('blue') ? '#2563eb'
+            : s.iconClass.includes('emerald') ? '#059669'
+            : s.iconClass.includes('rose') ? '#e11d48'
+            : '#7c3aed';
+          const accentBg = s.iconClass.includes('blue') ? 'rgba(37,99,235,0.07)'
+            : s.iconClass.includes('emerald') ? 'rgba(5,150,105,0.07)'
+            : s.iconClass.includes('rose') ? 'rgba(225,29,72,0.07)'
+            : 'rgba(124,58,237,0.07)';
           return (
-            <div key={s.label} className="group relative overflow-hidden rounded-[2.5rem] bg-white p-8 shadow-2xl shadow-slate-200/40 border border-slate-100/50 hover:shadow-blue-500/10 transition-all duration-500 hover:-translate-y-1">
-              {/* Glossy Overlay */}
-              <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-slate-50 transition-transform duration-700 group-hover:scale-[3]" />
-              
-              <div className="relative z-10">
-                <div className="mb-6 flex items-center justify-between">
-                  <div className={`h-10 w-10 rounded-xl flex items-center justify-center ${s.iconClass.replace('text-', 'bg-').replace('blue-600', 'blue-50').replace('emerald-600', 'emerald-50').replace('rose-600', 'rose-50').replace('purple-600', 'purple-50')} ${s.iconClass}`}>
-                    <Icon className="h-5 w-5" />
-                  </div>
-                  <div className="flex flex-col items-end">
-                    <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-400 mb-1" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>BrainCore</span>
-                    <span className="flex h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" />
-                  </div>
+            <div key={s.label}
+              className="group relative overflow-hidden rounded-2xl bg-white border border-slate-100 shadow-sm hover:shadow-md transition-all duration-300 hover:-translate-y-0.5"
+              style={{ padding: '18px 20px' }}
+            >
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex items-center justify-center rounded-xl w-9 h-9 shrink-0"
+                  style={{ background: accentBg }}>
+                  <Icon size={16} style={{ color: accent }} />
                 </div>
-
-                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1.5" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{s.label}</p>
-                <h3 className="text-3xl font-bold text-slate-900 mb-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{s.value}</h3>
-                <div className="flex items-center gap-2">
-                   <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-                     ↑ {s.delta || '+12%'}
-                   </div>
-                   <span className="text-[10px] text-slate-400">vs mois dernier</span>
-                </div>
+                <span className="flex h-1.5 w-1.5 rounded-full mt-1" style={{ background: accent, opacity: 0.7 }} />
               </div>
-
-              {/* Decorative line */}
-              <div className="absolute bottom-0 left-0 h-1 w-0 bg-blue-600 transition-all duration-500 group-hover:w-full" />
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-1"
+                style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{s.label}</p>
+              <p className="text-2xl font-black text-slate-900 leading-none mb-2"
+                style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{s.value}</p>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                  style={{ color: accent, background: accentBg }}>
+                  ↑ {s.delta || '+12%'}
+                </span>
+                <span className="text-[10px] text-slate-400">vs mois dernier</span>
+              </div>
+              <div className="absolute bottom-0 left-0 h-0.5 w-0 transition-all duration-500 group-hover:w-full rounded-full"
+                style={{ background: accent }} />
             </div>
           );
         })}
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
         {/* 2. Professional Network Distribution */}
-        <div className="xl:col-span-4 rounded-2xl bg-slate-900 p-6 shadow-xl shadow-slate-900/10 text-white relative overflow-hidden group">
-          <div className="absolute -right-20 -bottom-20 h-64 w-64 rounded-full bg-blue-600/10 blur-[80px]" />
-          
+        <div className="xl:col-span-4 rounded-2xl bg-slate-900 p-5 shadow-lg text-white relative overflow-hidden">
+          <div className="absolute -right-12 -bottom-12 h-40 w-40 rounded-full bg-blue-500/10 blur-[60px] pointer-events-none" />
           <div className="relative z-10">
-            <div className="mb-6 flex items-start justify-between">
+            <div className="mb-4 flex items-center justify-between">
               <div>
-                <p className="text-[9px] font-semibold text-blue-400 uppercase tracking-[0.25em] mb-1.5" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Audience</p>
-                <h3 className="text-lg font-bold text-white" style={{ fontFamily: "'Playfair Display', serif" }}>Réseau Praticiens</h3>
+                <p className="text-[9px] font-bold text-blue-400 uppercase tracking-[0.22em]" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Audience</p>
+                <h3 className="text-[15px] font-bold text-white mt-0.5" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Réseau Praticiens</h3>
               </div>
-              <div className="h-10 w-10 rounded-xl bg-white/10 flex items-center justify-center backdrop-blur-md">
-                 <Users className="h-5 w-5 text-blue-400" />
+              <div className="h-8 w-8 rounded-xl bg-white/10 flex items-center justify-center">
+                <Users className="h-4 w-4 text-blue-400" />
               </div>
             </div>
-
-            <div className="space-y-5">
+            <div className="space-y-3">
               {audienceSegments.map((seg) => (
-                <div key={seg.label} className="group/item">
-                  <div className="mb-3 flex items-center justify-between">
-                    <span className="text-sm font-bold text-slate-300 group-hover/item:text-white transition-colors">{seg.label}</span>
-                    <span className="text-sm font-black text-blue-400" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{seg.percent}%</span>
+                <div key={seg.label}>
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <span className="text-[12px] font-semibold text-slate-300">{seg.label}</span>
+                    <span className="text-[11px] font-black text-blue-400" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{seg.percent}%</span>
                   </div>
-                  <div className="h-1.5 w-full rounded-full bg-white/5 overflow-hidden">
-                    <div 
-                      className={`h-full rounded-full transition-all duration-1000 shadow-[0_0_12px_rgba(37,99,235,0.3)] ${seg.color.replace('bg-', 'bg-')}`} 
-                      style={{ width: `${Math.max(seg.percent, 3)}%` }} 
-                    />
+                  <div className="h-1 w-full rounded-full bg-white/10 overflow-hidden">
+                    <div className={`h-full rounded-full transition-all duration-700 ${seg.color}`}
+                      style={{ width: `${Math.max(seg.percent, 2)}%` }} />
                   </div>
                 </div>
               ))}
             </div>
-
-            <button className="mt-12 w-full py-5 rounded-2xl bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-[0.2em] hover:bg-white/10 transition-all">
-               Exporter le Mapping
+            <button className="mt-5 w-full py-2.5 rounded-xl bg-white/8 border border-white/10 text-[10px] font-black uppercase tracking-[0.18em] hover:bg-white/15 transition-all">
+              Exporter le Mapping
             </button>
           </div>
         </div>
 
         {/* 3. Analytics Growth Chart */}
-        <div className="xl:col-span-8 rounded-[3rem] bg-white p-10 shadow-2xl shadow-slate-200/50 border border-slate-50 relative overflow-hidden">
-            <div className="mb-4 flex items-center justify-between">
+        <div className="xl:col-span-8 rounded-2xl bg-white p-5 shadow-sm border border-slate-100 relative overflow-hidden">
+            <div className="mb-3 flex items-center justify-between">
               <div>
-                <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-[0.2em] mb-1" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Performance</p>
-                <h3 className="text-lg font-bold text-slate-900" style={{ fontFamily: "'Playfair Display', serif" }}>Croissance des Analyses</h3>
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.2em]" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Performance</p>
+                <h3 className="text-[15px] font-bold text-slate-900 mt-0.5" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Croissance des Analyses</h3>
               </div>
-              <div className="flex gap-4">
-                 <div className="flex items-center gap-6">
-                    <div className="flex items-center gap-2">
-                       <span className="h-3 w-3 rounded-full bg-blue-600 shadow-[0_0_8px_rgba(37,99,235,0.4)]" />
-                       <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tighter">Segmentation</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                       <span className="h-3 w-3 rounded-full border-2 border-slate-300" />
-                       <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tighter">Recalage</span>
-                    </div>
-                 </div>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-blue-600" />
+                  <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-tight">Segmentation</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full border border-slate-300" />
+                  <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-tight">Recalage</span>
+                </div>
               </div>
             </div>
 
@@ -938,17 +937,17 @@ export default function Dashboard({ user, onLogout }) {
               );
             })()}
 
-            <div className="mt-4 p-4 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                   <div className="h-8 w-8 rounded-lg bg-orange-100 flex items-center justify-center text-orange-600">
-                      <Zap className="h-4 w-4" />
-                   </div>
-                   <div>
-                      <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Optimisation IA active</p>
-                      <p className="text-[10px] text-slate-400">Temps de traitement moyen : 4.2s</p>
-                   </div>
+            <div className="mt-3 px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="h-7 w-7 rounded-lg bg-orange-50 flex items-center justify-center shrink-0">
+                  <Zap className="h-3.5 w-3.5 text-orange-500" />
                 </div>
-                <button className="px-4 py-1.5 rounded-lg bg-white border border-slate-200 text-[10px] font-semibold text-slate-600 uppercase tracking-wider hover:border-blue-400 hover:text-blue-600 transition-all" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Détails</button>
+                <div>
+                  <p className="text-[11px] font-semibold text-slate-700" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Optimisation IA active</p>
+                  <p className="text-[10px] text-slate-400">Temps de traitement moyen : 4.2s</p>
+                </div>
+              </div>
+              <button className="px-3 py-1 rounded-lg bg-white border border-slate-200 text-[10px] font-semibold text-slate-500 uppercase tracking-wide hover:border-blue-300 hover:text-blue-600 transition-all">Détails</button>
             </div>
         </div>
       </div>
@@ -965,12 +964,12 @@ export default function Dashboard({ user, onLogout }) {
             {accountsData?.count ?? accounts.length} praticiens répertoriés sur la plateforme
           </p>
         </div>
-        <button 
-          onClick={openCreateModal} 
-          className="group flex items-center gap-3 rounded-2xl bg-slate-900 px-6 py-4 text-xs font-black text-white hover:bg-blue-600 transition-all shadow-xl shadow-slate-900/10 hover:shadow-blue-500/20 active:scale-95 uppercase tracking-widest"
+        <button
+          onClick={openCreateModal}
+          className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-[11px] font-bold text-white hover:bg-blue-600 transition-all uppercase tracking-wider"
           style={{ fontFamily: "'Space Grotesk', sans-serif" }}
         >
-          <UserPlus className="h-4 w-4 transition-transform group-hover:scale-110" />
+          <UserPlus className="h-3.5 w-3.5" />
           Nouveau Praticien
         </button>
       </div>
@@ -991,53 +990,44 @@ export default function Dashboard({ user, onLogout }) {
 
       {/* Pending Validation Section */}
       {pendingAccounts.length > 0 && (
-        <div className="rounded-[2.5rem] bg-amber-50/50 border-2 border-dashed border-amber-200 p-6 overflow-hidden relative">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="h-8 w-8 rounded-full bg-amber-500 flex items-center justify-center text-white shadow-lg shadow-amber-500/20">
-              <Shield className="h-4 w-4" />
+        <div className="rounded-2xl bg-amber-50/60 border border-dashed border-amber-300 p-4">
+          <div className="flex items-center gap-2.5 mb-4">
+            <div className="h-7 w-7 rounded-lg bg-amber-500 flex items-center justify-center text-white shrink-0">
+              <Shield className="h-3.5 w-3.5" />
             </div>
-            <h3 className="text-sm font-black text-amber-800 uppercase tracking-widest" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+            <h3 className="text-[11px] font-black text-amber-800 uppercase tracking-widest" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
               {pendingAccounts.length} Validation{pendingAccounts.length > 1 ? 's' : ''} en attente
             </h3>
           </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {pendingAccounts.map((a) => (
-              <div key={`pending-${a.user_id}`} className="bg-white p-5 rounded-3xl border border-amber-100 shadow-sm hover:shadow-md transition-shadow flex flex-col gap-4">
-                <div className="flex items-center gap-4">
-                   <div className="h-12 w-12 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-600 font-black text-lg shadow-inner" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-                     {(a.full_name || a.username || '?').charAt(0).toUpperCase()}
-                   </div>
-                   <div className="min-w-0">
-                      <p className="text-sm font-black text-slate-900 leading-tight truncate">{a.full_name || a.username}</p>
-                      <p className="text-[11px] text-slate-400 font-bold truncate mt-0.5">{a.email}</p>
-                   </div>
+              <div key={`pending-${a.user_id}`} className="bg-white rounded-xl border border-amber-100 shadow-sm p-4 flex flex-col gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="h-9 w-9 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600 font-black text-sm shrink-0" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+                    {(a.full_name || a.username || '?').charAt(0).toUpperCase()}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-bold text-slate-900 leading-tight truncate">{a.full_name || a.username}</p>
+                    <p className="text-[11px] text-slate-400 truncate">{a.email}</p>
+                  </div>
                 </div>
-                
                 <div className="grid grid-cols-2 gap-2">
-                   <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-tighter mb-0.5">Spécialité</p>
-                      <p className="text-[10px] font-bold text-slate-600 truncate">{a.specialty || 'Non précisé'}</p>
-                   </div>
-                   <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-tighter mb-0.5">Matricule</p>
-                      <p className="text-[10px] font-bold text-slate-600 truncate">{a.order_number || 'En attente'}</p>
-                   </div>
+                  <div className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-100">
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Spécialité</p>
+                    <p className="text-[11px] font-semibold text-slate-700 truncate">{a.specialty || 'Non précisé'}</p>
+                  </div>
+                  <div className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-100">
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Matricule</p>
+                    <p className="text-[11px] font-semibold text-slate-700 truncate">{a.order_number || '—'}</p>
+                  </div>
                 </div>
-
-                <div className="flex items-center gap-2 mt-2">
-                  <button
-                    onClick={() => handleApprove(a.user_id)}
-                    disabled={isProcessingDecision}
-                    className="flex-1 py-3 px-4 rounded-xl bg-emerald-500 text-white text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all disabled:opacity-50"
-                  >
+                <div className="flex gap-2">
+                  <button onClick={() => handleApprove(a.user_id)} disabled={isProcessingDecision}
+                    className="flex-1 py-2 rounded-lg bg-emerald-500 text-white text-[10px] font-bold uppercase tracking-wider hover:bg-emerald-600 transition-all disabled:opacity-50">
                     Approuver
                   </button>
-                  <button
-                    onClick={() => openRejectModal(a.user_id, a.full_name || a.username)}
-                    disabled={isProcessingDecision}
-                    className="flex-1 py-3 px-4 rounded-xl bg-white border border-rose-200 text-rose-500 text-[10px] font-black uppercase tracking-widest hover:bg-rose-50 transition-all disabled:opacity-50"
-                  >
+                  <button onClick={() => openRejectModal(a.user_id, a.full_name || a.username)} disabled={isProcessingDecision}
+                    className="flex-1 py-2 rounded-lg bg-white border border-rose-200 text-rose-500 text-[10px] font-bold uppercase tracking-wider hover:bg-rose-50 transition-all disabled:opacity-50">
                     Refuser
                   </button>
                 </div>
@@ -1048,65 +1038,64 @@ export default function Dashboard({ user, onLogout }) {
       )}
 
       {/* Main Accounts Table */}
-      <div className="rounded-[3rem] bg-white shadow-2xl shadow-slate-200/50 border border-slate-100/60 overflow-hidden">
+      <div className="rounded-2xl bg-white border border-slate-100 shadow-sm overflow-hidden">
         {accountsError ? (
-          <div className="p-20 text-center flex flex-col items-center">
-            <div className="h-16 w-16 rounded-full bg-rose-50 flex items-center justify-center mb-6">
-              <AlertTriangle className="h-8 w-8 text-rose-500" />
+          <div className="p-12 text-center flex flex-col items-center gap-3">
+            <div className="h-10 w-10 rounded-full bg-rose-50 flex items-center justify-center">
+              <AlertTriangle className="h-5 w-5 text-rose-500" />
             </div>
-            <h4 className="text-lg font-black text-slate-900 mb-2">Erreur de chargement</h4>
-            <p className="text-sm text-slate-400 max-w-sm font-medium mb-8">{accountsError}</p>
-            <button onClick={() => void reloadAccounts()} className="px-8 py-3 rounded-2xl bg-slate-900 text-white text-xs font-black uppercase tracking-widest hover:bg-blue-600 transition-all">
-              Tenter une reconnexion
+            <p className="text-sm font-semibold text-slate-700">{accountsError}</p>
+            <button onClick={() => void reloadAccounts()} className="px-5 py-2 rounded-lg bg-slate-900 text-white text-[11px] font-bold uppercase tracking-wider hover:bg-blue-600 transition-all">
+              Réessayer
             </button>
           </div>
         ) : accounts.length === 0 ? (
-          <div className="p-20 text-center flex flex-col items-center">
-            <Users className="h-16 w-16 text-slate-100 mb-6" />
-            <p className="text-slate-400 font-black uppercase tracking-widest text-xs">Aucun praticien enregistré</p>
+          <div className="p-12 text-center flex flex-col items-center gap-2">
+            <Users className="h-10 w-10 text-slate-200" />
+            <p className="text-slate-400 text-xs font-semibold uppercase tracking-widest">Aucun praticien enregistré</p>
           </div>
         ) : (
           <div className="overflow-x-auto no-scrollbar">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-50/50 border-b border-slate-100">
-                  {['Nom & Profil', 'Grade', 'Spécialité', 'Statut', 'Dernière Session', 'Actions'].map(col => (
-                    <th key={col} className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{col}</th>
+                <tr className="bg-slate-50 border-b border-slate-100">
+                  {['Nom & Profil', 'Grade', 'Spécialité', 'Statut', 'Dernière Session', ''].map(col => (
+                    <th key={col} className="px-5 py-3 text-[9px] font-bold text-slate-400 uppercase tracking-[0.18em]">{col}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {accounts.map((a) => (
-                  <tr key={a[0]} className="hover:bg-blue-50/30 transition-all duration-300 group">
-                    <td className="px-8 py-6">
-                      <div className="flex items-center gap-4">
-                        <div className="h-12 w-12 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-500 font-black text-base shadow-inner group-hover:bg-blue-100 group-hover:text-blue-600 transition-all" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+                  <tr key={a[0]} className="hover:bg-slate-50/70 transition-colors group">
+                    <td className="px-5 py-3.5">
+                      <div className="flex items-center gap-3">
+                        <div className="h-8 w-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-500 font-bold text-sm shrink-0 group-hover:bg-blue-50 group-hover:text-blue-600 transition-colors" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
                           {String(a[1]).charAt(0).toUpperCase()}
                         </div>
                         <div>
-                          <p className="text-[13px] font-black text-slate-900 leading-tight">{a[1]}</p>
-                          <p className="text-[11px] text-slate-400 font-bold mt-0.5">{a[2]}</p>
+                          <p className="text-[13px] font-semibold text-slate-900 leading-tight">{a[1]}</p>
+                          <p className="text-[11px] text-slate-400">{a[2]}</p>
                         </div>
                       </div>
                     </td>
-                    <td className="px-8 py-6">
-                       <span className="text-xs font-bold text-slate-600" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{a[3]}</span>
+                    <td className="px-5 py-3.5">
+                      <span className="text-[12px] text-slate-600">{a[3]}</span>
                     </td>
-                    <td className="px-8 py-6">
-                       <span className="text-xs font-bold text-slate-400">{a[4]}</span>
+                    <td className="px-5 py-3.5">
+                      <span className="text-[12px] text-slate-500">{a[4]}</span>
                     </td>
-                    <td className="px-8 py-6">
-                      <span className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest ${a[7]}`}>
+                    <td className="px-5 py-3.5">
+                      <span className={`px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider ${a[7]}`}>
                         {a[5]}
                       </span>
                     </td>
-                    <td className="px-8 py-6">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{a[6]}</p>
+                    <td className="px-5 py-3.5">
+                      <span className="text-[11px] text-slate-400">{a[6]}</span>
                     </td>
-                    <td className="px-8 py-6">
-                       <button className="h-10 w-10 flex items-center justify-center rounded-xl bg-slate-50 text-slate-400 hover:bg-slate-900 hover:text-white transition-all group-hover:shadow-lg">
-                          <Eye className="h-4 w-4" />
-                       </button>
+                    <td className="px-5 py-3.5">
+                      <button className="h-7 w-7 flex items-center justify-center rounded-lg bg-slate-50 text-slate-400 hover:bg-slate-900 hover:text-white transition-all">
+                        <Eye className="h-3.5 w-3.5" />
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -1143,105 +1132,87 @@ export default function Dashboard({ user, onLogout }) {
       </div>
 
       {pendingTestimonials.length > 0 && (
-        <div className="rounded-[2.5rem] bg-amber-50/50 border-2 border-dashed border-amber-200 p-8 overflow-hidden relative">
-          <div className="flex items-center gap-3 mb-8">
-            <div className="h-10 w-10 rounded-2xl bg-amber-500 flex items-center justify-center text-white shadow-xl shadow-amber-500/20">
-              <MessageSquare className="h-5 w-5" />
+        <div className="rounded-2xl bg-amber-50/60 border border-dashed border-amber-300 p-4">
+          <div className="flex items-center gap-2.5 mb-4">
+            <div className="h-7 w-7 rounded-lg bg-amber-500 flex items-center justify-center text-white shrink-0">
+              <MessageSquare className="h-3.5 w-3.5" />
             </div>
-            <h3 className="text-sm font-black text-amber-800 uppercase tracking-widest" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+            <h3 className="text-[11px] font-black text-amber-800 uppercase tracking-widest" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
               {pendingTestimonials.length} Témoignage{pendingTestimonials.length > 1 ? 's' : ''} à modérer
             </h3>
           </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {pendingTestimonials.map((t) => (
-              <div key={`pending-testimonial-${t.id}`} className="bg-white p-6 rounded-[2rem] border border-amber-100 shadow-xl shadow-amber-900/5 flex flex-col gap-6 relative group overflow-hidden">
-                <div className="flex-1 relative z-10">
-                  <div className="flex items-center gap-3 mb-4">
-                    <p className="text-[13px] font-black text-slate-900">{t.name}</p>
-                    {t.role && (
-                      <span className="text-[9px] font-black text-slate-400 bg-slate-100 px-3 py-1 rounded-full uppercase tracking-tighter" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-                        {t.role}
-                      </span>
-                    )}
-                  </div>
-                  <div className="relative p-5 rounded-2xl bg-slate-50/50 border border-slate-50 italic text-sm text-slate-600 line-clamp-4 leading-relaxed group-hover:bg-white transition-all">
-                    "{t.text}"
-                    <div className="absolute top-0 right-0 p-2 opacity-10">
-                       <MessageSquare className="h-8 w-8 text-slate-900 rotate-12" />
-                    </div>
-                  </div>
-                  <p className="mt-4 text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                    <Clock3 className="h-3 w-3" /> {formatDate(t.created_at)}
-                  </p>
+              <div key={`pending-testimonial-${t.id}`} className="bg-white rounded-xl border border-amber-100 shadow-sm p-4 flex flex-col gap-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-[13px] font-semibold text-slate-900">{t.name}</p>
+                  {t.role && (
+                    <span className="text-[9px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full uppercase tracking-wide">
+                      {t.role}
+                    </span>
+                  )}
                 </div>
-                
-                <div className="flex items-center gap-3 relative z-10">
-                  <button
-                    onClick={() => handleApproveTestimonial(t.id)}
-                    disabled={isProcessingTestimonialDecision}
-                    className="flex-1 py-4 px-6 rounded-2xl bg-emerald-500 text-white text-[10px] font-black uppercase tracking-[0.2em] hover:bg-emerald-600 transition-all disabled:opacity-50 shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/40"
-                  >
+                <div className="px-3 py-2.5 rounded-lg bg-slate-50 border border-slate-100 italic text-[12px] text-slate-600 leading-relaxed line-clamp-3">
+                  "{t.text}"
+                </div>
+                <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                  <Clock3 className="h-3 w-3" /> {formatDate(t.created_at)}
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => handleApproveTestimonial(t.id)} disabled={isProcessingTestimonialDecision}
+                    className="flex-1 py-2 rounded-lg bg-emerald-500 text-white text-[10px] font-bold uppercase tracking-wider hover:bg-emerald-600 transition-all disabled:opacity-50">
                     Approuver
                   </button>
-                  <button
-                    onClick={() => handleRejectTestimonial(t.id)}
-                    disabled={isProcessingTestimonialDecision}
-                    className="flex-1 py-4 px-6 rounded-2xl bg-white border border-rose-200 text-rose-500 text-[10px] font-black uppercase tracking-[0.2em] hover:bg-rose-50 transition-all disabled:opacity-50"
-                  >
+                  <button onClick={() => handleRejectTestimonial(t.id)} disabled={isProcessingTestimonialDecision}
+                    className="flex-1 py-2 rounded-lg bg-white border border-rose-200 text-rose-500 text-[10px] font-bold uppercase tracking-wider hover:bg-rose-50 transition-all disabled:opacity-50">
                     Rejeter
                   </button>
                 </div>
-                
-                <div className="absolute top-0 right-0 h-40 w-40 bg-amber-500/5 rounded-full blur-3xl -mr-20 -mt-20 group-hover:bg-amber-500/10 transition-all" />
               </div>
             ))}
           </div>
         </div>
       )}
 
-      <div className="rounded-[3rem] bg-white shadow-2xl shadow-slate-200/50 border border-slate-100/60 overflow-hidden">
-        <div className="p-8 border-b border-slate-100 flex items-center justify-between">
-           <h3 className="text-xl font-black text-slate-900" style={{ fontFamily: "'Playfair Display', serif" }}>Archives Témoignages</h3>
+      <div className="rounded-2xl bg-white border border-slate-100 shadow-sm overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-slate-100">
+          <h3 className="text-[13px] font-semibold text-slate-800" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Archives Témoignages</h3>
         </div>
-        
         {testimonials.length === 0 ? (
-          <div className="p-20 text-center flex flex-col items-center">
-            <MessageSquare className="h-16 w-16 text-slate-100 mb-6" />
-            <p className="text-slate-400 font-black uppercase tracking-widest text-[10px]">Aucune archive disponible</p>
+          <div className="p-12 text-center flex flex-col items-center gap-2">
+            <MessageSquare className="h-10 w-10 text-slate-200" />
+            <p className="text-slate-400 text-xs font-semibold uppercase tracking-widest">Aucune archive disponible</p>
           </div>
         ) : (
           <div className="overflow-x-auto no-scrollbar">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-50/50 border-b border-slate-100">
-                  {['Emetteur', 'Rôle', 'Message Statut', 'Dates Actions'].map(col => (
-                    <th key={col} className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{col}</th>
+                <tr className="bg-slate-50 border-b border-slate-100">
+                  {['Emetteur', 'Rôle', 'Message', 'Statut', 'Dates'].map(col => (
+                    <th key={col} className="px-5 py-3 text-[9px] font-bold text-slate-400 uppercase tracking-[0.18em]">{col}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {testimonials.map((t) => (
-                  <tr key={`testimonial-${t.id}`} className="hover:bg-blue-50/30 transition-all duration-300 group">
-                    <td className="px-8 py-6">
-                      <p className="text-[13px] font-black text-slate-900 leading-tight">{t.name}</p>
+                  <tr key={`testimonial-${t.id}`} className="hover:bg-slate-50/70 transition-colors group">
+                    <td className="px-5 py-3.5">
+                      <p className="text-[13px] font-semibold text-slate-900">{t.name}</p>
                     </td>
-                    <td className="px-8 py-6">
-                       <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">{t.role || 'Citoyen'}</span>
+                    <td className="px-5 py-3.5">
+                      <span className="text-[11px] text-slate-500">{t.role || 'Citoyen'}</span>
                     </td>
-                    <td className="px-8 py-6">
-                      <div className="flex flex-col gap-2">
-                        <span className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest self-start ${String(t.status) === 'approved' ? 'bg-emerald-100 text-emerald-700' : String(t.status) === 'rejected' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>
-                          {String(t.status) === 'approved' ? 'Diffusion Publique' : String(t.status) === 'rejected' ? 'Refusé' : 'Modération'}
-                        </span>
-                        <p className="text-xs text-slate-500 font-medium line-clamp-1 italic max-w-xs pr-4 group-hover:line-clamp-none transition-all">"{t.text}"</p>
-                      </div>
+                    <td className="px-5 py-3.5 max-w-xs">
+                      <p className="text-[12px] text-slate-500 italic line-clamp-1 group-hover:line-clamp-none transition-all">"{t.text}"</p>
                     </td>
-                    <td className="px-8 py-6">
-                      <div className="flex flex-col gap-1">
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Soumis: {formatDate(t.created_at)}</p>
-                        {t.reviewed_at && <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Traité: {formatDate(t.reviewed_at)}</p>}
-                      </div>
+                    <td className="px-5 py-3.5">
+                      <span className={`px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider ${String(t.status) === 'approved' ? 'bg-emerald-50 text-emerald-700' : String(t.status) === 'rejected' ? 'bg-rose-50 text-rose-600' : 'bg-amber-50 text-amber-700'}`}>
+                        {String(t.status) === 'approved' ? 'Publié' : String(t.status) === 'rejected' ? 'Refusé' : 'En attente'}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3.5">
+                      <p className="text-[11px] text-slate-400">{formatDate(t.created_at)}</p>
+                      {t.reviewed_at && <p className="text-[10px] text-blue-400 mt-0.5">{formatDate(t.reviewed_at)}</p>}
                     </td>
                   </tr>
                 ))}
@@ -1262,46 +1233,35 @@ export default function Dashboard({ user, onLogout }) {
         </div>
       </div>
 
-      <div className="rounded-[3rem] bg-white shadow-2xl shadow-slate-200/50 border border-slate-100/60 overflow-hidden">
-        <div className="p-8 border-b border-slate-100 flex items-center justify-between">
-           <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Live Audit Feed</span>
-           </div>
+      <div className="rounded-2xl bg-white border border-slate-100 shadow-sm overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-slate-100 flex items-center gap-2">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.18em]">Live Audit Feed</span>
         </div>
-        
         <div className="divide-y divide-slate-50">
           {(historyData?.items || []).length === 0 ? (
-            <div className="p-40 text-center flex flex-col items-center">
-               <Database className="h-16 w-16 text-slate-100 mb-6" />
-               <p className="text-slate-400 font-black uppercase tracking-widest text-[10px]">Aucune donnée dans le journal</p>
+            <div className="p-12 text-center flex flex-col items-center gap-2">
+              <Database className="h-10 w-10 text-slate-200" />
+              <p className="text-slate-400 text-xs font-semibold uppercase tracking-widest">Aucune donnée dans le journal</p>
             </div>
-          ) : (historyData?.items || []).map((t, idx) => {
-            const Icon = t.icon || Clock3;
-            return (
-              <div key={idx} className="flex flex-col md:flex-row md:items-center justify-between gap-6 px-10 py-8 hover:bg-slate-50/80 transition-all duration-300 group">
-                <div className="flex items-center gap-6">
-                  <div className="h-16 w-16 rounded-[2rem] bg-white shadow-xl shadow-slate-900/5 flex items-center justify-center text-slate-900 border border-slate-100 group-hover:bg-slate-900 group-hover:text-white transition-all transform group-hover:rotate-6">
-                    <Database className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <h4 className="text-[15px] font-black text-slate-900 leading-tight mb-1">{t.user || 'Processus Système'}</h4>
-                    <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">{t.action || 'Opération Trace'}</p>
-                    <div className="mt-3 flex items-center gap-3">
-                       <span className="text-[10px] text-slate-400 font-black tracking-widest flex items-center gap-1.5"><Clock3 className="h-3 w-3" /> {formatDate(t.date)}</span>
-                       <span className="h-1 w-1 rounded-full bg-slate-200" />
-                       <span className="text-[10px] text-slate-400 font-black tracking-widest flex items-center gap-1.5"><Shield className="h-3 w-3" /> ID: #{String(t.id || idx).slice(-4)}</span>
-                    </div>
-                  </div>
+          ) : (historyData?.items || []).map((t, idx) => (
+            <div key={idx} className="flex items-center justify-between gap-4 px-5 py-3.5 hover:bg-slate-50/70 transition-colors group">
+              <div className="flex items-center gap-3">
+                <div className="h-8 w-8 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-500 group-hover:bg-slate-900 group-hover:text-white transition-colors shrink-0">
+                  <Database className="h-3.5 w-3.5" />
                 </div>
-                <div className="flex items-center gap-8 self-end md:self-center">
-                  <span className={`px-5 py-2 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] shadow-sm transform group-hover:scale-105 transition-transform ${badgeClass(t.status || 'Info')}`}>
-                    {t.status || 'Success'}
-                  </span>
+                <div>
+                  <p className="text-[13px] font-semibold text-slate-900 leading-tight">{t.title || 'Processus Système'}</p>
+                  <p className="text-[11px] text-slate-500">{t.subtitle || 'Opération Trace'}</p>
+                  <div className="flex items-center gap-3 mt-0.5">
+                    <span className="text-[10px] text-slate-400 flex items-center gap-1"><Clock3 className="h-3 w-3" /> {formatDate(t.date)}</span>
+                    <span className="text-[10px] text-slate-300">·</span>
+                    <span className="text-[10px] text-slate-400">ID #{String(t.id || idx).slice(-4)}</span>
+                  </div>
                 </div>
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -1309,20 +1269,16 @@ export default function Dashboard({ user, onLogout }) {
 
   const renderSettings = () => (
     <div className="space-y-10 animate-in fade-in slide-in-from-bottom-6 duration-700 pb-20 mt-8">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-12">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
         <div>
-          <h2 className="text-4xl font-black text-slate-900" style={{ fontFamily: "'Playfair Display', serif" }}>Configuration Globale</h2>
-          <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-2 flex items-center gap-2">
-            <Lock className="h-4 w-4 text-blue-500" /> Gouvernance & Sécurité BrainCore
+          <h2 className="text-xl font-bold text-slate-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Configuration Globale</h2>
+          <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1.5">
+            <Lock className="h-3.5 w-3.5 text-blue-500" /> Gouvernance & Sécurité BrainCore
           </p>
         </div>
-        <button
-          onClick={handleSaveSettings}
-          className="group relative flex items-center gap-4 overflow-hidden rounded-[1.8rem] bg-slate-900 px-10 py-5 text-[10px] font-black uppercase tracking-widest text-white transition-all hover:bg-blue-600 hover:shadow-2xl hover:shadow-blue-500/20 active:scale-[0.98]"
-        >
-          <div className="absolute inset-x-0 bottom-0 h-1 w-full bg-blue-400/30 transition-all duration-300 group-hover:h-2" />
-          <Save className="h-4 w-4 transition-transform group-hover:scale-110" />
-          Sauvegarder les Protocoles
+        <button onClick={handleSaveSettings}
+          className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-[11px] font-bold text-white uppercase tracking-wider hover:bg-blue-600 transition-all">
+          <Save className="h-3.5 w-3.5" /> Sauvegarder
         </button>
       </div>
 
@@ -1333,136 +1289,101 @@ export default function Dashboard({ user, onLogout }) {
       )}
 
       {/* KPI Row for Settings */}
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-3 mb-10">
-        <div className="rounded-[2.5rem] bg-white p-8 shadow-xl shadow-slate-200/40 border border-slate-100/50 group hover:border-blue-200 transition-all">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Niveau de Risque</p>
-          <p className="text-xl font-bold text-slate-900 mb-2 truncate" style={{ fontFamily: "'Playfair Display', serif" }}>
-            {adminSettingsForm.twoFactorRequired && adminSettingsForm.forceStrongPassword ? 'Minimal' : 'ProtÃ©gÃ©'}
-          </p>
-          <div className="flex items-center gap-2">
-             <span className="h-2 w-2 rounded-full bg-emerald-500" />
-             <span className="text-[10px] font-medium text-slate-400">BasÃ© sur 2FA & Mots de passe</span>
+      <div className="grid grid-cols-3 gap-4 mb-5">
+        {[
+          { label: 'Niveau de risque', value: adminSettingsForm.twoFactorRequired && adminSettingsForm.forceStrongPassword ? 'Minimal' : 'Protégé', dot: 'bg-emerald-500', sub: 'Basé sur 2FA & mots de passe' },
+          { label: 'Notifications', value: `${[adminSettingsForm.emailNotifications, adminSettingsForm.pushNotifications, adminSettingsForm.weeklyDigest].filter(Boolean).length}/3`, dot: 'bg-amber-500', sub: 'Canaux actifs' },
+          { label: 'Conformité RGPD', value: adminSettingsForm.auditLogRetention && adminSettingsForm.manualAccountApproval ? 'Certifiée' : 'Intermédiaire', dot: 'bg-blue-500', sub: 'Rétention & validation' },
+        ].map(k => (
+          <div key={k.label} className="rounded-2xl bg-white border border-slate-100 shadow-sm p-4">
+            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">{k.label}</p>
+            <p className="text-[15px] font-bold text-slate-900 mb-1">{k.value}</p>
+            <div className="flex items-center gap-1.5">
+              <span className={`h-1.5 w-1.5 rounded-full ${k.dot}`} />
+              <span className="text-[10px] text-slate-400">{k.sub}</span>
+            </div>
           </div>
-        </div>
-
-        <div className="rounded-[2.5rem] bg-white p-8 shadow-xl shadow-slate-200/40 border border-slate-100/50 group hover:border-amber-200 transition-all">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Communication Admin</p>
-          <p className="text-xl font-bold text-slate-900 mb-2" style={{ fontFamily: "'Playfair Display', serif" }}>
-            {[adminSettingsForm.emailNotifications, adminSettingsForm.pushNotifications, adminSettingsForm.weeklyDigest].filter(Boolean).length}/3
-          </p>
-          <div className="flex items-center gap-2">
-             <span className="h-2 w-2 rounded-full bg-amber-500" />
-             <span className="text-[10px] font-medium text-slate-400">Canaux de notification actifs</span>
-          </div>
-        </div>
-
-        <div className="rounded-[2.5rem] bg-white p-8 shadow-xl shadow-slate-200/40 border border-slate-100/50 group hover:border-blue-200 transition-all">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>ConformitÃ© RGPD</p>
-          <p className="text-xl font-bold text-slate-900 mb-2" style={{ fontFamily: "'Playfair Display', serif" }}>
-            {adminSettingsForm.auditLogRetention && adminSettingsForm.manualAccountApproval ? 'CertifiÃ©e' : 'IntermÃ©diaire'}
-          </p>
-          <div className="flex items-center gap-2">
-             <span className="h-2 w-2 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
-             <span className="text-[10px] font-medium text-slate-400">Rétention & Validation active</span>
-          </div>
-        </div>
+        ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-        {/* Hardware & Identity */}
-        <div className="space-y-10">
-          <div className="rounded-[3rem] bg-white p-10 shadow-2xl shadow-slate-200/40 border border-slate-100/50">
-             <div className="flex items-center gap-4 mb-10">
-                <div className="h-14 w-14 rounded-3xl bg-blue-50 flex items-center justify-center">
-                   <ShieldAlert className="h-7 w-7 text-blue-600" />
-                </div>
-                <div>
-                   <h4 className="text-xl font-black text-slate-900" style={{ fontFamily: "'Playfair Display', serif" }}>Durcissement IdentitÃ©</h4>
-                   <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">ContrÃ´les Critiques</p>
-                </div>
-             </div>
-
-             <div className="space-y-6">
-                {[
-                  { id: 'twoFactorRequired', label: 'Authentification Ã  deux facteurs (2FA)', desc: 'Exiger un code OTP pour chaque session administrative.', icon: Lock },
-                  { id: 'forceStrongPassword', label: 'Mots de passe complexes', desc: 'Obligatoire: 8+ caractÃ¨res, majuscules et symboles.', icon: Shield },
-                  { id: 'lockAfterInactivity', label: 'Verrouillage Session', desc: 'DÃ©connexion automatique aprÃ¨s 15 min d\'inactivitÃ©.', icon: Clock3 }
-                ].map((s) => (
-                  <div key={s.id} className="flex items-center justify-between p-6 rounded-[2rem] bg-slate-50 border border-slate-100 transition-all hover:bg-white hover:shadow-xl hover:shadow-slate-200/40 group">
-                    <div className="flex-1 pr-6">
-                      <div className="flex items-center gap-2 mb-1">
-                        <s.icon className="h-4 w-4 text-slate-400 group-hover:text-blue-500 transition-colors" />
-                        <p className="text-sm font-black text-slate-800" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{s.label}</p>
-                      </div>
-                      <p className="text-xs text-slate-500 leading-relaxed">{s.desc}</p>
-                    </div>
-                    <label className="relative inline-flex h-8 w-14 items-center flex-shrink-0 cursor-pointer">
-                      <input 
-                        type="checkbox" 
-                        checked={adminSettingsForm[s.id]} 
-                        onChange={() => updateSetting(s.id)}
-                        className="peer hidden" 
-                      />
-                      <div className="h-full w-full rounded-full bg-slate-200 transition-colors peer-checked:bg-blue-600 after:absolute after:left-1 after:top-1 after:h-6 after:w-6 after:rounded-full after:bg-white after:shadow-md after:transition-all peer-checked:after:translate-x-6" />
-                    </label>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* Sécurité Identité */}
+        <div className="rounded-2xl bg-white border border-slate-100 shadow-sm overflow-hidden">
+          <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100">
+            <div className="h-8 w-8 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
+              <ShieldAlert className="h-4 w-4 text-blue-600" />
+            </div>
+            <div>
+              <h4 className="text-[13px] font-semibold text-slate-900">Durcissement Identité</h4>
+              <p className="text-[10px] text-slate-400 uppercase tracking-wider">Contrôles critiques</p>
+            </div>
+          </div>
+          <div className="divide-y divide-slate-50">
+            {[
+              { id: 'twoFactorRequired', label: 'Authentification 2FA', desc: 'Code OTP requis pour chaque session.', icon: Lock },
+              { id: 'forceStrongPassword', label: 'Mots de passe complexes', desc: '8+ caractères, majuscules et symboles.', icon: Shield },
+              { id: 'lockAfterInactivity', label: 'Verrouillage session', desc: "Déconnexion après 15 min d'inactivité.", icon: Clock3 }
+            ].map((s) => (
+              <div key={s.id} className="flex items-center justify-between px-5 py-3.5 hover:bg-slate-50/70 transition-colors group">
+                <div className="flex items-start gap-3 flex-1 pr-4">
+                  <s.icon className="h-4 w-4 text-slate-400 group-hover:text-blue-500 transition-colors mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-[12px] font-semibold text-slate-800">{s.label}</p>
+                    <p className="text-[11px] text-slate-400">{s.desc}</p>
                   </div>
-                ))}
-             </div>
+                </div>
+                <label className="relative inline-flex h-6 w-11 items-center flex-shrink-0 cursor-pointer">
+                  <input type="checkbox" checked={adminSettingsForm[s.id]} onChange={() => updateSetting(s.id)} className="peer hidden" />
+                  <div className="h-full w-full rounded-full bg-slate-200 transition-colors peer-checked:bg-blue-600 after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow after:transition-all peer-checked:after:translate-x-5" />
+                </label>
+              </div>
+            ))}
           </div>
         </div>
 
-        {/* Communications & Governance */}
-        <div className="space-y-10">
-          <div className="rounded-[3rem] bg-white p-10 shadow-2xl shadow-slate-200/40 border border-slate-100/50">
-             <div className="flex items-center gap-4 mb-10">
-                <div className="h-14 w-14 rounded-3xl bg-slate-900 flex items-center justify-center">
-                   <Bell className="h-7 w-7 text-white" />
-                </div>
-                <div>
-                   <h4 className="text-xl font-black text-slate-900" style={{ fontFamily: "'Playfair Display', serif" }}>Flux de Signalement</h4>
-                   <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Alertes & Monitoring</p>
-                </div>
-             </div>
-
-             <div className="space-y-6">
-                {[
-                  { id: 'emailNotifications', label: 'Alertes Email High-Priority', desc: 'Notification immÃ©diate pour les erreurs critiques serveurs.', icon: Mail },
-                  { id: 'manualAccountApproval', label: 'ModÃ©ration Habilitations', desc: 'Validation manuelle obligatoire pour tout nouveau compte.', icon: UserCheck },
-                  { id: 'testimonialModeration', label: 'Filtrage TÃ©moignages', desc: 'Les messages ne sont publics qu\'aprÃ¨s validation admin.', icon: MessageSquare }
-                ].map((s) => (
-                  <div key={s.id} className="flex items-center justify-between p-6 rounded-[2rem] bg-slate-50 border border-slate-100 transition-all hover:bg-white hover:shadow-xl hover:shadow-slate-200/40 group">
-                    <div className="flex-1 pr-6">
-                      <div className="flex items-center gap-2 mb-1">
-                        <s.icon className="h-4 w-4 text-slate-400 group-hover:text-blue-500 transition-colors" />
-                        <p className="text-sm font-black text-slate-800" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{s.label}</p>
-                      </div>
-                      <p className="text-xs text-slate-500 leading-relaxed">{s.desc}</p>
+        {/* Notifications & Gouvernance */}
+        <div className="space-y-4">
+          <div className="rounded-2xl bg-white border border-slate-100 shadow-sm overflow-hidden">
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100">
+              <div className="h-8 w-8 rounded-lg bg-slate-900 flex items-center justify-center shrink-0">
+                <Bell className="h-4 w-4 text-white" />
+              </div>
+              <div>
+                <h4 className="text-[13px] font-semibold text-slate-900">Flux de Signalement</h4>
+                <p className="text-[10px] text-slate-400 uppercase tracking-wider">Alertes & Monitoring</p>
+              </div>
+            </div>
+            <div className="divide-y divide-slate-50">
+              {[
+                { id: 'emailNotifications', label: 'Alertes Email', desc: 'Notification pour les erreurs critiques.', icon: Mail },
+                { id: 'manualAccountApproval', label: 'Modération Habilitations', desc: 'Validation manuelle des nouveaux comptes.', icon: UserCheck },
+                { id: 'testimonialModeration', label: 'Filtrage Témoignages', desc: "Messages publics après validation admin.", icon: MessageSquare }
+              ].map((s) => (
+                <div key={s.id} className="flex items-center justify-between px-5 py-3.5 hover:bg-slate-50/70 transition-colors group">
+                  <div className="flex items-start gap-3 flex-1 pr-4">
+                    <s.icon className="h-4 w-4 text-slate-400 group-hover:text-blue-500 transition-colors mt-0.5 shrink-0" />
+                    <div>
+                      <p className="text-[12px] font-semibold text-slate-800">{s.label}</p>
+                      <p className="text-[11px] text-slate-400">{s.desc}</p>
                     </div>
-                    <label className="relative inline-flex h-8 w-14 items-center flex-shrink-0 cursor-pointer">
-                      <input 
-                        type="checkbox" 
-                        checked={adminSettingsForm[s.id]} 
-                        onChange={() => updateSetting(s.id)}
-                        className="peer hidden" 
-                      />
-                      <div className="h-full w-full rounded-full bg-slate-200 transition-colors peer-checked:bg-blue-600 after:absolute after:left-1 after:top-1 after:h-6 after:w-6 after:rounded-full after:bg-white after:shadow-md after:transition-all peer-checked:after:translate-x-6" />
-                    </label>
                   </div>
-                ))}
-             </div>
+                  <label className="relative inline-flex h-6 w-11 items-center flex-shrink-0 cursor-pointer">
+                    <input type="checkbox" checked={adminSettingsForm[s.id]} onChange={() => updateSetting(s.id)} className="peer hidden" />
+                    <div className="h-full w-full rounded-full bg-slate-200 transition-colors peer-checked:bg-blue-600 after:absolute after:left-0.5 after:top-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow after:transition-all peer-checked:after:translate-x-5" />
+                  </label>
+                </div>
+              ))}
+            </div>
           </div>
 
-          <div className="rounded-[3rem] bg-slate-900 p-10 shadow-2xl shadow-slate-900/50 text-white overflow-hidden relative group">
-             <div className="absolute -right-10 -bottom-10 h-40 w-40 rounded-full bg-blue-600/20 blur-[60px]" />
-             <div className="relative z-10 flex items-center justify-between">
-                <div>
-                   <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-blue-400 mb-2">SantÃ© SystÃ¨me</h4>
-                   <p className="text-xl font-black" style={{ fontFamily: "'Playfair Display', serif" }}>Infrastructure Stable</p>
-                </div>
-                <div className="h-12 w-12 rounded-full border-2 border-emerald-500/30 flex items-center justify-center">
-                   <Activity className="h-5 w-5 text-emerald-400 animate-pulse" />
-                </div>
-             </div>
+          <div className="rounded-2xl bg-slate-900 p-4 text-white flex items-center justify-between">
+            <div>
+              <p className="text-[9px] font-bold text-blue-400 uppercase tracking-widest mb-1">Santé Système</p>
+              <p className="text-[14px] font-bold">Infrastructure Stable</p>
+            </div>
+            <div className="h-9 w-9 rounded-full border border-emerald-500/30 flex items-center justify-center">
+              <Activity className="h-4 w-4 text-emerald-400 animate-pulse" />
+            </div>
           </div>
         </div>
       </div>
@@ -1489,112 +1410,73 @@ export default function Dashboard({ user, onLogout }) {
           )}
 
           {reclamationsLoading ? (
-            <div className="p-20 flex flex-col items-center justify-center bg-white rounded-[3rem] border border-slate-100 shadow-xl shadow-slate-200/50">
-              <div className="h-12 w-12 border-4 border-slate-100 border-t-blue-600 rounded-full animate-spin mb-4" />
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Synchronisation Support...</p>
+            <div className="p-12 flex flex-col items-center justify-center bg-white rounded-2xl border border-slate-100">
+              <div className="h-8 w-8 border-2 border-slate-100 border-t-blue-600 rounded-full animate-spin mb-3" />
+              <p className="text-[10px] text-slate-400 uppercase tracking-wider">Chargement...</p>
             </div>
           ) : reclamationsError ? (
-            <div className="p-20 text-center flex flex-col items-center bg-white rounded-[3rem] border border-slate-100">
-               <div className="h-16 w-16 rounded-full bg-rose-50 flex items-center justify-center mb-6">
-                 <AlertTriangle className="h-8 w-8 text-rose-500" />
-               </div>
-               <h4 className="text-lg font-black text-slate-900 mb-2">Service Indisponible</h4>
-               <p className="text-sm text-slate-400 max-w-sm font-medium">{reclamationsError}</p>
+            <div className="p-12 text-center flex flex-col items-center gap-2 bg-white rounded-2xl border border-slate-100">
+              <AlertTriangle className="h-8 w-8 text-rose-400" />
+              <p className="text-sm text-slate-500">{reclamationsError}</p>
             </div>
           ) : recs.length > 0 ? recs.map((c) => {
             const statusLabel = c.etat === 'validee' ? 'Résolu' : c.etat === 'non_validee' ? 'Fermé' : 'Ouvert';
-            const statusClass = c.etat === 'validee'
-              ? 'bg-emerald-500 text-white'
-              : c.etat === 'non_validee'
-                ? 'bg-rose-500 text-white'
-                : 'bg-amber-500 text-white';
-            
-            const prioriteClass = c.priorite === 'critique' || c.priorite === 'haute'
-              ? 'bg-rose-50 text-rose-700 border-rose-100'
-              : 'bg-slate-50 text-slate-600 border-slate-100';
-
+            const statusClass = c.etat === 'validee' ? 'bg-emerald-50 text-emerald-700' : c.etat === 'non_validee' ? 'bg-rose-50 text-rose-600' : 'bg-amber-50 text-amber-700';
+            const prioriteClass = c.priorite === 'critique' || c.priorite === 'haute' ? 'bg-rose-50 text-rose-600 border-rose-100' : 'bg-slate-50 text-slate-500 border-slate-100';
             const doctorName = c?.user_info?.first_name || c?.user_info?.last_name
               ? `${c.user_info?.first_name || ''} ${c.user_info?.last_name || ''}`.trim()
               : c?.user_info?.username || 'Praticien';
-
             return (
-              <div key={c.id} className="group relative bg-white rounded-[2.5rem] border border-slate-100 p-8 shadow-xl shadow-slate-200/40 hover:shadow-blue-900/5 transition-all duration-500 overflow-hidden">
-                <div className="flex flex-col md:flex-row gap-8 relative z-10">
+              <div key={c.id} className="bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-all p-5">
+                <div className="flex flex-col md:flex-row gap-5">
                   <div className="flex-1">
-                    <div className="flex flex-wrap items-center gap-3 mb-6">
-                      <div className={`px-4 py-1.5 rounded-xl border text-[9px] font-black uppercase tracking-widest ${prioriteClass}`}>
-                        {c.priorite || 'Priorité Normale'}
-                      </div>
-                      <div className={`px-4 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest ${statusClass}`}>
-                        {statusLabel}
-                      </div>
-                      <span className="text-[10px] font-black text-slate-300 ml-auto tracking-tighter" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-                        REF: #{c.numero || c.id}
-                      </span>
+                    <div className="flex flex-wrap items-center gap-2 mb-3">
+                      <span className={`px-2.5 py-1 rounded-full border text-[9px] font-bold uppercase tracking-wider ${prioriteClass}`}>{c.priorite || 'Normal'}</span>
+                      <span className={`px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider ${statusClass}`}>{statusLabel}</span>
+                      <span className="text-[10px] text-slate-300 ml-auto font-mono">REF: #{c.numero || c.id}</span>
                     </div>
-
-                    <h4 className="text-xl font-black text-slate-900 mb-3" style={{ fontFamily: "'Playfair Display', serif" }}>
-                      {c.categorie || 'Incident Technique'}
-                    </h4>
-                    
-                    <div className="p-6 rounded-3xl bg-slate-50 border border-slate-50 text-sm text-slate-600 leading-relaxed mb-6 italic">
+                    <h4 className="text-[14px] font-semibold text-slate-900 mb-2">{c.categorie || 'Incident Technique'}</h4>
+                    <div className="px-4 py-3 rounded-xl bg-slate-50 border border-slate-100 text-[12px] text-slate-600 italic leading-relaxed mb-3">
                       "{c.description}"
                     </div>
-
-                    <div className="flex flex-wrap items-center gap-6">
-                      <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 font-black text-xs">
+                    <div className="flex flex-wrap items-center gap-4">
+                      <div className="flex items-center gap-2">
+                        <div className="h-7 w-7 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 font-bold text-xs shrink-0">
                           {doctorName.charAt(0).toUpperCase()}
                         </div>
                         <div>
-                           <p className="text-xs font-black text-slate-900">{doctorName}</p>
-                           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Auteur</p>
+                          <p className="text-[12px] font-semibold text-slate-800">{doctorName}</p>
+                          <p className="text-[10px] text-slate-400 uppercase tracking-wider">Auteur</p>
                         </div>
                       </div>
-                      
-                      <div className="h-8 w-px bg-slate-100 hidden md:block" />
-
-                      <div className="flex items-center gap-2 text-slate-400 uppercase tracking-tighter font-black text-[10px]">
-                        <Calendar className="h-4 w-4" /> {formatDate(c.date)}
+                      <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                        <Calendar className="h-3.5 w-3.5" /> {formatDate(c.date)}
                       </div>
-
                       {c.fichier_url && (
-                        <a href={c.fichier_url} target="_blank" rel="noreferrer" className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-50 text-blue-600 text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all">
-                          <Eye className="h-3 w-3" /> Pièce Jointe
+                        <a href={c.fichier_url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-600 text-[10px] font-semibold hover:bg-blue-600 hover:text-white transition-all">
+                          <Eye className="h-3 w-3" /> Pièce jointe
                         </a>
                       )}
                     </div>
                   </div>
-
-                  <div className="flex md:flex-col gap-3 justify-end items-end">
-                    <button
-                      disabled={c.etat !== 'en_attente'}
-                      onClick={() => handleReclamationDecision(c.id, 'validee')}
-                      className="w-full md:w-32 py-4 rounded-2xl bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 disabled:opacity-20 transition-all shadow-xl shadow-slate-900/10"
-                    >
+                  <div className="flex md:flex-col gap-2 justify-end shrink-0">
+                    <button disabled={c.etat !== 'en_attente'} onClick={() => handleReclamationDecision(c.id, 'validee')}
+                      className="px-4 py-2 rounded-xl bg-slate-900 text-white text-[10px] font-bold uppercase tracking-wider hover:bg-blue-600 disabled:opacity-25 transition-all">
                       Résoudre
                     </button>
-                    <button
-                      disabled={c.etat !== 'en_attente'}
-                      onClick={() => handleReclamationDecision(c.id, 'non_validee')}
-                      className="w-full md:w-32 py-4 rounded-2xl bg-white border border-slate-200 text-slate-500 text-[10px] font-black uppercase tracking-widest hover:bg-rose-50 hover:text-rose-500 hover:border-rose-100 disabled:opacity-20 transition-all"
-                    >
+                    <button disabled={c.etat !== 'en_attente'} onClick={() => handleReclamationDecision(c.id, 'non_validee')}
+                      className="px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-500 text-[10px] font-bold uppercase tracking-wider hover:bg-rose-50 hover:text-rose-500 hover:border-rose-100 disabled:opacity-25 transition-all">
                       Classer
                     </button>
                   </div>
                 </div>
-                
-                {/* Background Decoration */}
-                <div className="absolute top-0 right-0 h-full w-1/3 bg-gradient-to-l from-slate-50/50 to-transparent pointer-events-none" />
               </div>
             );
           }) : (
-            <div className="p-20 flex flex-col items-center justify-center bg-white rounded-[3rem] border-2 border-dashed border-slate-100">
-               <div className="h-20 w-20 rounded-full bg-emerald-50 flex items-center justify-center mb-8">
-                 <CheckCircle2 className="h-10 w-10 text-emerald-500" />
-               </div>
-               <h4 className="text-xl font-black text-slate-900 mb-2">Boîte de réception vide</h4>
-               <p className="text-sm text-slate-400 font-medium">Félicitations, aucun incident n'est actuellement en attente.</p>
+            <div className="p-12 flex flex-col items-center justify-center bg-white rounded-2xl border border-dashed border-slate-200 gap-2">
+              <CheckCircle2 className="h-10 w-10 text-emerald-400" />
+              <p className="text-[13px] font-semibold text-slate-700">Boîte de réception vide</p>
+              <p className="text-[11px] text-slate-400">Aucun incident en attente.</p>
             </div>
           )}
         </div>
@@ -1681,70 +1563,172 @@ export default function Dashboard({ user, onLogout }) {
       )}
 
       {createModalOpen && (
-        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/80 p-4 backdrop-blur-xl animate-in fade-in duration-300 overflow-y-auto">
-           <div className="w-full max-w-2xl bg-white rounded-[3rem] p-10 shadow-2xl animate-in zoom-in-95 duration-300 my-8">
-              <div className="flex items-center justify-between mb-10">
+          <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/80 p-4 backdrop-blur-xl animate-in fade-in duration-300 overflow-y-auto">
+            <div className="w-full max-w-lg max-h-[85vh] overflow-y-auto bg-white rounded-2xl p-6 shadow-2xl animate-in zoom-in-95 duration-300 my-6">
+              <div className="flex items-center justify-between mb-6">
                 <div>
-                  <h4 className="text-2xl font-black text-slate-900" style={{ fontFamily: "'Playfair Display', serif" }}>Nouveau Praticien</h4>
-                  <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Onboarding Direct BrainCore</p>
+                  <h4 className="text-xl font-black text-slate-900" style={{ fontFamily: "'Playfair Display', serif" }}>Nouveau Praticien</h4>
+                  <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Onboarding BrainCore</p>
                 </div>
                 <button 
                   onClick={() => setCreateModalOpen(false)}
-                  className="h-12 w-12 rounded-2xl bg-slate-50 flex items-center justify-center text-slate-400 hover:bg-slate-900 hover:text-white transition-all"
+                  className="h-9 w-9 rounded-lg bg-slate-50 flex items-center justify-center text-slate-400 hover:bg-slate-900 hover:text-white transition-all"
                 >
-                  <X className="h-5 w-5" />
+                  <X className="h-4 w-4" />
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Nom Patronyme *</label>
                   <input
+                    id="create-nom"
                     value={createForm.nom}
                     onChange={(e) => {
                       setCreateForm((p) => ({ ...p, nom: e.target.value }));
                       setCreateFieldErrors((prev) => ({ ...prev, nom: '' }));
                     }}
-                    className={`w-full rounded-2xl border p-4 text-sm font-bold transition-all ${createFieldErrors.nom ? 'border-rose-300 bg-rose-50' : 'border-slate-100 bg-slate-50/50 focus:bg-white focus:border-blue-400'}`}
-                    placeholder="ex: Ben Ali"
+                    className={`w-full rounded-xl border p-3 text-sm font-bold transition-all ${createFieldErrors.nom ? 'border-rose-300 bg-rose-50' : 'border-slate-100 bg-slate-50/50 focus:bg-white focus:border-blue-400'}`}
+                    placeholder="Ben Ali"
                   />
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Prénom *</label>
                   <input
+                    id="create-prenom"
                     value={createForm.prenom}
                     onChange={(e) => {
                       setCreateForm((p) => ({ ...p, prenom: e.target.value }));
                       setCreateFieldErrors((prev) => ({ ...prev, prenom: '' }));
                     }}
-                    className={`w-full rounded-2xl border p-4 text-sm font-bold transition-all ${createFieldErrors.prenom ? 'border-rose-300 bg-rose-50' : 'border-slate-100 bg-slate-50/50 focus:bg-white focus:border-blue-400'}`}
-                    placeholder="ex: Ahmed"
+                    className={`w-full rounded-xl border p-3 text-sm font-bold transition-all ${createFieldErrors.prenom ? 'border-rose-300 bg-rose-50' : 'border-slate-100 bg-slate-50/50 focus:bg-white focus:border-blue-400'}`}
+                    placeholder="Ahmed"
                   />
                 </div>
                 <div className="md:col-span-2 space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Numéro d'Ordre National *</label>
                   <input
+                    id="create-order-number"
                     value={createForm.orderNumber}
                     onChange={(e) => {
                       setCreateForm((p) => ({ ...p, orderNumber: e.target.value.toUpperCase() }));
                       setCreateFieldErrors((prev) => ({ ...prev, orderNumber: '' }));
                     }}
-                    className={`w-full rounded-2xl border p-4 text-sm font-bold transition-all ${createFieldErrors.orderNumber ? 'border-rose-300 bg-rose-50' : 'border-slate-100 bg-slate-50/50 focus:bg-white focus:border-blue-400'}`}
+                    className={`w-full rounded-xl border p-3 text-sm font-bold transition-all ${createFieldErrors.orderNumber ? 'border-rose-300 bg-rose-50' : 'border-slate-100 bg-slate-50/50 focus:bg-white focus:border-blue-400'}`}
                     placeholder="Ex: 5678 ou T-5678"
                   />
                 </div>
                 <div className="md:col-span-2 space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Email Professionnel *</label>
-                  <input
-                    type="email"
-                    value={createForm.email}
+                  <div className="relative">
+                    <Mail className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                    <input
+                      type="email"
+                      value={createForm.email}
+                      id="create-email"
+                      onChange={(e) => {
+                        setCreateForm((p) => ({ ...p, email: e.target.value }));
+                        setCreateFieldErrors((prev) => ({ ...prev, email: '' }));
+                      }}
+                      className={`w-full rounded-xl border pl-10 pr-3 py-3 text-sm font-bold transition-all ${createFieldErrors.email ? 'border-rose-300 bg-rose-50' : 'border-slate-100 bg-slate-50/50 focus:bg-white focus:border-blue-400'}`}
+                      placeholder="medecin@braincore.tn"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Grade *</label>
+                  <select
+                    value={createForm.grade}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, grade: e.target.value }))}
+                    className="w-full rounded-xl border border-slate-100 bg-slate-50/50 p-3 text-sm font-bold outline-none focus:bg-white focus:border-blue-400 transition-all"
+                  >
+                    {GRADE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Spécialité *</label>
+                  <select
+                    value={createForm.specialty}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, specialty: e.target.value }))}
+                    className="w-full rounded-xl border border-slate-100 bg-slate-50/50 p-3 text-sm font-bold outline-none focus:bg-white focus:border-blue-400 transition-all"
+                  >
+                    <option value="neuroradiologie">Neuroradiologie</option>
+                    <option value="neurologie">Neurologie</option>
+                    <option value="medecine_nucleaire">Médecine Nucléaire</option>
+                    <option value="autre">Autre</option>
+                  </select>
+                </div>
+
+                <div className="md:col-span-2 space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Affiliation / Institution *</label>
+                  <select
+                    id="create-affiliation"
+                    value={createForm.affiliation}
                     onChange={(e) => {
-                      setCreateForm((p) => ({ ...p, email: e.target.value }));
-                      setCreateFieldErrors((prev) => ({ ...prev, email: '' }));
+                      setCreateForm((p) => ({ ...p, affiliation: e.target.value }));
+                      setCreateFieldErrors((prev) => ({ ...prev, affiliation: '', customAffiliation: '' }));
                     }}
-                    className={`w-full rounded-2xl border p-4 text-sm font-bold transition-all ${createFieldErrors.email ? 'border-rose-300 bg-rose-50' : 'border-slate-100 bg-slate-50/50 focus:bg-white focus:border-blue-400'}`}
-                    placeholder="medecin@visionmed.tn"
+                    className={`w-full rounded-xl border p-3 text-sm font-bold outline-none transition-all ${createFieldErrors.affiliation ? 'border-rose-300 bg-rose-50' : 'border-slate-100 bg-slate-50/50 focus:bg-white focus:border-blue-400'}`}
+                  >
+                    <option value="">Sélectionner une institution...</option>
+                    {AFFILIATION_OPTIONS.map((o) => (
+                      <option key={o} value={o}>{o}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {createForm.affiliation === 'Autre' && (
+                  <div className="md:col-span-2 space-y-2 animate-in slide-in-from-top-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Précisez l'institution *</label>
+                    <input
+                      id="create-custom-affiliation"
+                      value={customAffiliation}
+                      onChange={(e) => {
+                        setCustomAffiliation(e.target.value);
+                        setCreateFieldErrors((prev) => ({ ...prev, customAffiliation: '' }));
+                      }}
+                      className={`w-full rounded-xl border p-3 text-sm font-bold transition-all ${createFieldErrors.customAffiliation ? 'border-rose-300 bg-rose-50' : 'border-slate-100 bg-slate-50/50 focus:bg-white focus:border-blue-400'}`}
+                      placeholder="Nom de l'hôpital ou clinique"
+                    />
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1 text-slate-400">Téléphone (Optionnel)</label>
+                  <input
+                    type="tel"
+                    inputMode="tel"
+                    id="create-telephone"
+                    name="admin-telephone"
+                    autoComplete="off"
+                    value={createForm.telephone}
+                    onChange={(e) => {
+                      setCreateForm((p) => ({ ...p, telephone: e.target.value }));
+                      setCreateFieldErrors((prev) => ({ ...prev, telephone: '' }));
+                    }}
+                    className={`w-full rounded-xl border p-3 text-sm font-bold transition-all ${createFieldErrors.telephone ? 'border-rose-300 bg-rose-50' : 'border-slate-100 bg-slate-50/50 focus:bg-white focus:border-blue-400'}`}
+                    placeholder="ex: 22333444"
                   />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-blue-500 uppercase tracking-widest px-1 flex items-center gap-1.5">
+                    <Zap className="h-3 w-3" /> Activation Immédiate
+                  </label>
+                  <input
+                    type="password"
+                    name="admin-password"
+                    autoComplete="new-password"
+                    value={createForm.password}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, password: e.target.value }))}
+                    className="w-full rounded-xl border border-slate-100 bg-blue-50/30 p-3 text-sm font-bold outline-none focus:bg-white focus:border-blue-400 transition-all placeholder:text-blue-300"
+                    placeholder="Définir un mot de passe initial"
+                  />
+                  <p className="text-[9px] text-slate-400 px-1">Laissez vide pour envoyer un lien d'activation par email.</p>
                 </div>
               </div>
 
@@ -1835,11 +1819,11 @@ export default function Dashboard({ user, onLogout }) {
                  <div className="relative group">
                     <button 
                       onClick={() => setShowNotifications(!showNotifications)}
-                      className={`relative flex h-14 w-14 items-center justify-center rounded-2xl border transition-all duration-300 backdrop-blur-xl shadow-2xl ${showNotifications ? 'bg-white border-white scale-95' : 'bg-white/10 border-white/20 text-white hover:bg-white/20'}`}
+                      className={`relative flex h-10 w-10 items-center justify-center rounded-xl border transition-all duration-300 backdrop-blur-xl shadow-xl ${showNotifications ? 'bg-white border-white scale-95' : 'bg-white/10 border-white/20 text-white hover:bg-white/20'}`}
                     >
-                      <Bell className="h-6 w-6" />
+                      <Bell className="h-5 w-5" />
                       {unreadCount > 0 && (
-                        <span className="absolute -top-2 -right-2 flex h-6 w-6 items-center justify-center rounded-full bg-rose-500 text-[10px] font-black text-white ring-4 ring-slate-900/10 shadow-lg shadow-rose-500/40">
+                        <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[8px] font-black text-white ring-2 ring-slate-900/10 shadow-md shadow-rose-500/40">
                           {unreadCount}
                         </span>
                       )}
@@ -1847,78 +1831,40 @@ export default function Dashboard({ user, onLogout }) {
 
                     {/* Notification Dropdown */}
                     {showNotifications && (
-                      <div className="absolute right-0 mt-6 w-96 origin-top-right rounded-[2.5rem] border border-slate-200/60 bg-white/95 backdrop-blur-2xl p-3 shadow-[0_32px_64px_-16px_rgba(0,0,0,0.2)] ring-1 ring-black/5 z-50 animate-in fade-in zoom-in slide-in-from-top-4 duration-300">
-                        <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center">
-                          <span className="text-sm font-black text-slate-900 uppercase tracking-widest" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Notifications</span>
-                          <button className="text-[10px] bg-slate-100 px-3 py-1.5 rounded-full text-slate-500 font-bold hover:bg-blue-600 hover:text-white transition-all uppercase tracking-wider">Tout effacer</button>
+                      <div className="absolute right-0 mt-4 w-80 origin-top-right rounded-[1.5rem] border border-slate-200/60 bg-white/95 backdrop-blur-2xl p-2 shadow-[0_32px_64px_-16px_rgba(0,0,0,0.15)] ring-1 ring-black/5 z-50 animate-in fade-in zoom-in slide-in-from-top-4 duration-300">
+                        <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center">
+                          <span className="text-xs font-black text-slate-900 uppercase tracking-widest" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Notifications</span>
+                          <button className="text-[9px] bg-slate-100 px-2.5 py-1 rounded-full text-slate-500 font-bold hover:bg-blue-600 hover:text-white transition-all uppercase tracking-wider">Tout effacer</button>
                         </div>
-                        <div className="max-h-[400px] overflow-y-auto py-2 pr-1 no-scrollbar">
+                        <div className="max-h-[350px] overflow-y-auto py-1 pr-1 no-scrollbar">
                            {[
                               { title: 'Comptes en attente', desc: `${pendingAccounts.length} médecin(s) attendent une validation immédiate.`, time: 'Maintenant', icon: UserPlus, color: 'text-blue-600 bg-blue-50', priority: 'High' },
                               { title: 'Témoignages récents', desc: `${pendingTestimonials.length} nouveaux messages à modérer dans le flux public.`, time: '12 min', icon: MessageSquare, color: 'text-emerald-600 bg-emerald-50', priority: 'Medium' },
                               { title: 'Alerte Système', desc: 'Maintenance hebdomadaire prévue ce dimanche à 02:00.', time: '2h', icon: Shield, color: 'text-purple-600 bg-purple-50', priority: 'Low' },
                            ].map((n, i) => (
-                             <div key={i} className="px-5 py-4 hover:bg-slate-50/80 rounded-[1.8rem] cursor-pointer transition-all group/item border-b border-slate-50 last:border-0 flex gap-4 items-start">
-                               <div className={`h-11 w-11 rounded-2xl flex items-center justify-center flex-shrink-0 transition-transform group-hover/item:scale-110 ${n.color}`}>
-                                 <n.icon className="h-5 w-5" />
+                             <div key={i} className="px-4 py-3 hover:bg-slate-50/80 rounded-2xl cursor-pointer transition-all group/item border-b border-slate-50 last:border-0 flex gap-3 items-start">
+                               <div className={`h-9 w-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-transform group-hover/item:scale-110 ${n.color}`}>
+                                 <n.icon className="h-4 w-4" />
                                </div>
                                <div className="flex-1 min-w-0">
                                  <div className="flex items-center justify-between mb-0.5">
-                                   <p className="text-[13px] font-bold text-slate-900">{n.title}</p>
-                                   <span className="text-[9px] font-black uppercase text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md tracking-tighter">{n.priority}</span>
+                                   <p className="text-[12px] font-bold text-slate-900">{n.title}</p>
+                                   <span className="text-[8px] font-black uppercase text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded tracking-tighter">{n.priority}</span>
                                  </div>
-                                 <p className="text-xs text-slate-500 leading-relaxed line-clamp-2 pr-2">{n.desc}</p>
-                                 <p className="mt-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5"><Clock3 className="h-3 w-3" /> {n.time}</p>
+                                 <p className="text-[11px] text-slate-500 leading-relaxed line-clamp-2 pr-1">{n.desc}</p>
+                                 <p className="mt-1.5 text-[9px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1"><Clock3 className="h-2.5 w-2.5" /> {n.time}</p>
                                </div>
                              </div>
                            ))}
                         </div>
-                        <div className="p-3">
-                          <button className="w-full py-4 rounded-[1.5rem] bg-slate-900 text-white text-xs font-black uppercase tracking-[0.2em] hover:bg-blue-600 transition-all shadow-xl shadow-slate-900/20 active:scale-[0.98]">
-                            Accéder au centre historique
+                        <div className="p-2">
+                          <button className="w-full py-3 rounded-xl bg-slate-900 text-white text-[10px] font-black uppercase tracking-[0.2em] hover:bg-blue-600 transition-all shadow-lg shadow-slate-900/10 active:scale-[0.98]">
+                            Centre d'historique
                           </button>
                         </div>
                       </div>
                     )}
                  </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Navigation & Search Sub-Header */}
-          <div className="mb-10 rounded-[2.5rem] bg-white/70 backdrop-blur-2xl border border-white/50 p-3 shadow-2xl shadow-slate-200/50 flex flex-col xl:flex-row items-center justify-between gap-6 transition-all hover:bg-white/90">
-            <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar w-full xl:w-auto px-2">
-              {[
-                { to: '/admin', icon: Database, label: 'Général', end: true },
-                { to: '/admin/comptes', icon: Users, label: 'Comptes' },
-                { to: '/admin/temoignages', icon: MessageSquare, label: 'Témoignages' },
-                { to: '/admin/reclamations', icon: MessageSquareWarning, label: 'Réclamations' },
-                { to: '/admin/historique', icon: Clock3, label: 'Audit Log' },
-                { to: '/admin/parametres', icon: Lock, label: 'Sécurité' },
-              ].map((link) => (
-                <NavLink 
-                  key={link.to}
-                  to={link.to} 
-                  end={link.end}
-                  className={({ isActive }) => `flex items-center gap-3 px-6 py-4 rounded-[1.8rem] text-sm font-bold transition-all duration-300 relative group shrink-0 ${isActive ? 'bg-slate-900 text-white shadow-2xl shadow-slate-900/30' : 'text-slate-500 hover:text-slate-900 hover:bg-white'}`}
-                  style={{ fontFamily: "'Space Grotesk', sans-serif" }}
-                >
-                  <link.icon className={`h-4.5 w-4.5 transition-transform group-hover:scale-110`} />
-                  <span className="tracking-tight">{link.label}</span>
-                </NavLink>
-              ))}
-            </div>
-
-            <div className="w-full xl:w-96 px-2">
-              <div className="relative group">
-                <Search className="absolute left-6 top-1/2 -translate-y-1/2 h-4.5 w-4.5 text-slate-400 transition-colors group-focus-within:text-blue-500" />
-                <input
-                  type="text"
-                  placeholder="Rechercher..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-14 pr-6 py-4 bg-white/50 border border-slate-200/60 rounded-[1.8rem] text-sm focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500/30 transition-all font-medium placeholder:text-slate-400"
-                />
               </div>
             </div>
           </div>

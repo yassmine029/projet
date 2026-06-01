@@ -6,7 +6,7 @@ import {
   MapPin, Activity, Star, Plus, Boxes, Layers, ChevronRight, ChevronDown,
   Lock, Eye, Download, Edit3, ArrowLeftRight, Trash2, Hash, User, Search, Filter, ArrowUpDown,
   HardDrive, FolderOpen, FolderTree, Settings, CheckCircle2, LineChart, AlertCircle,
-  Brain, Box, X, ChevronLeft, ChevronRight as ChevronR, Maximize2
+  Brain, Box, X, ChevronLeft, ChevronRight as ChevronR, Maximize2, Zap
 } from 'lucide-react';
 import api from '../../api';
 import LongitudinalDashboard from '../../components/LongitudinalDashboard';
@@ -504,9 +504,35 @@ function ZipSeriesViewer({ fileId, onClose }) {
 }
 
 function ResultsSection({ sessions, analysisFiles, resolveFileUrl, formatDate, formatSize }) {
+  const navigate = useNavigate();
   const [filter, setFilter] = React.useState('all');
   const [niftiViewer, setNiftiViewer] = React.useState(null);
   const [zipViewer, setZipViewer]     = React.useState(null);
+  const [directLoadingId, setDirectLoadingId] = React.useState(null);
+  const [directLoadError, setDirectLoadError] = React.useState('');
+
+  const handleIdentifierZones = async (fileId) => {
+    setDirectLoadingId(fileId);
+    setDirectLoadError('');
+    try {
+      const res = await fetch('/api/volume/load-from-mrifile', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileId }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.jobId) throw new Error(data.error || 'Chargement échoué');
+      // Stocker le jobId puis naviguer directement vers ExplorationPage
+      sessionStorage.setItem('volumeJobId', data.jobId);
+      navigate('/exploration');
+    } catch (err) {
+      setDirectLoadError(err.message || 'Erreur lors du chargement du volume');
+      setTimeout(() => setDirectLoadError(''), 4000);
+    } finally {
+      setDirectLoadingId(null);
+    }
+  };
 
   const serieFiles = analysisFiles.filter(f =>
     /^reg_serie_/i.test(String(f.original_filename || '')) && String(f.original_filename || '').endsWith('.zip')
@@ -708,48 +734,102 @@ function ResultsSection({ sessions, analysisFiles, resolveFileUrl, formatDate, f
               })}
 
               {/* Recalage : fichiers individuels */}
+              {showRec && directLoadError && (
+                <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-50 border border-red-200 text-red-700 text-[11px] font-medium mb-2">
+                  <X className="w-3.5 h-3.5 shrink-0" /> {directLoadError}
+                </div>
+              )}
               {showRec && otherAnalysis.map(file => {
-                const fname   = file.original_filename || '';
-                const miMatch = fname.match(/MI([\d.]+)/);
-                const miVal   = miMatch ? parseFloat(miMatch[1]) : null;
-                const modeM   = fname.match(/_(2d|3d|advanced)_/i);
-                const mode    = modeM ? ({ '2d':'2D','3d':'3D','advanced':'3D avec identification des zones' }[modeM[1].toLowerCase()] || '2D') : '2D';
-                const fileUrl = resolveFileUrl(file.file_url || file.file);
-                const isNifti = fname.endsWith('.nii.gz') || fname.endsWith('.nii');
+                const fname      = file.original_filename || '';
+                const miMatch    = fname.match(/MI([\d.]+)/);
+                const miVal      = miMatch ? parseFloat(miMatch[1]) : null;
+                const modeM      = fname.match(/_(2d|3d|advanced)_/i);
+                const modeKey    = modeM ? modeM[1].toLowerCase() : '2d';
+                const fileUrl    = resolveFileUrl(file.file_url || file.file);
+                const isNifti    = fname.endsWith('.nii.gz') || fname.endsWith('.nii');
+                const isAdvanced = modeKey === 'advanced';
+                const is3D       = modeKey === '3d';
+
+                const miColor = miVal === null ? '' : miVal >= 0.5 ? 'text-emerald-600 bg-emerald-50 border-emerald-200' : miVal >= 0.3 ? 'text-amber-600 bg-amber-50 border-amber-200' : 'text-red-500 bg-red-50 border-red-200';
+
                 return (
-                  <div key={file.id} className="group flex items-center gap-4 bg-white/80 px-5 py-4 rounded-2xl border border-white hover:border-violet-300 hover:shadow-sm transition-all">
-                    <div className="w-11 h-11 rounded-xl bg-violet-500 flex items-center justify-center shrink-0">
-                      <Boxes className="w-5 h-5 text-white" />
+                  <div key={file.id} className={`group relative flex gap-4 bg-white px-5 py-4 rounded-2xl border transition-all duration-200 ${
+                    isAdvanced
+                      ? 'border-emerald-100 hover:border-emerald-300 hover:shadow-md hover:shadow-emerald-50'
+                      : 'border-slate-100 hover:border-violet-200 hover:shadow-sm'
+                  }`}>
+                    {/* Barre latérale colorée */}
+                    <div className={`absolute left-0 top-0 h-full w-1 rounded-l-2xl ${isAdvanced ? 'bg-gradient-to-b from-emerald-400 to-teal-500' : 'bg-violet-400'}`} />
+
+                    {/* Icône */}
+                    <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${
+                      isAdvanced ? 'bg-gradient-to-br from-emerald-500 to-teal-600' : 'bg-gradient-to-br from-violet-500 to-violet-600'
+                    }`}>
+                      {isAdvanced ? <Brain className="w-5 h-5 text-white" /> : <Boxes className="w-5 h-5 text-white" />}
                     </div>
+
+                    {/* Contenu */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-violet-100 text-violet-700">Recalage {mode}</span>
+                      {/* Titre + badges */}
+                      <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                        {isAdvanced ? (
+                          <>
+                            <span className="text-[11px] font-black text-emerald-700 uppercase tracking-wide">Recalage 3D</span>
+                            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold border border-emerald-200">
+                              <Brain className="w-2.5 h-2.5" /> Zones Brodmann
+                            </span>
+                          </>
+                        ) : (
+                          <span className={`text-[11px] font-black uppercase tracking-wide ${is3D ? 'text-violet-700' : 'text-slate-600'}`}>
+                            Recalage {is3D ? '3D volumétrique' : '2D'}
+                          </span>
+                        )}
                         {miVal !== null && (
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${miVal>=0.5?'bg-emerald-100 text-emerald-700':miVal>=0.3?'bg-amber-100 text-amber-700':'bg-red-100 text-red-600'}`}>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${miColor}`}>
                             MI {miVal.toFixed(3)}
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-3 text-[11px] text-slate-500">
-                        <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{formatDate(file.uploaded_at)}</span>
+
+                      {/* Méta */}
+                      <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                        <Calendar className="w-3 h-3 shrink-0" />
+                        <span>{formatDate(file.uploaded_at)}</span>
                         <span className="w-px h-3 bg-slate-200" />
                         <span>{formatSize(file.file_size)}</span>
+                        {isNifti && <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-400 text-[9px] font-bold">NIfTI</span>}
                       </div>
-                    </div>
-                    <div className="opacity-0 group-hover:opacity-100 flex items-center gap-2 transition-opacity shrink-0">
-                      {isNifti && (
-                        <button onClick={() => setNiftiViewer({ fileId: file.id, filename: fname })}
-                          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-bold hover:bg-emerald-600 hover:text-white transition-all">
-                          <Eye className="w-3.5 h-3.5" /> Voir
-                        </button>
-                      )}
-                      <a
-                        href={isNifti ? niftiDownloadUrl(file.id) : fileUrl}
-                        download={file.original_filename || undefined}
-                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 text-[11px] font-bold hover:bg-violet-600 hover:text-white transition-all"
-                      >
-                        <Download className="w-3.5 h-3.5" /> Télécharger
-                      </a>
+
+                      {/* Actions toujours visibles pour advanced, hover pour les autres */}
+                      <div className={`flex items-center gap-2 mt-3 ${isAdvanced ? '' : 'opacity-0 group-hover:opacity-100 transition-opacity'}`}>
+                        {isAdvanced && isNifti && (
+                          <button
+                            onClick={() => handleIdentifierZones(file.id)}
+                            disabled={directLoadingId === file.id}
+                            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white text-[11px] font-bold hover:from-emerald-600 hover:to-teal-700 transition-all shadow-sm shadow-emerald-200/60 disabled:opacity-60 disabled:cursor-wait"
+                          >
+                            {directLoadingId === file.id
+                              ? <><span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Chargement…</>
+                              : <><Zap className="w-3 h-3" /> Identifier les zones</>
+                            }
+                          </button>
+                        )}
+                        {isNifti && (
+                          <button
+                            onClick={() => setNiftiViewer({ fileId: file.id, filename: fname })}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-slate-600 text-[11px] font-semibold hover:border-slate-300 hover:bg-slate-50 transition-all"
+                          >
+                            <Eye className="w-3 h-3" /> Voir
+                          </button>
+                        )}
+                        <a
+                          href={isNifti ? niftiDownloadUrl(file.id) : fileUrl}
+                          download={file.original_filename || undefined}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-slate-600 text-[11px] font-semibold hover:border-slate-300 hover:bg-slate-50 transition-all"
+                        >
+                          <Download className="w-3 h-3" /> Télécharger
+                        </a>
+                      </div>
                     </div>
                   </div>
                 );
@@ -811,7 +891,7 @@ function SessionCard({ session }) {
         </div>
         <button className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-bold border transition-all shrink-0
           ${isOpen ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-emerald-50 text-emerald-700 border-emerald-200 group-hover:bg-emerald-100'}`}>
-          {isOpen ? <><ChevronDown className="w-3.5 h-3.5" /> Masquer</> : <><ChevronRight className="w-3.5 h-3.5" /> Voir les fichiers</>}
+          {isOpen ? <><ChevronDown className="w-3.5 h-3.5" /> Masquer</> : <><ChevronRight className="w-3.5 h-3.5" /> Voir les masques de segmentation</>}
         </button>
       </div>
 

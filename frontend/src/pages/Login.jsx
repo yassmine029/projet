@@ -364,7 +364,10 @@ export default function Login({ onLogin }) {
       }
     } catch (err) {
       const et=err.response?.data?.error_type, msg=err.response?.data?.error||''
-      if (et==='invalid_password') {
+      if (et==='user_not_found') {
+        try { const pr=await adminPortalLogin(username.trim(),password); if(pr.data?.ok){clearAdminDashboardSession();setLoginAttempts(0);localStorage.removeItem('login_attempts');localStorage.removeItem('login_blocked_until');setSuccessMessage('Connexion administrateur…');onLogin(pr.data.user);navigate('/admin',{replace:true});return} } catch {}
+        setError('Identifiants invalides')
+      } else if (et==='invalid_password') {
         setPasswordError('Identifiants invalides')
         setLoginAttempts(prev=>{ const n=prev+1; localStorage.setItem('login_attempts',n.toString()); if(n>=3){setIsBlocked(true);setBlockTimer(1800);localStorage.setItem('login_blocked_until',(Date.now()+1800000).toString())} return n })
       } else if (msg) setError(msg)

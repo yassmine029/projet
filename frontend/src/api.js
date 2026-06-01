@@ -130,7 +130,7 @@ export const saveRegisteredToPatient = (jobId, patientId, mode = '3d', metrics =
 
 // Dashboard Patients
 export const getDashboardPatients = (params) => api.get("/patients/", { params });
-export const createPatient = (data) => api.post("/patients/", data);
+export const createPatient = (data, extraConfig = {}) => api.post("/patients/", data, { timeout: 900000, ...extraConfig });
 export const getDashboardPatientDetail = (id) => api.get(`/patients/${id}/`);
 
 // Dashboard Réclamations

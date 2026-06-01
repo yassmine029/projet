@@ -1641,6 +1641,177 @@ def upload_volume(request):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+def upload_preregistered_volume(request):
+    """
+    Upload a NIfTI volume already registered to MNI space.
+    Skips the registration step — the volume is loaded directly as registered_data.
+    Returns a jobId usable immediately with /volume/patient_slice and /volume/brodmann.
+    """
+    if not request.user or not request.user.is_authenticated:
+        return JsonResponse({'error': 'login required'}, status=401)
+
+    f = request.FILES.get('file')
+    if not f:
+        return JsonResponse({'error': 'file required'}, status=400)
+    if f.size > MAX_FILE_SIZE_BYTES:
+        return JsonResponse({'error': f'File too large (max {MAX_FILE_SIZE_BYTES // 1024 // 1024} MB)'}, status=413)
+
+    safe_name = os.path.basename(f.name).lower()
+    if not (safe_name.endswith('.nii.gz') or safe_name.endswith('.nii')):
+        return JsonResponse({'error': 'Seuls les fichiers NIfTI (.nii / .nii.gz) sont acceptés'}, status=400)
+
+    job_id = str(uuid.uuid4())
+    try:
+        storage_dir = os.path.join(tempfile.gettempdir(), 'visionmed_volume_jobs', job_id)
+        os.makedirs(storage_dir, exist_ok=True)
+        upload_path = os.path.join(storage_dir, f'preregistered_{safe_name}')
+        prepared_path = os.path.join(storage_dir, 'patient_prepared.nii.gz')
+
+        f.seek(0)
+        with open(upload_path, 'wb') as out_f:
+            for chunk in f.chunks():
+                out_f.write(chunk)
+        f.seek(0)
+
+        vol, best_z, nifti_meta = _load_nifti_from_path(upload_path, prepared_output_path=prepared_path)
+        try:
+            os.remove(upload_path)
+        except Exception:
+            pass
+
+        # The uploaded volume IS already registered — set it as both raw and registered data.
+        VOLUMES_CACHE[job_id] = {
+            'type': 'patient',
+            'data': vol,
+            'data_original': vol.copy(),
+            'nifti_path': prepared_path,
+            'registered_data': vol.copy(),   # already in MNI space
+            'pending_registered_data': None,
+            'pending_registration': None,
+            'selected_label': None,
+            'selected_label_name': None,
+            'selected_slice': None,
+        }
+        _persist_job_entry(job_id)
+        _ensure_atlas()
+
+        try:
+            from .models import Patient, VolumeRegistrationJob
+            patient_id_param = request.POST.get('patientId')
+            patient_obj = None
+            if patient_id_param:
+                patient_obj = Patient.objects.filter(id=patient_id_param, doctor=request.user).first()
+            VolumeRegistrationJob.objects.create(
+                job_id=job_id,
+                patient=patient_obj,
+                user=request.user,
+                status='validated',
+                patient_volume_path=prepared_path,
+                registered_volume_path=prepared_path,
+            )
+        except Exception:
+            pass
+
+        return JsonResponse({
+            'success': True,
+            'jobId': job_id,
+            'shape': {'x': int(vol.shape[0]), 'y': int(vol.shape[1]), 'z': int(vol.shape[2])},
+            'z': int(best_z),
+            'max_z': int(vol.shape[2] - 1),
+        })
+    except ValueError as e:
+        return JsonResponse({'error': str(e)}, status=422)
+    except Exception as e:
+        return JsonResponse({'error': f'unexpected error: {str(e)}'}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def load_mrifile_as_preregistered(request):
+    """
+    Load an already-stored MRIFile (file_type='analysis') directly from disk
+    as a preregistered volume, without re-uploading it.
+    Body: { fileId: <int> }
+    Returns: { jobId, shape, z, max_z }
+    """
+    if not request.user or not request.user.is_authenticated:
+        return JsonResponse({'error': 'login required'}, status=401)
+
+    try:
+        body = json.loads(request.body or '{}')
+        file_id = body.get('fileId')
+        if not file_id:
+            return JsonResponse({'error': 'fileId requis'}, status=400)
+
+        from .models import MRIFile
+        try:
+            mri_file = MRIFile.objects.get(id=file_id, patient__doctor=request.user)
+        except MRIFile.DoesNotExist:
+            return JsonResponse({'error': 'Fichier introuvable ou accès refusé'}, status=404)
+
+        # Resolve the physical path of the stored file
+        file_field = mri_file.file
+        if not file_field or not file_field.name:
+            return JsonResponse({'error': 'Fichier non disponible sur disque'}, status=404)
+
+        from django.conf import settings as dj_settings
+        file_path = file_field.path if hasattr(file_field, 'path') else os.path.join(dj_settings.MEDIA_ROOT, file_field.name)
+
+        if not os.path.exists(file_path):
+            return JsonResponse({'error': f'Fichier manquant sur le serveur: {os.path.basename(file_path)}'}, status=404)
+
+        fname = (mri_file.original_filename or os.path.basename(file_path)).lower()
+        if not (fname.endswith('.nii.gz') or fname.endswith('.nii')):
+            return JsonResponse({'error': 'Ce fichier n\'est pas un volume NIfTI (.nii / .nii.gz)'}, status=400)
+
+        job_id = str(uuid.uuid4())
+        storage_dir = os.path.join(tempfile.gettempdir(), 'visionmed_volume_jobs', job_id)
+        os.makedirs(storage_dir, exist_ok=True)
+        prepared_path = os.path.join(storage_dir, 'patient_prepared.nii.gz')
+
+        vol, best_z, _ = _load_nifti_from_path(file_path, prepared_output_path=prepared_path)
+
+        VOLUMES_CACHE[job_id] = {
+            'type': 'patient',
+            'data': vol,
+            'data_original': vol.copy(),
+            'nifti_path': prepared_path,
+            'registered_data': vol.copy(),  # already in MNI space
+            'pending_registered_data': None,
+            'pending_registration': None,
+            'selected_label': None,
+            'selected_label_name': None,
+            'selected_slice': None,
+        }
+        _persist_job_entry(job_id)
+        _ensure_atlas()
+
+        try:
+            from .models import VolumeRegistrationJob
+            VolumeRegistrationJob.objects.create(
+                job_id=job_id,
+                patient=mri_file.patient,
+                user=request.user,
+                status='validated',
+                patient_volume_path=file_path,
+                registered_volume_path=prepared_path,
+            )
+        except Exception:
+            pass
+
+        return JsonResponse({
+            'success': True,
+            'jobId': job_id,
+            'shape': {'x': int(vol.shape[0]), 'y': int(vol.shape[1]), 'z': int(vol.shape[2])},
+            'z': int(best_z),
+            'max_z': int(vol.shape[2] - 1),
+        })
+    except Exception as e:
+        return JsonResponse({'error': f'Erreur inattendue: {str(e)}'}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
 def upload_atlas(request):
     if not request.user or not request.user.is_authenticated:
         return JsonResponse({'error': 'login required'}, status=401)

@@ -8,6 +8,8 @@ services:
       POSTGRES_DB: ${DB_NAME:-braincore_seg}
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "5433:5432"
     volumes:
       - pg_data_seg:/var/lib/postgresql/data
     healthcheck:
@@ -21,14 +23,13 @@ services:
     build:
       context: ./backend_django
       args:
-        USE_GPU: "true"
+        USE_GPU: "false"
     restart: unless-stopped
     env_file: .env
     environment:
       DB_HOST: db
       MEDIA_ROOT: /app/media
-      # Active le middleware auto-login CTIAMA
-      CTIAMA_MODE: "true"
+      CTIAMA_MODE: "false"
       CTIAMA_SERVICE_USER: "ctiama"
       APP_MODE: segmentation
       NVIDIA_VISIBLE_DEVICES: all
@@ -59,7 +60,7 @@ services:
       context: ./frontend
       args:
         APP_MODE: segmentation
-        AUTH_DISABLED: "true"
+        AUTH_DISABLED: "false"
         API_BASE_URL: /api
     ports:
       - "3001:80"

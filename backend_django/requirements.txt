@@ -9,22 +9,14 @@ numpy
 scipy>=1.11,<1.17
 opencv-python
 Pillow
-# GPU (Windows) : utiliser le venv backend_django/.venv (Python 3.12).
-# PyTorch CUDA n'est pas sur PyPI en build GPU : après création du venv :
-#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
-# (cu118 convient aux pilotes NVIDIA plus anciens ; cu124 si pilote récent)
-torch
-torchvision
+# torch et torchvision sont installés séparément dans le Dockerfile (CPU ou GPU)
 scikit-image
-scipy
 onnxruntime
 trimesh
 reportlab
-
 nibabel
 SimpleITK
 nilearn
 channels
 daphne>=4.0
 django-extensions
-antspyx

@@ -91,7 +91,7 @@ export default function PatientModal({ isOpen, onClose, onPatientCreated }) {
                   required 
                   value={formData.num_dossier} 
                   onChange={handleChange}
-                  placeholder="Ex: DOS-2026-001" 
+                  placeholder="Ex: DOS-2026-0001"
                   className="w-full p-3 rounded-xl border border-slate-200 focus:border-[#4f6ef7] focus:ring-1 focus:ring-[#4f6ef7] outline-none transition-all placeholder:text-slate-400"
                 />
               </div>

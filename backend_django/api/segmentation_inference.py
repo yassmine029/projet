@@ -114,7 +114,14 @@ def _build_session(model_path: str):
     opts.intra_op_num_threads = n_cores
     opts.inter_op_num_threads = n_cores
     opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-    providers = ["CPUExecutionProvider"]
+    available = ort.get_available_providers()
+    providers = []
+    if "CUDAExecutionProvider" in available:
+        providers.append(("CUDAExecutionProvider", {"device_id": 0}))
+        print(f"[Segmentation] ONNX utilise le GPU (CUDA)")
+    else:
+        print(f"[Segmentation] ONNX utilise le CPU (providers disponibles: {available})")
+    providers.append("CPUExecutionProvider")
     return ort.InferenceSession(model_path, sess_options=opts, providers=providers)
 
 

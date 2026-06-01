@@ -1097,6 +1097,13 @@ def login_view(request):
             return JsonResponse({'ok': False, 'error': 'email et mot de passe requis'}, status=400)
 
         # Accept either username or account email as login identifier.
+        # If the email matches the admin portal credentials, block regular login entirely
+        # so the frontend falls through to adminPortalLogin — even if a doctor account
+        # shares the same email address.
+        _admin_email, _ = _portal_dashboard_credentials()
+        if _admin_email and username == _admin_email:
+            return JsonResponse({'ok': False, 'error': 'Identifiants invalides', 'error_type': 'user_not_found'}, status=401)
+
         # Exclude the portal admin technical account — it authenticates only via admin_portal_login.
         account = User.objects.filter(Q(username=username) | Q(email__iexact=username)).exclude(username=PORTAL_ADMIN_USERNAME).first()
         if account is None:
@@ -1202,6 +1209,7 @@ def _portal_dashboard_credentials():
     return email, password
 
 
+@csrf_exempt
 @require_http_methods(["POST"])
 def admin_portal_login(request):
     """
@@ -1216,7 +1224,10 @@ def admin_portal_login(request):
     password = data.get('password') or ''
     expected_email, expected_password = _portal_dashboard_credentials()
 
+    print(f"[ADMIN_PORTAL_LOGIN] email={email!r} | expected={expected_email!r} | pwd_ok={password == expected_password}")
+
     if not expected_email or not expected_password:
+        print(f"[ADMIN_PORTAL_LOGIN] Portail non configuré — ADMIN_PORTAL_EMAIL vide")
         return JsonResponse(
             {
                 'ok': False,
@@ -1226,6 +1237,7 @@ def admin_portal_login(request):
         )
 
     if email != expected_email or password != expected_password:
+        print(f"[ADMIN_PORTAL_LOGIN] Credentials invalides")
         return JsonResponse({'ok': False, 'error': 'Identifiants administrateur invalides.'}, status=401)
 
     user, _created = User.objects.get_or_create(
@@ -6184,6 +6196,9 @@ def change_password_view(request):
 
 
 def _dashboard_patient_payload(patient):
+    seg_runs = list(patient.segmentation_runs.all())
+    segmentation_count = len(seg_runs)
+    has_segmentation = segmentation_count > 0
     mri_files = list(patient.mri_files.all())
     slices_count = len(mri_files)
     last_exam = None
@@ -6240,15 +6255,18 @@ def _dashboard_patient_payload(patient):
         'has_registration': has_registration,
         'last_registration_date': last_registration_date,
         'registration_count': len(registration_files),
+        'has_segmentation': has_segmentation,
+        'segmentation_count': segmentation_count,
     }
 
 
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
-@login_required
 def patients_list_create(request):
+    if not request.user or not request.user.is_authenticated:
+        return JsonResponse({'ok': False, 'error': 'Session expirée — reconnectez-vous.'}, status=401)
     if request.method == 'GET':
-        qs = Patient.objects.filter(doctor=request.user).prefetch_related('mri_files').order_by('-created_at')
+        qs = Patient.objects.filter(doctor=request.user).prefetch_related('mri_files', 'segmentation_runs').order_by('-created_at')
 
         # Dashboard filters from query params
         search = (request.GET.get('id') or '').strip()

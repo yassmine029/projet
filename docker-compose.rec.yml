@@ -21,13 +21,13 @@ services:
     build:
       context: ./backend_django
       args:
-        USE_GPU: "true"
+        USE_GPU: "false"
     restart: unless-stopped
     env_file: .env
     environment:
       DB_HOST: db
       MEDIA_ROOT: /app/media
-      CTIAMA_MODE: "true"
+      CTIAMA_MODE: "false"
       CTIAMA_SERVICE_USER: "ctiama"
       APP_MODE: recalage
       NVIDIA_VISIBLE_DEVICES: all
@@ -63,7 +63,7 @@ services:
       context: ./frontend
       args:
         APP_MODE: recalage
-        AUTH_DISABLED: "true"
+        AUTH_DISABLED: "false"
         API_BASE_URL: /api
     ports:
       - "3002:80"

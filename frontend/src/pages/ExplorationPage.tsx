@@ -109,6 +109,7 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
 
   const [refSrc, setRefSrc]         = useState('');
   const [patSrc, setPatSrc]         = useState('');
+  const [loadError, setLoadError]   = useState('');
   const [refView, setRefView]       = useState<ViewTransform>(DEFAULT_VIEW);
   const [patView, setPatView]       = useState<ViewTransform>(DEFAULT_VIEW);
 
@@ -293,18 +294,21 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
   };
 
   const syncViews = async (nextAxis: string, nextIndex: number, jId: string) => {
-    if (!jId) return;
+    if (!jId) { setLoadError('Session expirée — revenez au dossier patient et réessayez.'); return; }
     try {
       const axisMax = getAxisMax(nextAxis);
       const clamped = Math.max(0, Math.min(nextIndex, axisMax || 999));
       const atlasUrl = `/api/volume/atlas_slice?axis=${nextAxis}&index=${clamped}&showLabels=1&jobId=${jId}`;
-      const patUrl   = `/api/volume/patient_slice?jobId=${jId}&axis=${nextAxis}&index=${clamped}`;
+      const patUrl   = `/api/volume/get-slice?jobId=${jId}&axis=${nextAxis}&index=${clamped}&source=registered`;
       const [r1, r2] = await Promise.all([
         fetch(atlasUrl, { credentials: 'include' }).then(r => r.json()),
         fetch(patUrl,   { credentials: 'include' }).then(r => r.json()),
       ]);
+      if (r1.error) { setLoadError(`Atlas : ${r1.error}`); return; }
+      if (r2.error) { setLoadError(`Volume patient : ${r2.error}`); return; }
       if (r1.image || r1.slice) setRefSrc(r1.image || r1.slice);
       if (r2.image) setPatSrc(r2.image);
+      setLoadError('');
       const rm = typeof r1.max_index === 'number' ? r1.max_index : null;
       const pm = typeof r2.max_index === 'number' ? r2.max_index : null;
       let resolvedMax = axisMax;
@@ -316,8 +320,9 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
       setAxis(nextAxis);
       if (r2.shape) setSliceShape(r2.shape);
       else if (r1.shape) setSliceShape(r1.shape);
-    } catch (err) {
+    } catch (err: any) {
       console.error('syncViews error:', err);
+      setLoadError(`Erreur chargement : ${err?.message || 'inconnue'}`);
     }
   };
 
@@ -425,7 +430,7 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
-    <div className="h-full flex flex-col bg-[#f0f4f8] text-slate-800 overflow-hidden select-none" onMouseUp={handleMouseUp}>
+    <div className="min-h-screen h-screen flex flex-col bg-[#f0f4f8] text-slate-800 overflow-hidden select-none" onMouseUp={handleMouseUp}>
 
       {/* ── Header ── */}
       <header className="shrink-0 flex items-center gap-4 border-b border-slate-200 bg-white px-5 py-3 shadow-sm z-20">
@@ -474,6 +479,13 @@ export default function ExplorationPage({ onBack, dashboardPatientId = null }: E
 
         {/* CENTER — Canvases + navigation */}
         <main className="flex-1 flex flex-col gap-3 p-3 min-w-0 overflow-hidden">
+
+          {/* Erreur chargement */}
+          {loadError && (
+            <div className="shrink-0 flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-medium text-red-700">
+              <span>⚠</span> {loadError}
+            </div>
+          )}
 
           {/* Canvases */}
           <div className="flex-1 min-h-0 grid grid-cols-2 gap-3">

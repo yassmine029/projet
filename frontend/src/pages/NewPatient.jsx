@@ -33,6 +33,7 @@ export default function NewPatient() {
   const [errors, setErrors] = useState({});
   const [uploadError, setUploadError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [loadingDossier, setLoadingDossier] = useState(false);
 
   const fetchNextDossier = async () => {
@@ -52,8 +53,23 @@ export default function NewPatient() {
   useEffect(() => { fetchNextDossier(); }, []);
 
   const extractApiError = (err) => {
-    const data = err?.response?.data;
-    if (!data) return 'Erreur lors de la creation du patient.';
+    if (err?.code === 'ECONNABORTED') {
+      return 'Délai dépassé (timeout) — essayez avec moins de fichiers ou vérifiez votre connexion.';
+    }
+    if (!err?.response) {
+      return `Erreur réseau : ${err?.message || 'aucune réponse du serveur'}. Vérifiez que Django est lancé.`;
+    }
+    const status = err.response.status;
+    const data = err.response.data;
+    if (status === 302 || status === 301) {
+      return 'Session expirée — rechargez la page et reconnectez-vous.';
+    }
+    if (!data || data === '') {
+      return `Erreur serveur (HTTP ${status}) — réponse vide. Consultez les logs Django.`;
+    }
+    if (typeof data === 'string' && data.trim().startsWith('<')) {
+      return `Erreur serveur (HTTP ${status}) — réponse HTML inattendue. Consultez les logs Django.`;
+    }
     if (typeof data.error === 'string' && data.error.trim()) return data.error;
     if (data.errors && typeof data.errors === 'object') {
       const firstKey = Object.keys(data.errors)[0];
@@ -65,7 +81,7 @@ export default function NewPatient() {
       }
     }
     if (typeof data.detail === 'string' && data.detail.trim()) return data.detail;
-    return 'Erreur lors de la creation du patient.';
+    return `Erreur lors de la creation du patient (HTTP ${status}).`;
   };
 
   const handleChange = (e) => {
@@ -142,6 +158,7 @@ export default function NewPatient() {
     if (!form.files || form.files.length === 0) return;
 
     setSubmitting(true);
+    setUploadProgress(0);
     try {
       const formData = new FormData();
       Object.entries(form).forEach(([key, val]) => {
@@ -153,12 +170,17 @@ export default function NewPatient() {
         formData.append('files', form.files[i]);
         formData.append('relative_paths', form.files[i].webkitRelativePath || form.files[i].name);
       }
-      await createPatient(formData);
+      await createPatient(formData, {
+        onUploadProgress: (e) => {
+          if (e.total) setUploadProgress(Math.round((e.loaded / e.total) * 100));
+        },
+      });
       navigate('/dashboard/patients');
     } catch (err) {
       setUploadError(extractApiError(err));
     } finally {
       setSubmitting(false);
+      setUploadProgress(0);
     }
   };
 
@@ -327,11 +349,19 @@ export default function NewPatient() {
         </Card>
 
         {/* Submit */}
+        {submitting && uploadProgress > 0 && (
+          <div className="w-full rounded-full bg-slate-200 h-2 overflow-hidden">
+            <div
+              className="h-2 rounded-full bg-blue-500 transition-all duration-300"
+              style={{ width: `${uploadProgress}%` }}
+            />
+          </div>
+        )}
         <div className="flex justify-end gap-3 pb-4">
           <Button variant="outline" onClick={() => navigate(-1)} disabled={submitting}>Annuler</Button>
           <Button type="submit" variant="primary" disabled={submitting}>
             {submitting ? <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-            Enregistrer le patient
+            {submitting && uploadProgress > 0 ? `Envoi ${uploadProgress}%` : 'Enregistrer le patient'}
           </Button>
         </div>
       </form>

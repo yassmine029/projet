@@ -128,7 +128,7 @@ function sliceRangeTooltipText(totalSlices) {
 }
 
 const LAUNCH_SUMMARY_HELP_TEXT =
-  "Structure cible : hippocampe · superposition : masque coloré sur la coupe IRM (même géométrie que l’originale). Volume 3D / PDF : coupes non rejetées (masque courant) ; les coupes rejetées sont exclues.";
+  "Le modèle IA segmente l’hippocampe sur chaque coupe IRM sélectionnée. Le résultat est affiché en superposition colorée sur l’image originale. Seules les coupes validées (non rejetées) sont utilisées pour la reconstruction 3D et le rapport PDF.";
 
 /** Icône info + infobulle (texte long hors écran pour gagner de la place). */
 function IconHelpTooltip({ helpText, ariaLabel = 'Aide' }) {
@@ -238,6 +238,8 @@ function getPathologyBadge(patient) {
   const source = String(patient?.pathology || patient?.pathologie || patient?.diagnosis || patient?.motif || '').toLowerCase();
   if (source.includes('alz')) return { label: 'Alzheimer', classes: 'bg-red-50 text-red-700' };
   if (source.includes('épil') || source.includes('epil')) return { label: 'Épilepsie', classes: 'bg-violet-50 text-violet-700' };
+  const hasSegmentation = patient?.has_segmentation === true || (typeof patient?.segmentation_count === 'number' && patient.segmentation_count > 0);
+  if (!hasSegmentation) return { label: 'Nouveau', classes: 'bg-amber-50 text-amber-700' };
   return { label: 'Suivi', classes: 'bg-emerald-50 text-emerald-700' };
 }
 
@@ -1262,7 +1264,9 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
+  const [segFilter, setSegFilter] = useState('all'); // 'all' | 'with_seg' | 'without_seg'
   const [selectedPatient, setSelectedPatient] = useState(null);
+  const [onlyNiftiWarning, setOnlyNiftiWarning] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeResult, setFinalizeResult] = useState(null); // { patientId, processedCount }
   const [slices, setSlices] = useState([]);
@@ -1550,6 +1554,13 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
 
       setSlices(files);
 
+      // Détecter si tous les fichiers sont NIfTI → segmentation 2D impossible
+      const allNifti = files.length > 0 && files.every((f) => {
+        const name = (f.original_filename || '').toLowerCase();
+        return name.endsWith('.nii') || name.endsWith('.nii.gz');
+      });
+      setOnlyNiftiWarning(allNifti);
+
       // Mode urgence : sélection automatique de tout le volume, sans filtrage qualité.
       if (isEmergencySession) {
         setSelectedSlices(files.map((f) => f.id));
@@ -1667,6 +1678,18 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
       launchSegmentation();
     }
   }, [step, selectedPatient?.id, selectedModel, selectedSlices]);
+
+  // Lorsqu'une segmentation réussit, marquer le patient comme ayant une segmentation dans la liste locale
+  useEffect(() => {
+    if (!launchResult?.run_id || !selectedPatient?.id) return;
+    setPatients((prev) =>
+      prev.map((p) =>
+        p.id === selectedPatient.id
+          ? { ...p, has_segmentation: true, segmentation_count: (p.segmentation_count || 0) + 1 }
+          : p
+      )
+    );
+  }, [launchResult?.run_id]);
 
   const toAbsoluteMediaUrl = (rawUrl) => {
     const raw = String(rawUrl || '').trim();
@@ -1884,22 +1907,25 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
   const flowSteps = [
     { id: 1, label: isEmergencySession ? 'Import des images' : 'Sélection du patient' },
     { id: 2, label: 'Coupes IRM' },
-    { id: 3, label: 'Segmentation (Modèle 1)' },
+    { id: 3, label: `Segmentation (${modelKeyToDisplayName(selectedModel) || 'Modèle 1'})` },
   ];
 
-  const filteredPatients = useMemo(
-    () =>
-      patients.filter((p) =>
-        (`${p.first_name || p.prenom || ''} ${p.last_name || p.nom || ''}`)
-          .toLowerCase()
-          .includes(search.toLowerCase())
-      ),
-    [patients, search]
-  );
+  const filteredPatients = useMemo(() => {
+    return patients.filter((p) => {
+      const nameMatch = (`${p.first_name || p.prenom || ''} ${p.last_name || p.nom || ''}`)
+        .toLowerCase()
+        .includes(search.toLowerCase());
+      if (!nameMatch) return false;
+      const hasSeg = p?.has_segmentation === true || (typeof p?.segmentation_count === 'number' && p.segmentation_count > 0);
+      if (segFilter === 'with_seg') return hasSeg;
+      if (segFilter === 'without_seg') return !hasSeg;
+      return true;
+    });
+  }, [patients, search, segFilter]);
 
   useEffect(() => {
     setPatientListPage(0);
-  }, [search, patients.length]);
+  }, [search, segFilter, patients.length]);
 
   useEffect(() => {
     if (step === 2) setSlicesListPage(0);
@@ -2808,6 +2834,32 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                 {/* ── TAB: Patient existant ─────────────────────────────────── */}
                 {patientSelectMode === 'existing' && (<>
 
+                {/* Filtre segmentation */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {[
+                    { value: 'all',         label: 'Tous' },
+                    { value: 'with_seg',    label: 'Avec segmentation' },
+                    { value: 'without_seg', label: 'Sans segmentation' },
+                  ].map(({ value, label }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setSegFilter(value)}
+                      className={`rounded-full px-3.5 py-1.5 text-[11px] font-bold transition-all duration-150 border ${
+                        segFilter === value
+                          ? value === 'with_seg'
+                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                            : value === 'without_seg'
+                              ? 'bg-amber-500 text-white border-amber-500 shadow-sm'
+                              : 'bg-slate-800 text-white border-slate-800 shadow-sm'
+                          : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
                 {/* Barre de recherche premium */}
                 <div className="relative group">
                   <div className={`absolute inset-0 rounded-2xl bg-gradient-to-r from-blue-500 to-indigo-500 opacity-0 blur transition-opacity duration-300 group-focus-within:opacity-10`} />
@@ -2957,7 +3009,6 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                                   <p className={`text-xs font-bold leading-none ${isSelected ? 'text-blue-700' : 'text-slate-600'}`}>
                                     {formatDate(getLastExam(patient), false)}
                                   </p>
-                                  <p className="mt-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-400">dernier</p>
                                 </div>
                               </div>
 
@@ -3633,6 +3684,24 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                   </div>
                 )} {/* fin !isEmergencySession */}
 
+                {/* ── Warning NIfTI uniquement ── */}
+                {onlyNiftiWarning && !slicesLoading && (
+                  <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-4 mb-2">
+                    <svg className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                      <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                    <div>
+                      <p className="text-sm font-bold text-amber-800">Ce patient ne contient que des fichiers NIfTI 3D</p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-amber-700">
+                        La segmentation hippocampique nécessite des <strong>coupes 2D</strong> (JPG, PNG, TIF).
+                        Les fichiers <code className="bg-amber-100 px-1 rounded">.nii</code> / <code className="bg-amber-100 px-1 rounded">.nii.gz</code> ne sont pas supportés par ce modèle.
+                        <br />Veuillez choisir un autre patient ou importer des coupes 2D.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 {slicesLoading && (
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     {Array.from({ length: 6 }).map((_, index) => (
@@ -3836,10 +3905,10 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                     <button
                       type="button"
                       onClick={() => setLaunchConfirmOpen(true)}
-                      disabled={selectedSlices.length === 0}
+                      disabled={selectedSlices.length === 0 || onlyNiftiWarning}
                       className="inline-flex items-center gap-2 rounded-xl bg-blue-600 border border-blue-600 px-5 py-2 text-sm font-bold text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      Lancer la segmentation (Modèle 1)
+                      {`Lancer la segmentation (${modelKeyToDisplayName(selectedModel) || 'Modèle 1'})`}
                       <ChevronRight className="h-4 w-4" />
                     </button>
                   </div>
@@ -3887,12 +3956,6 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                               <p className="text-sm font-black text-white">{runSummary?.model_version || modelKeyToDisplayName(runSummary?.model_key) || 'Modèle 1'}</p>
                               <p className="text-[10px] font-bold uppercase tracking-wide text-blue-200">modèle</p>
                             </div>
-                            {Number.isFinite(currentRunId) && currentRunId > 0 && (
-                              <div className="rounded-xl bg-white/10 px-3 py-2 text-center">
-                                <p className="text-sm font-black font-mono text-white">#{currentRunId}</p>
-                                <p className="text-[10px] font-bold uppercase tracking-wide text-blue-200">run</p>
-                              </div>
-                            )}
                           </div>
                         </div>
                       </div>
@@ -3957,20 +4020,25 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
 
                     {/* ── Section : Relancer toutes les coupes avec un autre modèle ── */}
                     {!isEmergencySession && !resultsLoading && persistedResults.length > 0 && (
-                      <div className="rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50/60 to-indigo-50/40 px-5 py-4">
-                        <div className="flex items-start gap-3 mb-4">
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-100">
-                            <RotateCcw className="h-4 w-4 text-violet-600" />
+                      <div className="rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50/60 to-indigo-50/40 px-5 py-4 shadow-sm">
+                        <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+                          <div className="flex items-start gap-3">
+                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-100">
+                              <RotateCcw className="h-4 w-4 text-violet-600" />
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold text-slate-800">Pas satisfait du résultat global ?</p>
+                              <p className="mt-0.5 text-[11px] text-slate-500">
+                                Relancez la segmentation sur toutes les coupes sélectionnées avec un modèle différent. Chaque modèle utilise une architecture distincte — les résultats peuvent varier sur des cas difficiles.
+                              </p>
+                            </div>
                           </div>
-                          <div>
-                            <p className="text-sm font-bold text-slate-800">Pas satisfait du résultat global ?</p>
-                            <p className="mt-0.5 text-[11px] text-slate-500">
-                              Relancez la segmentation sur toutes les coupes sélectionnées avec un modèle différent. Chaque modèle utilise une architecture distincte — les résultats peuvent varier sur des cas difficiles.
-                            </p>
+                          <div className="rounded-full border border-white/70 bg-white/70 px-2.5 py-1 text-[10px] font-bold text-slate-600">
+                            {selectedSlices.length} coupe{selectedSlices.length > 1 ? 's' : ''} sélectionnée{selectedSlices.length > 1 ? 's' : ''}
                           </div>
                         </div>
                         {/* Guide des modèles */}
-                        <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
                           {[
                             {
                               key: 'unetpp', label: 'Modèle 1', sublabel: 'U-Net++',
@@ -3978,6 +4046,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                               badge: 'bg-slate-100 text-slate-600',
                               desc: 'Modèle par défaut. Rapide et fiable, recommandé pour la majorité des cas courants.',
                               tag: 'Par défaut',
+                              btn: 'border-slate-200 bg-slate-900 text-white hover:bg-slate-700',
                             },
                             {
                               key: 'nnunet', label: 'Modèle 2', sublabel: 'nnU-Net',
@@ -3985,6 +4054,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                               badge: 'bg-indigo-100 text-indigo-700',
                               desc: 'Référence en segmentation médicale automatique. Plus robuste sur les anatomies atypiques.',
                               tag: 'Robuste',
+                              btn: 'border-indigo-200 bg-indigo-600 text-white hover:bg-indigo-700',
                             },
                             {
                               key: 'swinunetr', label: 'Modèle 3', sublabel: 'Swin-UNETR',
@@ -3992,11 +4062,12 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                               badge: 'bg-violet-100 text-violet-700',
                               desc: 'Architecture Transformer. Optimisé pour les structures complexes et les petits volumes.',
                               tag: 'Avancé',
+                              btn: 'border-violet-200 bg-violet-600 text-white hover:bg-violet-700',
                             },
                           ].map((m) => (
-                            <div key={m.key} className={`rounded-xl border px-3 py-2.5 ${m.color}`}>
+                            <div key={m.key} className={`rounded-xl border px-3 py-2.5 flex flex-col h-full ${m.color}`}>
                               <div className="flex items-center justify-between gap-2 mb-1">
-                                <div>
+                                <div className="min-w-0">
                                   <span className="text-sm font-black text-slate-800">{m.label}</span>
                                   <span className="ml-1.5 text-[11px] text-slate-500">· {m.sublabel}</span>
                                 </div>
@@ -4018,10 +4089,10 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                                   setRunSummary(null);
                                   setProgress(5);
                                 }}
-                                className={`mt-2.5 w-full rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                                className={`mt-auto w-full rounded-lg px-3 py-1.5 text-xs font-bold transition ${
                                   String(runSummary?.model_key || 'unetpp').toLowerCase() === m.key
                                     ? 'cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400'
-                                    : 'border border-violet-200 bg-violet-600 text-white hover:bg-violet-700'
+                                    : m.btn
                                 }`}
                               >
                                 {String(runSummary?.model_key || 'unetpp').toLowerCase() === m.key
@@ -4067,7 +4138,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                               ariaLabel="Détails structure cible et volume 3D"
                             />
                           </div>
-                          <dl className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1 sm:grid-cols-3 xl:grid-cols-6">
+                          <dl className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1 sm:grid-cols-3 xl:grid-cols-5">
                             <div className="min-w-0">
                               <dt className="text-[10px] text-slate-500">Patient</dt>
                               <dd className="truncate text-[13px] font-medium text-slate-900" title={getPatientName(selectedPatient || {})}>
@@ -4081,10 +4152,6 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                               </dd>
                             </div>
                             <div className="min-w-0">
-                              <dt className="text-[10px] text-slate-500">Seuil</dt>
-                              <dd className="font-mono text-[13px] text-slate-900">{runSummary?.threshold != null ? String(runSummary.threshold) : '—'}</dd>
-                            </div>
-                            <div className="min-w-0">
                               <dt className="text-[10px] text-slate-500">Coupes traitées</dt>
                               <dd className="text-[13px] font-medium text-slate-900">
                                 {persistedResults.length}
@@ -4092,13 +4159,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                               </dd>
                             </div>
                             <div className="min-w-0">
-                              <dt className="text-[10px] text-slate-500">Run</dt>
-                              <dd className="font-mono text-[12px] text-slate-900">
-                                #{Number.isFinite(currentRunId) && currentRunId > 0 ? currentRunId : runSummary?.run_id ?? '—'}
-                              </dd>
-                            </div>
-                            <div className="min-w-0">
-                              <dt className="text-[10px] text-slate-500">Horodatage</dt>
+                              <dt className="text-[10px] text-slate-500">Date/heure</dt>
                               <dd className="text-[12px] text-slate-900">{formatDateTimeShort(runSummary?.completed_at || runSummary?.created_at)}</dd>
                             </div>
                           </dl>
@@ -4469,7 +4530,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                                     </div>
                                   </div>
                                   {showM2ThenM3Stack ? (
-                                    <details className="group border-t border-slate-200 bg-slate-50">
+                                    <details className="group border-t border-slate-200 bg-slate-50" style={{display:'none'}}>
                                       <summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-semibold text-slate-700 marker:content-none hover:bg-slate-100 [&::-webkit-details-marker]:hidden">
                                         <span className="inline-flex items-center gap-2">
                                           <span className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-600 group-open:border-teal-600 group-open:text-teal-800">
@@ -4515,7 +4576,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                                       </div>
                                     </details>
                                   ) : hasRelaunchComparison ? (
-                                    <details className="group border-t border-slate-200 bg-slate-50">
+                                    <details className="group border-t border-slate-200 bg-slate-50" style={{display:'none'}}>
                                       <summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-semibold text-slate-700 marker:content-none hover:bg-slate-100 [&::-webkit-details-marker]:hidden">
                                         <span className="inline-flex items-center gap-2">
                                           <span className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-600 group-open:border-teal-600 group-open:text-teal-800">
@@ -4591,23 +4652,6 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                                       </button>
                                     </div>
                                     <div className="flex flex-wrap items-center justify-end gap-1.5 rounded-lg border border-slate-200/80 bg-white p-1 shadow-sm">
-                                      <button
-                                        type="button"
-                                        disabled={relaunchM1Disabled}
-                                        onClick={() => resegmentSliceWithModel(effectiveRunId, fileId, 'unetpp')}
-                                        title={
-                                          bothAltModelsShownForSlice
-                                            ? 'Modèles 2 et 3 : résultats déjà affichés pour cette coupe'
-                                            : !relaunchM1Unlocked
-                                              ? 'Recalcul Modèle 1 : lancez M2 ou M3, ou attendez un masque courant différent du Modèle 1'
-                                              : curSegKey === 'unetpp'
-                                                ? 'Le masque courant provient déjà du Modèle 1'
-                                                : 'Relancer la segmentation avec le Modèle 1 (comme M2/M3)'
-                                        }
-                                        className="inline-flex h-9 items-center justify-center rounded-md bg-slate-700 px-3 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
-                                      >
-                                        Lancer Modèle 1
-                                      </button>
                                       <button
                                         type="button"
                                         disabled={relaunchM2Disabled}
@@ -4806,7 +4850,7 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                           <p className="text-xs text-slate-500">Les masques de segmentation sont prêts à être examinés.</p>
                         </div>
                       </div>
-                      <div className="grid grid-cols-3 gap-2 mb-4">
+                      <div className="grid grid-cols-2 gap-2 mb-4 sm:gap-3">
                         <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2.5 text-center">
                           <p className="text-lg font-black text-slate-800">{launchResult?.count ?? selectedSlices.length}</p>
                           <p className="text-[10px] text-slate-400 uppercase tracking-wide">coupes</p>
@@ -4814,10 +4858,6 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                         <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2.5 text-center">
                           <p className="text-sm font-bold text-slate-700">{modelKeyToDisplayName(selectedModel)}</p>
                           <p className="text-[10px] text-slate-400 uppercase tracking-wide">modèle</p>
-                        </div>
-                        <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2.5 text-center">
-                          <p className="text-sm font-bold text-slate-700">{DEFAULT_SEGMENTATION_THRESHOLD}</p>
-                          <p className="text-[10px] text-slate-400 uppercase tracking-wide">seuil</p>
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
@@ -4904,46 +4944,35 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
               </div>
             </div>
 
-            {/* ── Corps scrollable ── */}
-            <div className="max-h-[min(58vh,28rem)] overflow-y-auto px-6 py-5 space-y-4">
+            {/* ── Corps ── */}
+            <div className="px-6 py-5 space-y-4">
 
-              {/* Question centrale */}
-              <div className="rounded-xl border-2 border-blue-200 bg-blue-50 px-4 py-3.5">
-                <p className="text-sm font-bold text-blue-900 leading-relaxed">
-                  Êtes-vous sûr de vouloir lancer la segmentation avec le{' '}
-                  <span className="text-blue-700">{modelKeyToDisplayName(selectedModel)} (modèle par défaut)</span>{' '}
-                  sur les{' '}
-                  <span className="text-xl font-black text-blue-700">{selectedSlices.length}</span>{' '}
-                  coupe{selectedSlices.length > 1 ? 's' : ''} sélectionnée{selectedSlices.length > 1 ? 's' : ''} ?
-                </p>
-              </div>
-
-              {/* Résumé en 4 cards */}
-              <div className="grid grid-cols-2 gap-2">
-                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+              {/* Patient + Modèle */}
+              <div className="flex items-center gap-4 rounded-xl bg-slate-50 border border-slate-100 px-4 py-3">
+                <div className="flex-1 min-w-0">
                   <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Patient</p>
-                  <p className="mt-0.5 truncate text-sm font-bold text-slate-800">
-                    {getPatientName(selectedPatient || {})}
-                  </p>
+                  <p className="mt-0.5 truncate text-sm font-black text-slate-800">{getPatientName(selectedPatient || {})}</p>
                   {selectedPatient?.dossier_number && (
-                    <p className="font-mono text-[11px] text-slate-500">{selectedPatient.dossier_number}</p>
+                    <p className="font-mono text-[10px] text-slate-500">{selectedPatient.dossier_number}</p>
                   )}
                 </div>
-                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                <div className="w-px h-10 bg-slate-200 shrink-0" />
+                <div className="flex-1">
                   <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Modèle IA</p>
-                  <p className="mt-0.5 text-sm font-bold text-slate-800">{modelKeyToDisplayName(selectedModel)}</p>
-                  <p className="text-[11px] text-slate-500">Segmentation hippocampe</p>
+                  <p className="mt-0.5 text-sm font-black text-slate-800">{modelKeyToDisplayName(selectedModel)}</p>
+                  <p className="text-[10px] text-slate-500">Segmentation hippocampe</p>
                 </div>
-                <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2.5">
+              </div>
+
+              {/* Coupes + durée */}
+              <div className="rounded-xl border-2 border-blue-200 bg-blue-50 px-4 py-3 flex items-center gap-4">
+                <div>
                   <p className="text-[10px] font-bold uppercase tracking-widest text-blue-400">Coupes à analyser</p>
-                  <p className="mt-0.5 text-2xl font-black tabular-nums text-blue-700">{selectedSlices.length}</p>
-                  <p className="text-[11px] text-blue-500">sur {slices.length} coupes disponibles</p>
+                  <p className="text-3xl font-black tabular-nums text-blue-700 leading-none mt-1">{selectedSlices.length}</p>
                 </div>
-                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Seuil de confiance</p>
-                  <p className="mt-0.5 text-sm font-bold text-slate-800">{DEFAULT_SEGMENTATION_THRESHOLD}</p>
-                  <p className="text-[11px] text-slate-500">Paramètre par défaut</p>
-                </div>
+                <p className="text-[11px] text-blue-600 leading-relaxed">
+                  sur <span className="font-bold">{slices.length}</span> coupes disponibles
+                </p>
               </div>
 
               {/* Avertissement coupes de faible qualité incluses */}
@@ -4977,31 +5006,6 @@ export default function NouvelleSegmentation({ user: userProp = null }) {
                 );
               })()}
 
-              {/* Durée estimée + info arrière-plan */}
-              <div className="flex items-start gap-2.5 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
-                <Zap className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-                <p className="text-[11px] leading-relaxed text-slate-600">
-                  <span className="font-bold text-slate-700">Durée estimée : </span>
-                  environ {Math.min(25, Math.max(5, Math.ceil(selectedSlices.length / 20)))} secondes selon la charge serveur.
-                  L'analyse s'exécute en arrière-plan — vous pouvez suivre la progression en temps réel à l'étape suivante.
-                </p>
-              </div>
-
-              {/* Détail des coupes — accordéon */}
-              <details className="group rounded-xl border border-slate-100 bg-slate-50">
-                <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-[11px] font-bold text-slate-600 hover:text-blue-700">
-                  <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
-                  Voir le détail des {selectedSlices.length} coupes sélectionnées
-                </summary>
-                <ul className="max-h-36 overflow-y-auto border-t border-slate-100 px-4 py-2 space-y-1">
-                  {launchConfirmationLines.map((line) => (
-                    <li key={line.id} className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 border-b border-slate-100/60 py-1 last:border-0">
-                      <span className="text-[12px] font-bold text-blue-700">{line.coupe}</span>
-                      <span className="min-w-0 flex-1 break-all text-right text-[11px] text-slate-500">{line.filename}</span>
-                    </li>
-                  ))}
-                </ul>
-              </details>
             </div>
 
             {/* ── Footer ── */}

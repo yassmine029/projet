@@ -1372,31 +1372,6 @@ export default function Modelisation3D({ user = null }) {
                   </div>
                 </div>
 
-                {/* Structure */}
-                <div>
-                  <p className="mb-2 text-[11px] font-bold uppercase tracking-widest text-slate-400">Structure à reconstruire</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[
-                      { value: 'both',  label: 'Gauche + Droit', icon: '⚕️' },
-                      { value: 'left',  label: 'Gauche',         icon: '◀' },
-                      { value: 'right', label: 'Droit',          icon: '▶' },
-                    ].map(({ value, label, icon }) => (
-                      <button
-                        key={value}
-                        type="button"
-                        onClick={() => handleChange({ target: { name: 'structure', value } })}
-                        className={`flex flex-col items-center gap-1.5 rounded-xl border-2 px-3 py-3 text-sm font-bold transition-all ${
-                          standardMode.structure === value
-                            ? 'border-blue-500 bg-blue-50 text-blue-700'
-                            : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                        }`}
-                      >
-                        <span className="text-base">{icon}</span>
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
 
                 {/* Résolution voxel */}
                 <div className={`rounded-xl border transition-colors ${standardMode.knowsSpacing ? 'border-blue-200 bg-blue-50/40' : 'border-slate-200 bg-slate-50'}`}>

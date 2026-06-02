@@ -5477,7 +5477,7 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                           </div>
 
                           {/* Grande preview — flex-1 remplit l'espace restant */}
-                          <div className="flex-1 flex items-center justify-center bg-black min-h-0 relative overflow-hidden">
+                          <div className="flex-1 flex items-center justify-center bg-black min-h-0 relative overflow-hidden" style={{ minHeight: 200 }}>
                             {count === 0 ? (
                               <p className="text-[10px] text-slate-500">Non disponible</p>
                             ) : fullLoading ? (
@@ -5486,13 +5486,13 @@ export function RegistrationPage({ user, accessToken, onNavigate }: Registration
                               <img
                                 src={fullImg}
                                 alt={`${label} coupe ${selIdx + 1}`}
-                                className="max-w-full max-h-full object-contain"
+                                className="absolute inset-0 w-full h-full object-contain"
                               />
                             ) : thumbs[selIdx] ? (
                               <img
                                 src={thumbs[selIdx]!}
                                 alt={`${label} coupe ${selIdx + 1}`}
-                                className="max-w-full max-h-full object-contain"
+                                className="absolute inset-0 w-full h-full object-contain"
                                 style={{ filter: 'blur(1px)' }}
                               />
                             ) : (
